@@ -35,8 +35,9 @@ def find_inds(
         The maximum number of matches found.
 
     """
-    full_inds = np.zeros(self_rows.shape[0], dtype=np.int32)
-    counts = np.zeros(self_rows.shape[0], dtype=np.int16)
+    dtype = rows.dtype
+    full_inds = np.zeros(self_rows.shape[0], dtype=dtype)
+    counts = np.zeros(self_rows.shape[0], dtype=dtype)
     for i in nb.prange(self_rows.shape[0]):
         for j in range(rows.shape[0]):
             cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
@@ -196,18 +197,19 @@ def compute_block_sort_index(
         The indexing that sorts the data by block-row and -column.
 
     """
+    dtype = coo_rows.dtype
     num_blocks = block_sizes.shape[0]
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
-    sort_index = np.zeros(len(coo_cols), dtype=np.int32)
+    sort_index = np.zeros(len(coo_cols), dtype=dtype)
 
     # NOTE: This is a very generous estimate of the number of
     # nonzeros in each row of blocks. No assumption on the sparsity
     # pattern of the matrix is made here.
     nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
-    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=dtype)
 
-    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    block_nnz = np.zeros(num_blocks, dtype=dtype)
     nnz_offset = 0
     for i in range(num_blocks):
         # Precompute the row mask.

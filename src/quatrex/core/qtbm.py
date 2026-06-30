@@ -249,30 +249,32 @@ class QTBM(TransportSolver):
         start_idx = 0
         for r, h_r in self.device.hamiltonians.items():
             nnz = h_r.nnz
+            dtype = h_r.indices.dtype
             concatenated_indices[start_idx : start_idx + nnz, 1] = h_r.indices
             concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-                xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
+                xp.arange(h_r.shape[0], dtype=dtype), xp.diff(h_r.indptr).tolist()
             )
             start_idx += nnz
             if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                    xp.arange(h_r.shape[0], dtype=xp.int32),
+                    xp.arange(h_r.shape[0], dtype=dtype),
                     xp.diff(h_r.indptr).tolist(),
                 )
                 start_idx += nnz
 
         for r, s_r in self.device.overlap_matrices.items():
             nnz = s_r.nnz
+            dtype = s_r.indices.dtype
             concatenated_indices[start_idx : start_idx + nnz, 1] = s_r.indices
             concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-                xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
+                xp.arange(s_r.shape[0], dtype=dtype), xp.diff(s_r.indptr).tolist()
             )
             start_idx += nnz
             if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                    xp.arange(s_r.shape[0], dtype=xp.int32),
+                    xp.arange(s_r.shape[0], dtype=dtype),
                     xp.diff(s_r.indptr).tolist(),
                 )
                 start_idx += nnz
@@ -514,14 +516,14 @@ class QTBM(TransportSolver):
                 )
 
     def _add_sigma_obc_to_system_matrix(
-        self, factor: np.float64, obc_results: dict[Contact, OBCResult], energy_ind: int
+        self, factor: float, obc_results: dict[Contact, OBCResult], energy_ind: int
     ) -> None:
         """Adds the contribution of a contact self-energy to the system
         matrix for a given contact.
 
         Parameters
         ----------
-        factor : np.float64
+        factor : float
             A scaling factor for the self-energy contribution.
         obc_results : dict[Contact, OBCResult]
             Dictionary of OBC results for each contact.
@@ -574,7 +576,7 @@ class QTBM(TransportSolver):
             return
 
         # Add the boundary self-energy contributions.
-        self._add_sigma_obc_to_system_matrix(-1, obc_results, energy_ind)
+        self._add_sigma_obc_to_system_matrix(-1.0, obc_results, energy_ind)
 
     def _assemble_pseudo_inverse(
         self,
@@ -1294,7 +1296,7 @@ class QTBM(TransportSolver):
                             # Get the bare system matrix back, needed for
                             # transmission calculation
                             self._add_sigma_obc_to_system_matrix(
-                                1, obc_results, energy_ind
+                                1.0, obc_results, energy_ind
                             )
 
                         # Input

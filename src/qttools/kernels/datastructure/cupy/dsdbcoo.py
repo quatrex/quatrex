@@ -45,10 +45,19 @@ def find_inds(
         The maximum number of matches found.
 
     """
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
-    full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32)
-    counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
+    dtype = self_rows.dtype.type
+
+    if (
+        self_cols.dtype.type != dtype
+        or rows.dtype.type != dtype
+        or cols.dtype.type != dtype
+    ):
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {self_rows.dtype}, {self_cols.dtype}, {rows.dtype}, {cols.dtype}."
+        )
+
+    full_inds = cp.zeros_like(self_rows)
+    counts = cp.zeros_like(self_rows)
 
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._find_inds(
@@ -61,8 +70,8 @@ def find_inds(
             cols,
             full_inds,
             counts,
-            self_rows.shape[0],
-            rows.shape[0],
+            dtype(self_rows.shape[0]),
+            dtype(rows.shape[0]),
         ),
     )
 
@@ -103,12 +112,16 @@ def compute_block_slice(
         The stop index of the block.
 
     """
-    mask = cp.zeros(rows.shape[0], dtype=cp.int32)
-    row_start, row_stop = np.int32(block_offsets[row]), np.int32(block_offsets[row + 1])
-    col_start, col_stop = np.int32(block_offsets[col]), np.int32(block_offsets[col + 1])
+    mask = cp.zeros_like(rows, dtype=cp.bool_)
 
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
+    dtype = rows.dtype.type
+    if block_offsets.dtype.type != dtype or cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {rows.dtype}, {cols.dtype}, {block_offsets.dtype}."
+        )
+
+    row_start, row_stop = dtype(block_offsets[row]), dtype(block_offsets[row + 1])
+    col_start, col_stop = dtype(block_offsets[col]), dtype(block_offsets[col + 1])
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._compute_coo_block_mask(
@@ -122,7 +135,7 @@ def compute_block_slice(
             col_start,
             col_stop,
             mask,
-            np.int32(rows.shape[0]),
+            dtype(rows.shape[0]),
         ),
     )
     if cp.sum(mask) == 0:
@@ -173,6 +186,12 @@ def densify_block(
 
     """
 
+    dtype = rows.dtype.type
+    if cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {rows.dtype}, {cols.dtype}."
+        )
+
     # TODO: Needs profilig to see if this is faster than the raw kernel.
     if not use_kernel:
         block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
@@ -195,14 +214,14 @@ def densify_block(
                 rows,
                 cols,
                 data.reshape(-1),
-                np.int32(stack_size),
-                np.int32(stack_stride),
-                np.int32(nnz_per_block),
-                np.int32(block.shape[-2]),
-                np.int32(block.shape[-1]),
-                np.int32(block_start),
-                np.int32(row_offset),
-                np.int32(col_offset),
+                dtype(stack_size),
+                dtype(stack_stride),
+                dtype(nnz_per_block),
+                dtype(block.shape[-2]),
+                dtype(block.shape[-1]),
+                dtype(block_start),
+                dtype(row_offset),
+                dtype(col_offset),
             ),
         )
 
@@ -256,13 +275,17 @@ def compute_block_sort_index(
         The indexing that sorts the data by block-row and -column.
 
     """
-    num_blocks = block_sizes.shape[0]
-    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=np.int32)
+    dtype = coo_rows.dtype.type
+    if coo_cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {coo_rows.dtype}, {coo_cols.dtype}."
+        )
 
-    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
-    mask = cp.zeros(len(coo_cols), dtype=cp.int32)
-    coo_rows = coo_rows.astype(cp.int32)
-    coo_cols = coo_cols.astype(cp.int32)
+    num_blocks = block_sizes.shape[0]
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=dtype)
+
+    sort_index = cp.zeros_like(coo_cols)
+    mask = cp.zeros_like(coo_cols, dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
@@ -274,20 +297,29 @@ def compute_block_sort_index(
             (
                 coo_rows,
                 coo_cols,
-                np.int32(block_offsets[i]),
-                np.int32(block_offsets[i + 1]),
-                np.int32(block_offsets[j]),
-                np.int32(block_offsets[j + 1]),
+                dtype(block_offsets[i]),
+                dtype(block_offsets[i + 1]),
+                dtype(block_offsets[j]),
+                dtype(block_offsets[j + 1]),
                 mask,
-                np.int32(len(coo_cols)),
+                dtype(len(coo_cols)),
             ),
         )
 
         # NOTE: Fix for AMD cupy where cub was not used
-        if QTX_USE_CUPY_JIT:
-            bnnz = cp.sum(mask)
-        else:
+        if cp.cuda.runtime.is_hip:
+            if QTX_USE_CUPY_JIT:
+                # TODO: investigate this again
+                # this was a previous fix for AMD on Frontier
+                # remove the custom reduction if not needed anymore
+                # CUPY_ACCELERATORS still seems to be "" on AMD GPUs
+                raise RuntimeError(
+                    "AMD cupy does not support cub, custom reduction had to be used."
+                )
+
             bnnz = cupy_backend.reduction(mask)
+        else:
+            bnnz = cp.sum(mask)
 
         if bnnz != 0:
             # Sort the data by block-row and -column.

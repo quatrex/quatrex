@@ -65,17 +65,29 @@ class DSDBCOO(DSDBSparse):
         symmetry_op: Callable = xp.conj,
     ):
         """Initializes a DSDBCOO matrix."""
+
+        # NOTE: The idea is that outside scipy decides
+        # the correct data type for the indices.
+        # We just need to make sure to follow.
+        index_type = rows.dtype
+        if cols.dtype != index_type:
+            raise TypeError(
+                "Row and column indices must have the same dtype "
+                f"but got {rows.dtype} and {cols.dtype}."
+            )
+
         super().__init__(
             data,
             block_sizes,
             global_stack_shape,
+            index_type,
             return_dense,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
         )
 
-        self.rows = xp.asarray(rows, dtype=xp.int32)
-        self.cols = xp.asarray(cols, dtype=xp.int32)
+        self.rows = xp.asarray(rows, dtype=index_type)
+        self.cols = xp.asarray(cols, dtype=index_type)
 
         # NOTE: If the symmetry is not enforced and we want to symmetrize
         # later, we need to check if the sparsity pattern is symmetric now.
@@ -86,26 +98,20 @@ class DSDBCOO(DSDBSparse):
 
     def _set_diagonal_indices(self) -> None:
         """Sets the diagonal indices of the matrix."""
-        self._diag_inds = xp.where(self.rows == self.cols)[0]
+        self._diag_inds = xp.where(self.rows == self.cols)[0].astype(self.index_type)
         self._diag_value_inds = self.rows[self._diag_inds]
         ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
 
-        self.rows_nnz = (
-            self.rows[
-                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
-                    comm.stack.rank + 1
-                ]
+        self.rows_nnz = self.rows[
+            self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                comm.stack.rank + 1
             ]
-            + self.global_block_offset
-        )
-        self.cols_nnz = (
-            self.cols[
-                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
-                    comm.stack.rank + 1
-                ]
+        ] + self.index_type.type(self.global_block_offset)
+        self.cols_nnz = self.cols[
+            self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                comm.stack.rank + 1
             ]
-            + self.global_block_offset
-        )
+        ] + self.index_type.type(self.global_block_offset)
 
         if not any(ranks == comm.stack.rank):
             self._diag_inds_nnz = None
@@ -160,6 +166,12 @@ class DSDBCOO(DSDBSparse):
         else:
             self_rows = self.rows_nnz
             self_cols = self.cols_nnz
+
+        # queried rows and cols might be in int64
+        # while the internal rows and cols are in int32
+        dtype = self_rows.dtype
+        rows = rows.astype(dtype)
+        cols = cols.astype(dtype)
 
         if self.symmetry:
             # find items in lower triangle and send them to upper triangle
@@ -593,7 +605,7 @@ class DSDBCOO(DSDBSparse):
             The new block sizes.
 
         """
-        block_sizes = np.asarray(block_sizes, dtype=np.int32)
+        block_sizes = np.asarray(block_sizes, dtype=self.index_type)
 
         if self.distribution_state == "nnz":
             raise NotImplementedError(
@@ -768,6 +780,7 @@ class DSDBCOO(DSDBSparse):
         # In the block distributed case, this is an upper bound, but sufficient for the check.
         num_rows = self.shape[-2]
 
+        # NOTE: This is upcasted to not overflow
         idx_original = (self.rows.astype(xp.int64) * num_rows) + self.cols
         idx_swapped = (self.cols.astype(xp.int64) * num_rows) + self.rows
 

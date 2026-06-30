@@ -56,6 +56,7 @@ dependencies = [
         "isort",
         "ruff",
         "just",
+        "clang-format",
     ]
     docs = [
         "mkdocs",
@@ -83,3 +84,6 @@ testpaths = ["tests"]
 
 [tool.isort]
 profile = "black"
+
+[tool.setuptools.package-data]
+"*" = ["*.cu"]

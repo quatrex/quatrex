@@ -42,12 +42,19 @@ def find_inds(
         The matching indices of this matrix.
 
     """
-    brows = cp.zeros(rows.shape[0], dtype=cp.int32)
-    bcols = cp.zeros(cols.shape[0], dtype=cp.int32)
-    block_offsets = block_offsets.astype(cp.int32)
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
-    self_cols = self_cols.astype(cp.int32)
+
+    dtype = rows.dtype.type
+    if (
+        self_cols.dtype.type != dtype
+        or cols.dtype.type != dtype
+        or block_offsets.dtype.type != dtype
+    ):
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {self_cols.dtype}, {rows.dtype}, {cols.dtype}, {block_offsets.dtype}."
+        )
+
+    brows = cp.zeros_like(rows)
+    bcols = cp.zeros_like(cols)
 
     bcoords_blocks_per_grid = (
         rows.shape[0] + THREADS_PER_BLOCK - 1
@@ -62,8 +69,8 @@ def find_inds(
             cols,
             brows,
             bcols,
-            np.int32(rows.shape[0]),
-            np.int32(block_offsets.shape[0]),
+            dtype(rows.shape[0]),
+            dtype(block_offsets.shape[0]),
         ),
     )
     # Get an ordered list of unique blocks.
@@ -78,17 +85,23 @@ def find_inds(
         rowptr = rowptr_map.get((brow, bcol), None)
         if rowptr is None:
             continue
-        mask = cp.zeros(brows.shape[0], dtype=cp.bool_)
+        mask = cp.zeros_like(brows, dtype=cp.bool_)
+
+        if rowptr.dtype != dtype or brows.dtype != dtype or bcols.dtype != dtype:
+            raise TypeError(
+                f"All input arrays must have the same dtype, but got {rowptr.dtype}, {brows.dtype}, {bcols.dtype}."
+            )
+
         cupy_backend._compute_block_mask(
             (block_mask_blocks_per_grid,),
             (THREADS_PER_BLOCK,),
             (
                 brows,
                 bcols,
-                brow,
-                bcol,
+                dtype(brow),
+                dtype(bcol),
                 mask,
-                np.int32(brows.shape[0]),
+                dtype(brows.shape[0]),
             ),
         )
         mask_inds = cp.nonzero(mask)[0]
@@ -96,10 +109,19 @@ def find_inds(
         # Renormalize the row indices for this block.
         rr = rows[mask] - block_offsets[brow]
         cc = cols[mask]
+        block_inds = cp.zeros_like(rr)
 
-        rowptr = rowptr.astype(cp.int32)
+        if (
+            rr.dtype != dtype
+            or cc.dtype != dtype
+            or self_cols.dtype != dtype
+            or rowptr.dtype != dtype
+            or block_inds.dtype != dtype
+        ):
+            raise TypeError(
+                f"All input arrays must have the same dtype, but got {rr.dtype}, {cc.dtype}, {self_cols.dtype}, {rowptr.dtype}, {block_inds.dtype}."
+            )
 
-        block_inds = cp.zeros(rr.shape[0], dtype=cp.int32)
         blocks_per_grid = (rr.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
         cupy_backend._compute_block_inds(
             (blocks_per_grid,),
@@ -110,7 +132,7 @@ def find_inds(
                 self_cols,
                 rowptr,
                 block_inds,
-                np.int32(rr.shape[0]),
+                dtype(rr.shape[0]),
             ),
         )
 
@@ -119,7 +141,7 @@ def find_inds(
         inds.extend(block_inds[valid])
         value_inds.extend(mask_inds[valid])
 
-    return cp.array(inds, dtype=int), cp.array(value_inds, dtype=int)
+    return cp.array(inds, dtype=dtype), cp.array(value_inds, dtype=dtype)
 
 
 def densify_block(
@@ -145,11 +167,15 @@ def densify_block(
         The data to fill the block with.
 
     """
-    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
-    rows = cp.zeros(cols.shape[0], dtype=cp.int32)
-    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK - 2) // THREADS_PER_BLOCK
+    dtype = self_cols.dtype.type
+    if self_cols.dtype.type != dtype or rowptr.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {self_cols.dtype}, {rowptr.dtype}."
+        )
 
-    rowptr = rowptr.astype(cp.int32)
+    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
+    rows = cp.zeros_like(cols)
+    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK - 2) // THREADS_PER_BLOCK
 
     cupy_backend._expand_rows(
         (blocks_per_grid,),
@@ -157,7 +183,7 @@ def densify_block(
         (
             rows,
             rowptr - rowptr[0],
-            np.int32(rowptr.shape[0]),
+            dtype(rowptr.shape[0]),
         ),
     )
     block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
@@ -186,11 +212,15 @@ def sparsify_block(
         The data to be filled with the block.
 
     """
-    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
-    rows = cp.zeros(cols.shape[0], dtype=cp.int32)
-    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK) // THREADS_PER_BLOCK
+    dtype = self_cols.dtype.type
+    if self_cols.dtype.type != dtype or rowptr.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {self_cols.dtype}, {rowptr.dtype}."
+        )
 
-    rowptr = rowptr.astype(cp.int32)
+    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
+    rows = cp.zeros_like(cols)
+    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK) // THREADS_PER_BLOCK
 
     cupy_backend._expand_rows(
         (blocks_per_grid,),
@@ -198,7 +228,7 @@ def sparsify_block(
         (
             rows,
             rowptr - rowptr[0],
-            np.int32(rowptr.shape[0]),
+            dtype(rowptr.shape[0]),
         ),
     )
     data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
@@ -232,15 +262,19 @@ def compute_rowptr_map(
         blockwise column-sparse-row format.
 
     """
+
+    dtype = coo_rows.dtype.type
+    if coo_cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {coo_rows.dtype}, {coo_cols.dtype}."
+        )
+
     num_blocks = block_sizes.shape[0]
-    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=np.int32)
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=dtype)
 
-    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
+    sort_index = cp.zeros_like(coo_cols)
     rowptr_map = {}
-    mask = cp.zeros(len(coo_cols), dtype=cp.int32)
-
-    coo_rows = coo_rows.astype(cp.int32)
-    coo_cols = coo_cols.astype(cp.int32)
+    mask = cp.zeros_like(coo_cols, dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
@@ -251,19 +285,29 @@ def compute_rowptr_map(
             (
                 coo_rows,
                 coo_cols,
-                np.int32(block_offsets[i]),
-                np.int32(block_offsets[i + 1]),
-                np.int32(block_offsets[j]),
-                np.int32(block_offsets[j + 1]),
+                dtype(block_offsets[i]),
+                dtype(block_offsets[i + 1]),
+                dtype(block_offsets[j]),
+                dtype(block_offsets[j + 1]),
                 mask,
-                np.int32(len(coo_rows)),
+                dtype(len(coo_rows)),
             ),
         )
 
-        if QTX_USE_CUPY_JIT:
-            bnnz = cp.sum(mask)
-        else:
+        # NOTE: Fix for AMD cupy where cub was not used
+        if cp.cuda.runtime.is_hip:
+            if QTX_USE_CUPY_JIT:
+                # TODO: investigate this again
+                # this was a previous fix for AMD on Frontier
+                # remove the custom reduction if not needed anymore
+                # CUPY_ACCELERATORS still seems to be "" on AMD GPUs
+                raise RuntimeError(
+                    "AMD cupy does not support cub, custom reduction had to be used."
+                )
+
             bnnz = cupy_backend.reduction(mask)
+        else:
+            bnnz = cp.sum(mask)
 
         if bnnz != 0:
             # Sort the data by block-row and -column.
@@ -271,11 +315,11 @@ def compute_rowptr_map(
 
             # Compute the rowptr map.
             hist, __ = cp.histogram(
-                coo_rows[mask.astype(cp.bool_)] - block_offsets[i],
+                coo_rows[mask] - block_offsets[i],
                 bins=cp.arange(block_sizes[i] + 1),
             )
             rowptr = cp.hstack((cp.array([0]), cp.cumsum(hist))) + offset
-            rowptr_map[(i, j)] = rowptr
+            rowptr_map[(i, j)] = rowptr.astype(dtype)
 
             offset += bnnz
 

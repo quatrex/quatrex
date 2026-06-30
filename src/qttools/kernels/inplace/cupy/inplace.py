@@ -3,13 +3,17 @@
 import cupy as cp
 
 from qttools import NDArray
-from qttools.kernels.inplace.cupy import _rawkernel
+from qttools.kernels.inplace.cupy import _cupy_rawkernel
 
 THREADS_PER_BLOCK = 1024
 
 
 def scatter_add_scaled(
-    a: NDArray, b: NDArray, inds: NDArray, alpha: float = 1.0, conjugate: bool = False
+    a: NDArray,
+    b: NDArray,
+    inds: NDArray,
+    alpha: complex | float = 1.0,
+    conjugate: bool = False,
 ) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
 
@@ -21,7 +25,7 @@ def scatter_add_scaled(
         The array to be added to `a`.
     inds : NDArray
         The indices at which to add `b` to `a`.
-    alpha : complex, optional
+    alpha : complex | float, optional
         The scalar multiplier for `b` before adding it to `a`.
     conjugate : bool, optional
         Whether to take the complex conjugate of `b` before adding it to
@@ -31,13 +35,21 @@ def scatter_add_scaled(
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
-    kernel = _rawkernel.scatter_add_scaled_kernels.get(
-        (a.dtype.type, b.dtype.type, alpha.dtype.type)
-    )
-    kernel(
+    if isinstance(alpha, complex):
+        alpha = cp.complex128(alpha)
+    elif isinstance(alpha, float):
+        alpha = cp.float64(alpha)
+    else:
+        raise TypeError(
+            f"Unsupported type for alpha: {type(alpha)}. Must be float or complex."
+        )
+
+    index_type = inds.dtype.type
+
+    _cupy_rawkernel._scatter_add_scaled(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (a, b, inds, num_inds, alpha, conjugate),
+        (a, b, inds, index_type(num_inds), alpha, conjugate),
     )
 
 
@@ -76,9 +88,21 @@ def scatter_add_scaled_obc(
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
 
-    alpha = cp.float64(alpha)
+    if a.dtype.type != cp.complex128 or b.dtype.type != cp.complex128:
+        raise TypeError(
+            "Only complex128 arrays are supported for scatter_add_scaled_obc."
+        )
 
-    _rawkernel._scatter_add_scaled_obc(
+    if not isinstance(alpha, float):
+        # NOTE: cupy will match float with double
+        raise TypeError(
+            "Only float alpha is supported for scatter_add_scaled_obc.\n"
+            f"Got {type(alpha)} instead."
+        )
+
+    index_type = inds.dtype.type
+
+    _cupy_rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (
@@ -86,11 +110,11 @@ def scatter_add_scaled_obc(
             b.flatten(),
             ky,
             kz,
-            b.shape[1] * ny * nz,
-            b.shape[1],
-            nz,
+            index_type(b.shape[1] * ny * nz),
+            index_type(b.shape[1]),
+            index_type(nz),
             inds,
-            num_inds,
+            index_type(num_inds),
             alpha,
         ),
     )

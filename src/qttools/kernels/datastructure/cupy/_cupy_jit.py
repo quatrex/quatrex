@@ -1,76 +1,90 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
-import cupy as cp
+from functools import cache
+
 from cupyx import jit
 
 from qttools import NDArray
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
 
 
-@jit.rawkernel()
-def _find_inds(
-    self_rows: NDArray,
-    self_cols: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    full_inds: NDArray,
-    counts: NDArray,
-    num_self_rows: int,
-    num_rows: int,
-):
-    """Finds the corresponding indices of the given rows and columns.
+@cache
+def _get_find_inds_kernel(index_dtype):
 
-    This also counts the number of matches found, which is used to check
-    if the indices contain duplicates.
+    @jit.rawkernel()
+    def _find_inds_kernel(
+        self_rows: NDArray,
+        self_cols: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        full_inds: NDArray,
+        counts: NDArray,
+        num_self_rows: int,
+        num_rows: int,
+    ):
+        """Finds the corresponding indices of the given rows and columns.
 
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-    full_inds : NDArray
-        The indices of the given rows and columns.
-    counts : NDArray
-        The number of matches found.
+        This also counts the number of matches found, which is used to check
+        if the indices contain duplicates.
+
+        Parameters
+        ----------
+        self_rows : NDArray
+            The rows of this matrix.
+        self_cols : NDArray
+            The columns of this matrix.
+        rows : NDArray
+            The rows to find the indices for.
+        cols : NDArray
+            The columns to find the indices for.
+        full_inds : NDArray
+            The indices of the given rows and columns.
+        counts : NDArray
+            The number of matches found.
 
 
-    """
-    i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
-    tid = int(jit.threadIdx.x)
-    cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
-    cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        tid = int(jit.threadIdx.x)
+        cache_rows = jit.shared_memory(index_dtype, THREADS_PER_BLOCK)
+        cache_cols = jit.shared_memory(index_dtype, THREADS_PER_BLOCK)
 
-    if i < num_self_rows:
-        my_row = self_rows[i]
-        my_col = self_cols[i]
-    else:
-        my_row = -1
-        my_col = -1
+        if i < num_self_rows:
+            my_row = self_rows[i]
+            my_col = self_cols[i]
+        else:
+            my_row = -1
+            my_col = -1
 
-    my_full_ind = 0
-    my_count = 0
+        my_full_ind = 0
+        my_count = 0
 
-    for j in range(0, num_rows, THREADS_PER_BLOCK):
-        if j + tid < num_rows:
-            cache_rows[tid] = rows[j + tid]
-            cache_cols[tid] = cols[j + tid]
-        jit.syncthreads()
+        for j in range(0, num_rows, THREADS_PER_BLOCK):
+            if j + tid < num_rows:
+                cache_rows[tid] = rows[j + tid]
+                cache_cols[tid] = cols[j + tid]
+            jit.syncthreads()
 
-        for idx in range(j, min(j + THREADS_PER_BLOCK, num_rows)):
-            cond = int(
-                (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
-            )
-            my_full_ind = my_full_ind * (1 - cond) + idx * cond
-            my_count += cond
-        jit.syncthreads()
+            for idx in range(j, min(j + THREADS_PER_BLOCK, num_rows)):
+                cond = int(
+                    (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
+                )
+                my_full_ind = my_full_ind * (1 - cond) + idx * cond
+                my_count += cond
+            jit.syncthreads()
 
-    if i < self_rows.shape[0]:
-        full_inds[i] = my_full_ind
-        counts[i] = my_count
+        if i < self_rows.shape[0]:
+            full_inds[i] = my_full_ind
+            counts[i] = my_count
+
+    return _find_inds_kernel
+
+
+def _find_inds(grid: tuple[int, int, int], block: tuple[int, int, int], args: tuple):
+    index_dtype = args[0].dtype.type
+
+    kernel = _get_find_inds_kernel(index_dtype)
+
+    return kernel(grid, block, args)
 
 
 @jit.rawkernel()

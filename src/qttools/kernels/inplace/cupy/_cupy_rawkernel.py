@@ -17,33 +17,44 @@ if comm.rank == 0:
 kernels_template = comm.bcast(kernels_template, root=0)
 
 name_expressions = {}
-for t1, t2, t3, idx in product(
+for (
+    (value1_numpy_type, value1_c_type),
+    (value2_numpy_type, value2_c_type),
+    (value3_numpy_type, value3_c_type),
+    (index_numpy_type, index_c_type),
+) in product(
     value_types.items(), value_types.items(), value_types.items(), index_types.items()
 ):
 
     # Only compile double versions of the kernels, since float versions are not used in practice.
     if (
-        t1[0] in [cp.float32, cp.complex64]
-        or t2[0] in [cp.float32, cp.complex64]
-        or t3[0] in [cp.float32, cp.complex64]
+        value1_numpy_type in [cp.float32, cp.complex64]
+        or value2_numpy_type in [cp.float32, cp.complex64]
+        or value3_numpy_type in [cp.float32, cp.complex64]
     ):
         continue
 
     # Skip when T1 is real and T2/T3 is complex, since this would result in a type mismatch.
-    if (t1[0] in [cp.float64]) and (
-        t2[0] in [cp.complex128] or t3[0] in [cp.complex128]
+    if (value1_numpy_type in [cp.float64]) and (
+        value2_numpy_type in [cp.complex128] or value3_numpy_type in [cp.complex128]
     ):
         continue
 
     name = "_scatter_add_scaled"
-    name_expressions[(t1[0], t2[0], t3[0], idx[0], name)] = (
-        f"{name}<{t1[1]},{t2[1]},{t3[1]},{idx[1]}>"
-    )
+    name_expressions[
+        (
+            value1_numpy_type,
+            value2_numpy_type,
+            value3_numpy_type,
+            index_numpy_type,
+            name,
+        )
+    ] = f"{name}<{value1_c_type},{value2_c_type},{value3_c_type},{index_c_type}>"
 
 
-for idx in index_types.items():
+for index_numpy_type, index_c_type in index_types.items():
     name = "_scatter_add_scaled_obc"
-    name_expressions[(idx[0], name)] = f"{name}<{idx[1]}>"
+    name_expressions[(index_numpy_type, name)] = f"{name}<{index_c_type}>"
 
 module = cp.RawModule(
     code=kernels_template,

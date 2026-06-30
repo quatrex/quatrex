@@ -32,24 +32,26 @@ kernel_names = [
 ]
 
 name_expressions = {
-    (idx[0], name): f"{name}<{idx[1]}>"
-    for idx in index_types.items()
+    (index_numpy_type, name): f"{name}<{index_c_type}>"
+    for (index_numpy_type, index_c_type) in index_types.items()
     for name in kernel_names
 }
 
-for idx1 in index_types.items():
-    for idx2 in index_types.items():
-        name_expressions[(idx1[0], idx2[0], "_reduction")] = (
-            f"_reduction<{idx1[1]}, {idx2[1]}>"
+for index1_numpy_type, index1_c_type in index_types.items():
+    for index2_numpy_type, index2_c_type in index_types.items():
+        name_expressions[(index1_numpy_type, index2_numpy_type, "_reduction")] = (
+            f"_reduction<{index1_c_type}, {index2_c_type}>"
         )
 
-for idx in index_types.items():
-    name_expressions[cp.bool_, idx[0], "_reduction"] = f"_reduction<bool, {idx[1]}>"
+for index_numpy_type, index_c_type in index_types.items():
+    name_expressions[cp.bool_, index_numpy_type, "_reduction"] = (
+        f"_reduction<bool, {index_c_type}>"
+    )
 
-for idx in index_types.items():
-    for val in value_types.items():
-        name_expressions[(idx[0], val[0], "_densify_block")] = (
-            f"_densify_block<{idx[1]}, {val[1]}>"
+for index_numpy_type, index_c_type in index_types.items():
+    for val_numpy_type, val_c_type in value_types.items():
+        name_expressions[(index_numpy_type, val_numpy_type, "_densify_block")] = (
+            f"_densify_block<{index_c_type}, {val_c_type}>"
         )
 
 module = cp.RawModule(
@@ -119,6 +121,8 @@ def reduction(
     This is a naive implementation for SC25 This was needed since cupy
     didnt perform well on MI250X. TODO: Further investigate on newer cupy
     versions.
+    This function is not optimized for performance and may be slow.
+    Furthermore, it can not handle all input types and shapes.
 
     Parameters
     ----------
@@ -131,14 +135,21 @@ def reduction(
         Reduced output array.
 
     """
+    if a.ndim != 1:
+        raise ValueError("Input array must be 1-dimensional.")
+
     dtype = a.dtype.type
 
+    # NOTE: Harcode output dtype to int64
+    # to prevent issues with overflow
+    out_dtype = cp.int64
+
     n_blocks = 4
-    out = cp.zeros((n_blocks * THREADS_PER_BLOCK), dtype=dtype)
+    out = cp.zeros((n_blocks * THREADS_PER_BLOCK), dtype=out_dtype)
 
     n = a.size
 
-    _reduction = kernels[(index_types[dtype], "_reduction")]
+    _reduction = kernels[(dtype, out_dtype, "_reduction")]
 
     _reduction(
         (n_blocks,),
@@ -146,7 +157,7 @@ def reduction(
         (
             a,
             out,
-            dtype(n),
+            out_dtype(n),
         ),
     )
 

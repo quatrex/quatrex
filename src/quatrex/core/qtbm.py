@@ -804,7 +804,7 @@ class QTBM(TransportSolver):
                         * fermi_dirac(
                             self.local_energies[global_energy_ind]
                             - contact.fermi_level,
-                            self.config.electron.temperature,
+                            contact.temperature,
                         )
                         * (
                             self.local_dEp[global_energy_ind]
@@ -1263,30 +1263,6 @@ class QTBM(TransportSolver):
         for contact in self.device.contacts:
             contact._init_hamiltonian_overlap_matrices()
 
-    def get_charge_density(self) -> NDArray:
-        """Gets the charge density from the QTBM calculation.
-
-        This method integrates the local density of states to obtain the
-        charge density. This is typically used in self-consistent
-        calculations where the charge density is needed to update the
-        potential.
-
-        Returns
-        -------
-        charge_density : NDArray
-            The computed charge density for the device.
-
-        """
-        electron_density, hole_density = self._compute_excess_charge_densities()
-        charge_density = electron_density - hole_density
-
-        # From orbital to atom resolved charge density.
-        charge_density = np.add.reduceat(
-            charge_density, self.device.orbital_offsets[:-1]
-        )
-
-        return charge_density
-
     def _compute_excess_charge_densities(self):
         """Computes the charge density from the local density of states.
 
@@ -1336,37 +1312,6 @@ class QTBM(TransportSolver):
         excess_hole_density = xp.trapezoid(hole_density, self.electron_energies, axis=1)
 
         return excess_electron_density, excess_hole_density
-
-    def set_potential(self, potential: NDArray):
-        """Sets the potential for the QTBM calculation.
-
-        This method can be used to update the potential in the system
-        matrix for self-consistent calculations. It modifies the system
-        matrix in-place to include the new potential.
-
-        Parameters
-        ----------
-        potential : NDArray
-            The new potential values to be set in the system matrix.
-
-        """
-        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-
-            # Upscale the potential to the number of orbitals
-            orbitals_per_atom = [
-                self.config.device.num_orbitals_per_atom.get(species, 1)
-                for species in self.device.atomic_species
-            ]
-            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-
-        # HACK: Because the potential is baked into the Hamiltonian, we
-        # need to update the Hamiltonian matrices.
-        delta_potential = potential - self.device.potential
-        self.device.potential = delta_potential
-
-        self.device.apply_potential()
-        for contact in self.device.contacts:
-            contact._init_hamiltonian_overlap_matrices()
 
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.

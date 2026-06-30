@@ -56,8 +56,9 @@ class Observables:
     )
     transmissions: dict[tuple[Contact, Contact], NDArray] = field(default_factory=dict)
 
-    bond_transmissions: dict = field(default_factory=dict)
-    bond_currents: dict = field(default_factory=dict)
+    bond_currents: xp.ndarray = field(
+        default_factory=lambda: xp.zeros(0, dtype=xp.float64)
+    )
 
 
 class QTBM(TransportSolver):
@@ -114,37 +115,13 @@ class QTBM(TransportSolver):
 
         # Get the electron energies.
         self.electron_energies = get_electron_energies(config)
+        self.dEp = xp.diff(self.electron_energies, append=self.electron_energies[-1])
+        self.dEn = xp.diff(self.electron_energies, prepend=self.electron_energies[0])
 
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
-
-        # Look for all the combinations of contacts
-        for contact_in in self.device.contacts:
-            for contact_out in self.device.contacts:
-                if contact_in == contact_out:
-                    continue
-
-                # Initialize the observables
-                self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                    (self.num_kpoints, self.local_energies.shape[0]),
-                    dtype=xp.float64,
-                )
-
-        for contact in self.device.contacts:
-            self.observables.electron_ldos[contact] = xp.zeros(
-                (self.num_kpoints, self.num_orbitals, self.local_energies.shape[0]),
-                dtype=xp.float64,
-            )
-
-            if self.config.qtbm.full_current:
-                self.observables.bond_transmissions[contact] = xp.zeros(
-                    (
-                        self.num_kpoints,
-                        self.device.bonds.shape[0],
-                        self.local_energies.shape[0],
-                    ),
-                    dtype=xp.float64,
-                )
+        self.local_dEp = get_local_slice(self.dEp)
+        self.local_dEn = get_local_slice(self.dEn)
 
         if self.config.qtbm.low_rank_obc:
             self.system_matrix_view = "upper"
@@ -182,6 +159,31 @@ class QTBM(TransportSolver):
         ]
 
         self._allocate_system_matrix()
+
+        # Look for all the combinations of contacts
+        for contact_in in self.device.contacts:
+            for contact_out in self.device.contacts:
+                if contact_in == contact_out:
+                    continue
+
+                # Initialize the observables
+                self.observables.transmissions[contact_in, contact_out] = xp.zeros(
+                    (self.num_kpoints, self.local_energies.shape[0]),
+                    dtype=xp.float64,
+                )
+
+        for contact in self.device.contacts:
+            self.observables.electron_ldos[contact] = xp.zeros(
+                (self.num_kpoints, self.num_orbitals, self.local_energies.shape[0]),
+                dtype=xp.float64,
+            )
+
+            if self.config.qtbm.full_current:
+                self.observables.bond_currents = xp.zeros(
+                    (self.system_matrix.nnz,),
+                    dtype=xp.float64,
+                )
+
         free_mempool()
 
     @staticmethod
@@ -791,18 +793,26 @@ class QTBM(TransportSolver):
             for contact in self.device.contacts:
                 slice_tuple = injection_slices[contact].indices(phi.shape[1])
                 for n_phi in range(*slice_tuple):
-
-                    M = (
+                    M = -(
                         sparse.diags(phi[:, n_phi].T.conj())
                         @ self.system_matrix
                         @ sparse.diags(phi[:, n_phi])
                     )
-                    M = 2 * xp.imag(
-                        (self.device.P.T @ M @ self.device.P).toarray()
-                    )  # TODO I had to switch the sign here, need to investigate why
-                    self.observables.bond_transmissions[contact][
-                        kpoint_ind, :, global_energy_ind
-                    ] += M[self.device.bonds[:, 0], self.device.bonds[:, 1]]
+                    self.observables.bond_currents -= (
+                        2
+                        * xp.imag(M.data)
+                        * fermi_dirac(
+                            self.local_energies[global_energy_ind]
+                            - contact.fermi_level,
+                            self.config.electron.temperature,
+                        )
+                        * (
+                            self.local_dEp[global_energy_ind]
+                            + self.local_dEn[global_energy_ind]
+                        )
+                        * (e / h)
+                        / self.num_kpoints
+                    )
 
     def _compute_ldos(
         self,
@@ -1115,29 +1125,6 @@ class QTBM(TransportSolver):
                 * (2 * e / h)
             )
 
-        if self.config.qtbm.full_current:
-            self.observables.bond_currents = xp.zeros(
-                self.device.bonds.shape[0], dtype=xp.float64
-            )
-
-            for contact in self.device.contacts:
-                prefactor = fermi_dirac(
-                    self.electron_energies - contact.fermi_level,
-                    self.config.electron.temperature,
-                )
-                self.observables.bond_currents += -(
-                    xp.sum(
-                        xp.trapezoid(
-                            prefactor * self.observables.bond_transmissions[contact],
-                            self.electron_energies,
-                            axis=2,
-                        ),
-                        axis=0,
-                    )
-                    / self.num_kpoints
-                    * (2 * e / h)
-                )
-
     def _write_outputs(self):
         """Writes the computed observables to output files."""
         if comm.rank == 0:
@@ -1173,18 +1160,132 @@ class QTBM(TransportSolver):
                 )
 
             if self.config.qtbm.full_current:
-                np.save(
-                    f"{output_dir}/bond_currents.npy",
-                    self.observables.bond_currents,
+                bond_currents_matrix = self.system_matrix.tocoo()
+                bond_currents_matrix.data[:] = self.observables.bond_currents
+
+                from scipy import sparse as sps
+
+                sps.save_npz(
+                    f"{output_dir}/orbital_current_matrix.npz",
+                    (
+                        bond_currents_matrix.get()
+                        if hasattr(bond_currents_matrix, "get")
+                        else bond_currents_matrix
+                    ),
                 )
-                for (
-                    contact,
-                    bond_transmission,
-                ) in self.observables.bond_transmissions.items():
-                    np.save(
-                        f"{output_dir}/bond_transmission_{contact.name[0]}.npy",
-                        bond_transmission,
-                    )
+                sps.save_npz(
+                    f"{output_dir}/P.npz",
+                    (
+                        self.device.P.get()
+                        if hasattr(self.device.P, "get")
+                        else self.device.P
+                    ),
+                )
+
+    def _compute_excess_charge_densities(self):
+        """Computes the charge density from the local density of states.
+
+        Returns
+        -------
+        excess_electron_density : NDArray
+            The excess electron density computed from the local density
+            of states.
+        excess_hole_density : NDArray
+            The excess hole density computed from the local density of
+            states.
+        """
+
+        # Compute the spectral electron and hole densities.
+        electron_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
+        hole_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
+        for contact, ldos in self.observables.electron_ldos.items():
+            mu = contact.fermi_level - contact.voltage
+            occupancy = fermi_dirac(
+                self.electron_energies - mu,
+                contact.temperature,
+            )
+
+            electron_density += occupancy * ldos.sum(axis=0) * 2  # Spin
+            hole_density += (1 - occupancy) * ldos.sum(axis=0) * 2  # Spin
+
+        # Find the reference contact mid-gap energy to separate
+        # electrons and holes.
+        for contact in self.device.contacts:
+            if contact.voltage == 0:
+                mid_gap_energy = contact.mid_gap_energy
+                break
+        else:  # Did not break, no reference contact found
+            raise ValueError(
+                "No reference contact with zero voltage found to determine mid-gap energy."
+            )
+
+        mid_gap_energy = self.device.potential + mid_gap_energy
+
+        mask = self.electron_energies > mid_gap_energy[:, None]
+        electron_density[~mask] = 0
+        hole_density[mask] = 0
+
+        excess_electron_density = xp.trapezoid(
+            electron_density, self.electron_energies, axis=1
+        )
+        excess_hole_density = xp.trapezoid(hole_density, self.electron_energies, axis=1)
+
+        return excess_electron_density, excess_hole_density
+
+    def set_potential(self, potential: NDArray):
+        """Sets the potential for the QTBM calculation.
+
+        This method can be used to update the potential in the system
+        matrix for self-consistent calculations. It modifies the system
+        matrix in-place to include the new potential.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The new potential values to be set in the system matrix.
+
+        """
+        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
+
+            # Upscale the potential to the number of orbitals
+            orbitals_per_atom = [
+                self.config.device.num_orbitals_per_atom.get(species, 1)
+                for species in self.device.atomic_species
+            ]
+            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
+
+        # HACK: Because the potential is baked into the Hamiltonian, we
+        # need to update the Hamiltonian matrices.
+        delta_potential = potential - self.device.potential
+        self.device.potential = delta_potential
+
+        self.device.apply_potential()
+        for contact in self.device.contacts:
+            contact._init_hamiltonian_overlap_matrices()
+
+    def get_charge_density(self) -> NDArray:
+        """Gets the charge density from the QTBM calculation.
+
+        This method integrates the local density of states to obtain the
+        charge density. This is typically used in self-consistent
+        calculations where the charge density is needed to update the
+        potential.
+
+        Returns
+        -------
+        charge_density : NDArray
+            The computed charge density for the device.
+
+        """
+        electron_density, hole_density = self._compute_excess_charge_densities()
+        charge_density = electron_density - hole_density
+
+        # From orbital to atom resolved charge density.
+        charge_density = np.add.reduceat(
+            charge_density, self.device.orbital_offsets[:-1]
+        )
+
+        return charge_density
 
     def _compute_excess_charge_densities(self):
         """Computes the charge density from the local density of states.
@@ -1394,13 +1495,9 @@ class QTBM(TransportSolver):
             )
 
         if self.config.qtbm.full_current:
-            for (
-                contact,
-                bond_transmission,
-            ) in self.observables.bond_transmissions.items():
-                self.observables.bond_transmissions[contact] = comm.stack.all_gather_v(
-                    bond_transmission, axis=2
-                )
+            temp = xp.empty_like(self.observables.bond_currents)
+            comm.stack.all_reduce(self.observables.bond_currents, temp)
+            self.observables.bond_currents = temp
 
         self._compute_current()
 

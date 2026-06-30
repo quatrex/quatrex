@@ -875,7 +875,7 @@ class QTBM(TransportSolver):
                         * fermi_dirac(
                             self.local_energies[global_energy_ind]
                             - contact.fermi_level,
-                            self.config.electron.temperature,
+                            contact.temperature,
                         )
                         * (
                             self.local_dEp[global_energy_ind]
@@ -1385,7 +1385,14 @@ class QTBM(TransportSolver):
             ]
             potential = xp.repeat(potential, orbitals_per_atom, axis=0)
 
-        self.device.potential = potential
+        # HACK: Because the potential is baked into the Hamiltonian, we
+        # need to update the Hamiltonian matrices.
+        delta_potential = potential - self.device.potential
+        self.device.potential = delta_potential
+
+        self.device.apply_potential()
+        for contact in self.device.contacts:
+            contact._init_hamiltonian_overlap_matrices()
 
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.

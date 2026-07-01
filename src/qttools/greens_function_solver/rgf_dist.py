@@ -18,12 +18,6 @@ class RGFDist(GFSolver):
 
     Parameters
     ----------
-    solve_lesser : bool, optional
-        Whether to solve the quadratic system associated with the lesser right-hand-side,
-        by default False.
-    solve_greater : bool, optional
-        Whether to solve the quadratic system associated with the greater right-hand-side,
-        by default False.
     max_batch_size : int, optional
         Maximum batch size to use when inverting the matrix, by default
         100.
@@ -48,6 +42,9 @@ class RGFDist(GFSolver):
             Matrix to invert.
         out : DSDBSparse, optional
             Preallocated output matrix, by default None.
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
 
         Returns
         -------
@@ -144,7 +141,7 @@ class RGFDist(GFSolver):
         r"""Performs selected inversion of a block-tridiagonal matrix.
 
         Can optionally solve the quadratic system associated with the
-        Bl and Bg matrices in the equation AXA^T = B.
+        lesser and greater right-hand-sides.
 
         Parameters
         ----------

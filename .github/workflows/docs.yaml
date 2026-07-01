@@ -1,32 +1,42 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-name: deploy-docs
+name: Deploy Documentation to GitHub Pages
 on:
   push:
-      branches:
-        - main
-        - dev
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure Git Credentials
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      - uses: actions/setup-python@v5
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          python-version: 3.x
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
-      - uses: actions/cache@v4
+          frozen: true
+
+      - name: Build Documentation
+        run: pixi run docs build --clean
+
+      - name: Upload Artifact For Deployment
+        uses: actions/upload-pages-artifact@v4
         with:
-          key: mkdocs-material-${{ env.cache_id }}
-          path: ~/.cache 
-          restore-keys: |
-            mkdocs-material-
-      - run: pip install --editable ".[docs]"
-      - run: mkdocs gh-deploy --force
+          path: site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
+        id: deployment

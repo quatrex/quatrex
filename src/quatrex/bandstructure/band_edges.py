@@ -376,21 +376,22 @@ def find_renormalized_eigenvalues(
     overlap : DSDBSparse | None
         The overlap matrix. If None, the basis is assumed to be
         orthogonal.
+    potential : NDArray
+        The potential.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     energies : NDArray
         The energies.
-    local_energies : NDArray
-        The local energies.
-    conduction_band_guess : float
-        A guess for the conduction band edge.
+    conduction_band_guesses : tuple[float, float]
+        Initial guesses for the conduction band edges of the left and
+        right contacts. These should be as close as possible to the
+        actual band edges to ensure convergence of the non-linear
+        eigenvalue problem.
     num_ref_iterations : int, optional
         The number of refinement iterations, by default 2.
-    use_eigvalsh : bool, optional
-        Whether to assume the eigenvalue problem is Hermitian.
-    eigvalsh_compute_location : str, optional
-        The compute module to use in the eigvalsh call. By default, the
-        Hermitian eigenvalue problem is solved on the GPU.
+    band_edge_config : BandEdgeConfig, optional
+        The configuration for the band edge computation, by default
+        BandEdgeConfig().
 
     Returns
     -------
@@ -589,7 +590,7 @@ def local_band_edges(
 
     Parameters
     ----------
-    ldos : NDArray
+    electron_ldos : NDArray
         The local density of states.
     energies : NDArray
         The energies corresponding to the LDOS.

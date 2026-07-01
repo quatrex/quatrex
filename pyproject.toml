@@ -29,16 +29,16 @@ dynamic = ["version"]
 requires-python = ">=3.13"
 
 dependencies = [
-    "numpy>=1.23.2",
-    "scipy",
-    "mpi4py",
+    "numpy>=2.3.0",
+    "scipy>=1.16.0",
+    "mpi4py>=4.1.0",
     "numba",
     "pydantic",
     "ase",
     "meshio",
     "gmsh",
     "scikit-fem",
-    "pyvista",
+    "pyvista>=0.46.0",
     "matplotlib",
     "threadpoolctl",
     "typer",
@@ -61,7 +61,7 @@ dependencies = [
         "ipympl",
     ]
     docs = ["zensical", "mkdocstrings-python", "griffe", "griffe-pydantic", "tabulate"]
-    gpu = ["cupy>=14.0.0"]
+    gpu = ["cupy>=14.1.0"]
 
     [project.urls]
     source = "https://github.com/quatrex/quatrex"
@@ -83,24 +83,45 @@ profile = "black"
 [tool.setuptools.package-data]
 "*" = ["*.cu"]
 
+
+# ==== Settings for pixi ===============================================
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64"]
 
 [tool.pixi.dependencies]
-numpy = ">=1.23.2"
-scipy = "*"
-mpi4py = "*"
+numpy = ">=2.3.0"
+scipy = ">=1.16.0"
+mpi4py = ">=4.1.0"
 numba = "*"
 pydantic = "*"
+ase = "*"
+meshio = "*"
+scikit-fem = "*"
 threadpoolctl = "*"
 typer = "*"
 h5py = "*"
+gmsh = "*"
+python-gmsh = "*"    # conda-forge gmsh does not include python bindings
+pyvista = ">=0.46.0"
+matplotlib = "*"
 
 [tool.pixi.pypi-dependencies]
-matplotlib = "*"
 quatrex = { path = ".", editable = true }
 
+[tool.pixi.environments]
+dev = { features = ["dev"], solve-group = "dev" }
+docs = { features = ["docs"], solve-group = "dev" }
+gpu = { features = ["gpu"], solve-group = "dev" }
+
+# This environment is used for GitHub CI/CD linting and testing, since
+# the low-rank reference QTBM tests require pardiso to run.
+ci = { features = ["dev", "pardiso"], solve-group = "dev" }
+
+hpc = { features = ["hpc"], solve-group = "hpc", no-default-feature = true }
+
+
+# --- Development features ---------------------------------------------
 [tool.pixi.feature.dev.dependencies]
 pytest = "*"
 pytest-cov = "*"
@@ -115,6 +136,8 @@ pre-commit = "*"
 ipykernel = "*"
 ipympl = "*"
 
+
+# --- Documentation features -------------------------------------------
 [tool.pixi.feature.docs.pypi-dependencies]
 zensical = "*"
 mkdocstrings-python = "*"
@@ -122,34 +145,42 @@ griffe = "*"
 griffe-pydantic = "*"
 tabulate = "*"
 
+# --- GPU features -----------------------------------------------------
 [tool.pixi.feature.gpu.dependencies]
-cupy = ">=14.0.0"
+cupy = ">=14.1.0"
 
+# --- HPC features -----------------------------------------------------
 [tool.pixi.feature.hpc.dependencies]
-numpy = ">=1.23.2"
-scipy = "*"
+numpy = ">=2.3.0"
+scipy = ">=1.16.0"
 numba = "*"
 pydantic = "*"
 threadpoolctl = "*"
+ase = "*"
+meshio = "*"
+scikit-fem = "*"
 typer = "*"
 h5py = "*"
+gmsh = "*"
+python-gmsh = "*"    # conda-forge gmsh does not include python bindings
+pyvista = ">=0.46.0"
+matplotlib = "*"
 
 [tool.pixi.feature.hpc.pypi-dependencies]
-matplotlib = "*"
-mpi4py = "*"
-cupy = ">=14.0.0"
+mpi4py = ">=4.1.0"
+cupy = ">=14.1.0"
 quatrex = { path = ".", editable = true }
 
 [tool.pixi.feature.hpc.pypi-options]
 no-binary = ["mpi4py"]
 
-[tool.pixi.environments]
-dev = { features = ["dev"], solve-group = "dev" }
-docs = { features = ["docs"], solve-group = "dev" }
-gpu = { features = ["gpu"], solve-group = "dev" }
+# --- Pardiso feature --------------------------------------------------
+[tool.pixi.feature.pardiso]
+dependencies = { pydiso = "*" }
+platforms = ["linux-64"]
 
-hpc = { features = ["hpc"], solve-group = "hpc", no-default-feature = true }
 
+# --- Tasks ------------------------------------------------------------
 [tool.pixi.tasks.test]
 cmd = "pytest"
 default-environment = "dev"
@@ -159,10 +190,11 @@ description = "Run the test suite with pytest. You can pass any arguments to pyt
 cmd = """
 isort --profile black . --skip .pixi/ \
 && black . \
-&& blacken-docs
+&& blacken-docs \
+&& clang-format -i $(find src/ -name "*.cu")
 """
 default-environment = "dev"
-description = "Format the code with isort, black, and blacken-docs."
+description = "Format the code with isort, black, and clang-format."
 
 [tool.pixi.tasks.lint]
 cmd = "ruff check"
@@ -171,7 +203,8 @@ description = "Lint the code with ruff."
 
 [tool.pixi.tasks.docs]
 cmd = """
-python docs/scripts/generate_api_pages.py \
+rm -r docs/api/quatrex  && rm -r docs/api/qttools && rm -r docs/user_guide/parameters \
+&& python docs/scripts/generate_api_pages.py \
 && python docs/scripts/generate_parameter_docs.py \
 && zensical
 """

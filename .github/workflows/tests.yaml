@@ -1,5 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-name: Run Basic Tests and Determine Code Coverage
+name: Run Tests and Determine Code Coverage
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-cov:
+  test-coverage:
     runs-on: ubuntu-latest
     env:
       OMP_NUM_THREADS: 1
@@ -21,46 +21,55 @@ jobs:
       run:
         shell: bash -l {0}
 
+    permissions:
+      contents: read
+      code-quality: write
+
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Get Git LFS Files
+      - name: Pull LFS Files
         run: git lfs pull
 
-      - name: Set up Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          python-version: "3.13"
-          channels: conda-forge,defaults
-          channel-priority: true
-          activate-environment: quatrex-dev
-          environment-file: environment-dev.yaml
+          frozen: true
+          activate-environment: ci
 
-      - name: Install quatrex without Dependencies
-        run: |
-          pip install --no-deps --editable .
-
-      - name: Run QTTools MPI Tests
+      - name: Run MPI Tests - qttools
         run: |
           NUMBA_DISABLE_JIT=1 mpiexec -np 3 coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/qttools
 
-      - name: Run QuaTrEx MPI Tests
+      - name: Run MPI Tests - quatrex
         run: |
           NUMBA_DISABLE_JIT=1 mpiexec -np 3 coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/quatrex
 
-      - name: Run NUMBA Tests (QTTools Kernels)
+      - name: Run Numba Tests - qttools kernels
         if: success() || failure()
         run: |
           coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/qttools/kernels
 
-      - name: Run QTTools Tests
+      - name: Run Tests - qttools
         if: success() || failure()
         run: |
           NUMBA_DISABLE_JIT=1 coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/qttools
 
-      - name: Run QuaTrEx Tests and Determine Coverage
+      - name: Run Tests - quatrex
         if: success() || failure()
         run: |
           coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/quatrex
+
+      - name: Generate Coverage Report
+        if: success() || failure()
+        run: |
           coverage combine .; coverage report; coverage xml
+
+      - name: Upload Coverage Report
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Python
+          label: code-coverage/pytest

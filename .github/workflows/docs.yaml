@@ -1,5 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-name: deploy-docs
+name: Deploy Documentation to GitHub Pages
 on:
   push:
     branches:
@@ -18,18 +18,25 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/configure-pages@v5
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          python-version: 3.x
-      - run: pip install zensical mkdocstrings-python griffe-pydantic tabulate
-      - run: pip install --editable . --no-deps
-      - run: python docs/scripts/generate_api_pages.py
-      - run: python docs/scripts/generate_parameter_docs.py
-      - run: zensical build --clean
-      - uses: actions/upload-pages-artifact@v4
+          frozen: true
+
+      - name: Build Documentation
+        run: pixi run docs build --clean
+
+      - name: Upload Artifact For Deployment
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site
-      - uses: actions/deploy-pages@v4
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
         id: deployment

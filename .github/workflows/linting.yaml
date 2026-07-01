@@ -1,5 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-name: Run Pre-Commit and Determine Code Quality
+name: Run Pre-Commit
 
 on:
   pull_request:
@@ -18,26 +18,19 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Set up Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          python-version: "3.13"
-          channels: conda-forge,defaults
-          channel-priority: true
-          activate-environment: quatrex-dev
-          environment-file: environment-dev.yaml
+          frozen: true
+          activate-environment: ci
 
-      - name: Install linting tools
-        run: |
-          pip install pre-commit
-
-      - name: Run linting tools
-        id: lint
+      - name: Run Pre-Commit Hooks
+        id: pre-commit
         continue-on-error: true
         run: pre-commit run --all-files
 
       - name: Show git diff
-        if: steps.lint.outcome == 'failure'
+        if: steps.pre-commit.outcome == 'failure'
         run: ./.github/workflows/scripts/show-git-diff.sh

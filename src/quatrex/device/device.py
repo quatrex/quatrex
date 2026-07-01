@@ -88,6 +88,7 @@ class Device:
         self._add_contacts()
 
         if self.config.qtbm.full_current:
+
             # P matrix to convert from orbital to atoms
             col_indices = np.repeat(
                 np.arange(len(self.orbital_offsets) - 1), np.diff(self.orbital_offsets)

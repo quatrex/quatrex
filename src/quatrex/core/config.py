@@ -1054,6 +1054,9 @@ class OutputConfig(BaseModel):
     polarization_density: bool = False
     coulomb_screening_density: bool = False
 
+    save_scba_variables: bool = False
+    num_nnz_samples_scba_variables: PositiveInt = 100 # used if save_scba_variables is True
+
     self_energy_density: bool = False
 
     profiling_path: Path | None = None

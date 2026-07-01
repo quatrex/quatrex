@@ -31,6 +31,8 @@ self_energy_density = true
 # numbers.
 save_profiling_results = true
 
+save_scba_variables = true
+
 
 [electron] # ===========================================================
 left_contact.name = "source"

@@ -136,3 +136,58 @@ def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     return global_array[
         ..., int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1])
     ]
+
+
+def gather_array_stack(array: NDArray, comm: MPI.Comm, sample_indices: NDArray | None = None) -> NDArray | None:
+    """Gathers a distributed array split along energy (ex. G, P, W), i.e. stack distribution.
+
+    Parameters
+    ----------
+    array : NDArray
+        The local array to gather. Must have shape (num_energies, local_nnz).
+    comm : MPI.Comm
+        The MPI communicator.
+    sample_indices : NDArray
+        The indices of the samples to save.
+
+    Returns
+    -------
+    NDArray
+        The gathered array of shape (num_energies, total_nnz).
+
+    """
+    rank = comm.Get_rank()
+    world_rank = comm.Get_size()
+
+    # if not provided, gather all nnz indices
+    if sample_indices is None:
+        sample_indices = xp.arange(array.shape[1])
+
+    # get num of energies per rank (not necessarily evenly distributed)
+    # use lowercase gather since local_energy_length is a generic Python object, not an NDArray
+    energy_lengths = comm.gather(array.shape[0], root=0)
+    comm.barrier()
+
+    # only gather the sampled nnz indices, since each rank has all the nnz data for its own energies
+    data = xp.ascontiguousarray(array[:, sample_indices])
+    comm.barrier()
+
+    gatherbuf = None
+    counts = None
+    displ = None
+    # calculate total size (for gatherbuf) and displacements
+    if rank == 0:
+        # mpi treats 2-D numpy arrays as contiguous 1-D arrays, so need to multiply lengths by the second dimension
+        total_energy = xp.sum(energy_lengths)
+        gatherbuf = xp.empty((total_energy, len(sample_indices)), dtype=xp.complex128)
+        
+        counts = xp.array(energy_lengths) * len(sample_indices)
+        displ = xp.array( [sum(counts[:rk]) for rk in range(world_rank)] )
+
+    comm.Gatherv(data, [gatherbuf, counts, displ, MPI.COMPLEX16], root=0)
+    comm.barrier()
+    
+    if rank == 0:
+        return gatherbuf
+    else:
+        return None

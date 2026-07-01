@@ -4,6 +4,7 @@ from typing import Callable
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 from mpi4py.MPI import COMM_WORLD as comm
 
 from quatrex.cli.main import run as cli_run
@@ -13,7 +14,7 @@ def _verify_outputs(
     output_dir: Path,
     reference_output_dir: Path,
     rtol: float = 1e-4,
-    atol: float = 1e-4,
+    atol: float = 1e-5,
 ) -> None:
     """Helper function to verify that the outputs in `output_dir` match the
     reference outputs in `reference_output_dir`."""
@@ -40,6 +41,33 @@ def _verify_outputs(
             )
             print(f"    Absolute error: {np.linalg.norm(reference - test)}")
             print(f"    Reference norm: {np.linalg.norm(reference)}")
+
+        test_failed |= not shape_match or not value_match
+
+    for output_file in output_dir.glob("*.npz"):
+        reference = sp.load_npz(reference_output_dir / output_file.name).tocoo()
+        test = sp.load_npz(output_file).tocoo()
+        shape_match = reference.shape == test.shape
+        if not shape_match:
+            print(
+                f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
+            )
+
+        value_match = (
+            np.allclose(reference.data, test.data, rtol=rtol, atol=atol, equal_nan=True)
+            & np.allclose(reference.row, test.row, rtol=rtol, atol=atol, equal_nan=True)
+            & np.allclose(reference.col, test.col, rtol=rtol, atol=atol, equal_nan=True)
+        )
+        if not value_match:
+            print(f"Value mismatch for '{output_file.name}':")
+            print(
+                f"    Relative error: {np.linalg.norm(reference.data - test.data) / np.linalg.norm(reference.data)}"
+            )
+            print(
+                f"    Maximum absolute error: {np.max(np.abs(reference.data - test.data))}"
+            )
+            print(f"    Absolute error: {np.linalg.norm(reference.data - test.data)}")
+            print(f"    Reference norm: {np.linalg.norm(reference.data)}")
 
         test_failed |= not shape_match or not value_match
 

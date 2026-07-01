@@ -20,7 +20,9 @@ BLOCK_SIZE = [
 
 BLOCK_SECTIONS = [
     pytest.param(1, id="no-subblocks"),
+    pytest.param(2, id="two-subblocks"),
     pytest.param(3, id="three-subblocks"),
+    pytest.param(4, id="four-subblocks"),
 ]
 
 BATCH_SIZE = [
@@ -54,6 +56,18 @@ def block_size(request: pytest.FixtureRequest) -> int:
 
 @pytest.fixture(params=BLOCK_SECTIONS)
 def block_sections(request: pytest.FixtureRequest) -> int:
+    """Returns the number of block sections."""
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_SECTIONS)
+def block_sections_x(request: pytest.FixtureRequest) -> int:
+    """Returns the number of block sections."""
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_SECTIONS)
+def block_sections_y(request: pytest.FixtureRequest) -> int:
     """Returns the number of block sections."""
     return request.param
 

@@ -17,8 +17,6 @@ def matrix_dict(request: pytest.FixtureRequest) -> dict[str, NDArray]:
 
     matrix_dict = distributed_load(MOS2_EXAMPLE / "hamiltonian.h5")
 
-    matrix_dict = {
-        key: xp.triu(xp.asarray(matrix)) for key, matrix in matrix_dict.items()
-    }
+    matrix_dict = {key: xp.asarray(matrix) for key, matrix in matrix_dict.items()}
 
     return matrix_dict

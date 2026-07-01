@@ -5,8 +5,8 @@ import pytest
 
 from qttools import NDArray, xp
 from quatrex.device.inputs import (
-    _construct_transport_cell,
     _expand_tight_binding_matrix,
+    construct_transport_cell,
     create_coordinate_grid,
 )
 
@@ -32,36 +32,59 @@ from quatrex.device.inputs import (
         ),
     ],
 )
+@pytest.mark.parametrize("key_assumption", [None, "upper", "half"])
+@pytest.mark.parametrize("batch_size", [1, 2])
 def test_construct_transport_cell(
     matrix_dict: dict,
     transport_cell_size: int,
     shift: tuple[int, int, int],
+    key_assumption: str | None,
+    batch_size: int,
 ):
     """Tests the extraction of the transport block from the tight binding matrix."""
 
     # z-direction for transport
     transport_ind = 2
-    test_block = _construct_transport_cell(
-        matrix_dict, transport_cell_size, transport_ind, shift
+
+    # Avoid modifying the orignal one
+    if batch_size > 1:
+        matrix_dict_copy = {
+            key: xp.array([matrix.copy() for _ in range(batch_size)])
+            for key, matrix in matrix_dict.items()
+        }
+    else:
+        matrix_dict_copy = {key: matrix.copy() for key, matrix in matrix_dict.items()}
+
+    if key_assumption == "upper":
+        matrix_dict_copy = {
+            key: xp.triu(matrix) for key, matrix in matrix_dict_copy.items()
+        }
+    elif key_assumption == "half":
+        matrix_dict_copy = {
+            key: matrix for key, matrix in matrix_dict_copy.items() if key >= (0, 0, 0)
+        }
+
+    test_block = construct_transport_cell(
+        matrix_dict_copy, transport_cell_size, transport_ind, shift, key_assumption
     )
 
-    bs = matrix_dict[(0, 0, 0)].shape[-1]
-    for br in range(transport_cell_size):
-        for bc in range(transport_cell_size):
+    shape = matrix_dict[(0, 0, 0)].shape
+    block_size = matrix_dict[(0, 0, 0)].shape[-1]
+    for r_i in range(transport_cell_size):
+        for r_j in range(transport_cell_size):
             target_ind = list(shift)
-            target_ind[transport_ind] = bc - br
+            target_ind[transport_ind] = r_j - r_i
             target_ind = tuple(target_ind)
 
-            ref_block = matrix_dict.get(target_ind, xp.zeros((bs, bs)))
-
-            if bc > br:
-                ref_block = ref_block + ref_block.conj().T
-                xp.fill_diagonal(ref_block, ref_block.diagonal() / 2)
-            elif bc < br:
-                ref_block = xp.zeros_like(ref_block)
+            ref_block = matrix_dict.get(target_ind, xp.zeros(shape))
 
             assert xp.allclose(
-                test_block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_block
+                test_block[
+                    ...,
+                    r_i * block_size : (r_i + 1) * block_size,
+                    r_j * block_size : (r_j + 1) * block_size,
+                ],
+                ref_block,
             )
 
 
@@ -115,7 +138,7 @@ def test_expand_tight_binding_matrix(
     block = xp.ones((2, 2))
 
     matrix_dict = {
-        tuple(int(i) for i in ind): block for ind in np.ndindex(hopping_shape)
+        tuple(int(i) for i in ind): xp.triu(block) for ind in np.ndindex(hopping_shape)
     }
 
     for ind in list(matrix_dict.keys()):

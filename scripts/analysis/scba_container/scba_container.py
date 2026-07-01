@@ -1,9 +1,5 @@
 import os
-import matplotlib.pyplot as plt
 import numpy as np
-
-flag = "hello world"
-
 
 # data class to hold data across iterations
 class SCBAContainer:
@@ -153,8 +149,6 @@ class SCBAContainer:
 
         if colorImag is None:
             colorImag = "tab:orange"
-
-        conv_energies = np.linspace(0, max(self.energies) - min(self.energies), len(self.energies))
 
         # if there's a lot of points, make the makersize smaller
         if len(self.energies) > 10000:

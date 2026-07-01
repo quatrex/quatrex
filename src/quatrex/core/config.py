@@ -144,6 +144,9 @@ class QTBMConfig(BaseModel):
 
     """
 
+    full_current: bool = False
+    """Whether to compute the bond resolved transmission/current between neighbor atoms"""
+
 
 class SCBAConfig(BaseModel):
     """Options for the self-consistent Born approximation."""

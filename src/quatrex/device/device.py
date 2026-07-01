@@ -87,6 +87,24 @@ class Device:
         self.apply_potential()
         self._add_contacts()
 
+        if self.config.qtbm.full_current:
+
+            # P matrix to convert from orbital to atoms
+            col_indices = np.repeat(
+                np.arange(len(self.orbital_offsets) - 1), np.diff(self.orbital_offsets)
+            )
+            row_indices = np.arange(self.orbital_offsets[-1])
+            data = np.ones(len(col_indices))
+
+            from scipy.sparse import csr_matrix
+
+            self.P = csr_matrix(
+                (data, (row_indices, col_indices)),
+                shape=(self.orbital_offsets[-1], len(self.orbital_offsets) - 1),
+            )
+            self.P = sparse.csr_matrix(self.P, dtype=xp.float64)
+            self.P.sort_indices()
+
         if comm.rank == 0:
             print(
                 f"Device initialized with {len(self.contacts)} contacts.",

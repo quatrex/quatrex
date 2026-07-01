@@ -354,8 +354,10 @@ class SCBA:
             config, electron_energies=self.electron_energies
         )  # real data
 
+        # used for saving the SCBA variables for visualization
         self.archive_file_prefix = None
         self.iteration = 0
+        self.nnz_sample_indices = None
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -563,11 +565,11 @@ class SCBA:
 
         if self.config.outputs.save_scba_variables:
             # all ranks load the random sample indices and perform gather
-            sample_indices = np.load(f"{self.archive_file_prefix}_sample_indices.npy")
+            self.nnz_sample_indices = np.load(f"{self.archive_file_prefix}_sample_indices.npy")
 
-            g_lesser_concat = gather_array_stack(self.data.g_lesser.data, global_comm, sample_indices)
-            g_greater_concat = gather_array_stack(self.data.g_greater.data, global_comm, sample_indices)
-            g_retarded_concat = gather_array_stack(self.data.g_retarded.data, global_comm, sample_indices)
+            g_lesser_concat = gather_array_stack(self.data.g_lesser.data, global_comm, self.nnz_sample_indices)
+            g_greater_concat = gather_array_stack(self.data.g_greater.data, global_comm, self.nnz_sample_indices)
+            g_retarded_concat = gather_array_stack(self.data.g_retarded.data, global_comm, self.nnz_sample_indices)
             if comm.rank == 0:
                 xp.save(f"{self.archive_file_prefix}_g_lesser_iter{self.iteration:02}.npy", g_lesser_concat)
                 xp.save(f"{self.archive_file_prefix}_g_greater_iter{self.iteration:02}.npy", g_greater_concat)
@@ -597,11 +599,11 @@ class SCBA:
         
         if self.config.outputs.save_scba_variables:
             # all ranks load the random sample indices and perform gather
-            sample_indices = np.load(f"{self.archive_file_prefix}_sample_indices.npy")
+            self.nnz_sample_indices = np.load(f"{self.archive_file_prefix}_sample_indices.npy")
 
-            p_lesser_concat = gather_array_stack(self.data.p_lesser.data, global_comm, sample_indices)
-            p_greater_concat = gather_array_stack(self.data.p_greater.data, global_comm, sample_indices)
-            p_retarded_hermitian_concat = gather_array_stack(self.data.p_retarded_hermitian.data, global_comm, sample_indices)
+            p_lesser_concat = gather_array_stack(self.data.p_lesser.data, global_comm, self.nnz_sample_indices)
+            p_greater_concat = gather_array_stack(self.data.p_greater.data, global_comm, self.nnz_sample_indices)
+            p_retarded_hermitian_concat = gather_array_stack(self.data.p_retarded_hermitian.data, global_comm, self.nnz_sample_indices)
             if comm.rank == 0:
                 xp.save(f"{self.archive_file_prefix}_p_lesser_iter{self.iteration:02}.npy", p_lesser_concat)
                 xp.save(f"{self.archive_file_prefix}_p_greater_iter{self.iteration:02}.npy", p_greater_concat)
@@ -609,8 +611,8 @@ class SCBA:
                 print(f"saved p files for iteration {self.iteration}", flush=True)
             comm.barrier()
 
-            w_lesser_concat = gather_array_stack(self.data.w_lesser.data, global_comm, sample_indices)
-            w_greater_concat = gather_array_stack(self.data.w_greater.data, global_comm, sample_indices)
+            w_lesser_concat = gather_array_stack(self.data.w_lesser.data, global_comm, self.nnz_sample_indices)
+            w_greater_concat = gather_array_stack(self.data.w_greater.data, global_comm, self.nnz_sample_indices)
             if comm.rank == 0:
                 xp.save(f"{self.archive_file_prefix}_w_lesser_iter{self.iteration:02}.npy", w_lesser_concat)
                 xp.save(f"{self.archive_file_prefix}_w_greater_iter{self.iteration:02}.npy", w_greater_concat)
@@ -762,9 +764,9 @@ class SCBA:
 
             if self.config.outputs.save_scba_variables:
                 # save Sigma after it's been transposed back to stack distribution
-                sigma_lesser_concat = gather_array_stack(self.data.sigma_lesser.data, global_comm, sample_indices)
-                sigma_greater_concat = gather_array_stack(self.data.sigma_greater.data, global_comm, sample_indices)
-                sigma_retarded_hermitian_concat = gather_array_stack(self.data.sigma_retarded_hermitian.data, global_comm, sample_indices)
+                sigma_lesser_concat = gather_array_stack(self.data.sigma_lesser.data, global_comm, self.nnz_sample_indices)
+                sigma_greater_concat = gather_array_stack(self.data.sigma_greater.data, global_comm, self.nnz_sample_indices)
+                sigma_retarded_hermitian_concat = gather_array_stack(self.data.sigma_retarded_hermitian.data, global_comm, self.nnz_sample_indices)
                 if comm.rank == 0:
                     xp.save(f"{self.archive_file_prefix}_sigma_lesser_iter{self.iteration:02}.npy", sigma_lesser_concat)
                     xp.save(f"{self.archive_file_prefix}_sigma_greater_iter{self.iteration:02}.npy", sigma_greater_concat)

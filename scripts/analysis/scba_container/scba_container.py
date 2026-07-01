@@ -13,44 +13,44 @@ class SCBAContainer:
         energy_window_min: int,
         energy_window_max: int,
         energy_window_num: int,
-        num_samples: int,
+        num_nnz: int,
         config=None,
     ):
         self.g_lesser = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.g_greater = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.g_retarded = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
 
         self.p_lesser = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.p_greater = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.p_retarded = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
 
         self.w_lesser = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.w_greater = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
 
         self.sigma_lesser = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.sigma_greater = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
         self.sigma_retarded = np.empty(
-            [max_iterations, energy_window_num, num_samples], dtype=np.complex128
+            [max_iterations, energy_window_num, num_nnz], dtype=np.complex128
         )
 
         self.sample_indices = None
@@ -62,53 +62,43 @@ class SCBAContainer:
         self.adaptive_electron_energies_for_g_sigma = None
         self.adaptive_electron_energies_for_p_w = None
 
-    def load_g_data(self, archive_file_prefix: str, iteration: int):
-        self.g_lesser[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_g_lesser_iter{iteration:02}.npy"
-        )
-        self.g_greater[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_g_greater_iter{iteration:02}.npy"
-        )
-        self.g_retarded[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_g_retarded_iter{iteration:02}.npy"
-        )
+    def load_g_data(self, data_dir: str, iteration: int):
+        g_lesser_file = f"{data_dir}/scba_variables_g_lesser_iter{iteration:02}.npy"
+        g_greater_file = f"{data_dir}/scba_variables_g_greater_iter{iteration:02}.npy"
+        g_retarded_file = f"{data_dir}/scba_variables_g_retarded_iter{iteration:02}.npy"
+        self.g_lesser[iteration, :, :] = np.load(g_lesser_file)
+        self.g_greater[iteration, :, :] = np.load(g_greater_file)
+        self.g_retarded[iteration, :, :] = np.load(g_retarded_file)
 
-    def load_p_data(self, archive_file_prefix: str, iteration: int):
-        self.p_lesser[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_p_lesser_iter{iteration:02}.npy"
-        )
-        self.p_greater[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_p_greater_iter{iteration:02}.npy"
-        )
-        self.p_retarded[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_p_retarded_hermitian_iter{iteration:02}.npy"
-        )
+    def load_p_data(self, data_dir: str, iteration: int):
+        p_lesser_file = f"{data_dir}/scba_variables_p_lesser_iter{iteration:02}.npy"
+        p_greater_file = f"{data_dir}/scba_variables_p_greater_iter{iteration:02}.npy"
+        p_retarded_file = f"{data_dir}/scba_variables_p_retarded_hermitian_iter{iteration:02}.npy"
+        self.p_lesser[iteration, :, :] = np.load(p_lesser_file)
+        self.p_greater[iteration, :, :] = np.load(p_greater_file)
+        self.p_retarded[iteration, :, :] = np.load(p_retarded_file)
 
-    def load_w_data(self, archive_file_prefix: str, iteration: int):
-        self.w_lesser[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_w_lesser_iter{iteration:02}.npy"
-        )
-        self.w_greater[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_w_greater_iter{iteration:02}.npy"
-        )
+    def load_w_data(self, data_dir: str, iteration: int):
+        w_lesser_file = f"{data_dir}/scba_variables_w_lesser_iter{iteration:02}.npy"
+        w_greater_file = f"{data_dir}/scba_variables_w_greater_iter{iteration:02}.npy"
+        self.w_lesser[iteration, :, :] = np.load(w_lesser_file)
+        self.w_greater[iteration, :, :] = np.load(w_greater_file)
 
-    def load_sigma_data(self, archive_file_prefix: str, iteration: int):
-        self.sigma_lesser[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_sigma_lesser_iter{iteration:02}.npy"
-        )
-        self.sigma_greater[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_sigma_greater_iter{iteration:02}.npy"
-        )
-        self.sigma_retarded[iteration, :, :] = np.load(
-            f"{archive_file_prefix}_sigma_retarded_hermitian_iter{iteration:02}.npy"
-        )
+    def load_sigma_data(self, data_dir: str, iteration: int):
+        sigma_lesser_file = f"{data_dir}/scba_variables_sigma_lesser_iter{iteration:02}.npy"
+        sigma_greater_file = f"{data_dir}/scba_variables_sigma_greater_iter{iteration:02}.npy"
+        sigma_retarded_file = f"{data_dir}/scba_variables_sigma_retarded_hermitian_iter{iteration:02}.npy"
+        self.sigma_lesser[iteration, :, :] = np.load(sigma_lesser_file)
+        self.sigma_greater[iteration, :, :] = np.load(sigma_greater_file)
+        self.sigma_retarded[iteration, :, :] = np.load(sigma_retarded_file)
 
-    def load_sample_indices(self, archive_file_prefix: str):
-        if os.path.exists(f"{archive_file_prefix}_sample_indices.npy"):
-            self.sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+    def load_sample_indices(self, data_dir: str):
+        filename = f"{data_dir}/scba_variables_sample_indices.npy"
+        if os.path.exists(filename):
+            self.sample_indices = np.load(filename)
         else:
             print(
-                f"Warning: sample indices file {archive_file_prefix}_sample_indices.npy not found. Sample indices will be None."
+                f"Warning: sample indices file {filename} not found. Sample indices will be None."
             )
 
     def load_adaptive_grids(self, data_dir: str):

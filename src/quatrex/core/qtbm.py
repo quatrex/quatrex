@@ -882,39 +882,28 @@ class QTBM(TransportSolver):
             Energy index in the global energy array for storing results.
         """
         for contact in self.device.contacts:
-            slice_tuple = injection_slices[contact].indices(phi.shape[1])
-            row_indices = xp.repeat(
-                xp.arange(self.system_matrix.shape[0]),
-                xp.diff(self.system_matrix.indptr).tolist(),
+
+            alpha = (
+                2
+                * (
+                    self.local_dEp[global_energy_ind]
+                    + self.local_dEn[global_energy_ind]
+                )
+                * (e / h)
+                / self.num_kpoints
+                * fermi_dirac(
+                    self.local_energies[global_energy_ind] - contact.fermi_level,
+                    contact.temperature,
+                )
+            ).item()
+
+            input_phi = phi[:, injection_slices[contact]]
+            inplace.add_bond_resolved_current(
+                self.observables.bond_currents,
+                self.system_matrix,
+                input_phi,
+                alpha,
             )
-            for n_phi in range(
-                *slice_tuple
-            ):  # Iterate over the injected modes for the current contact
-                # Compute the bond current contribution directly on the existing
-                # sparsity pattern so explicit zeros are preserved.
-                bond_transmission = -(
-                    xp.conjugate(phi[row_indices, n_phi])
-                    * self.system_matrix.data
-                    * phi[self.system_matrix.indices, n_phi]
-                )
-                # Update the bond currents observable with the contribution from this mode,
-                # weighted by the Fermi-Dirac distribution and the energy differentials
-                # Due to the large size of the bond transmission matrix,
-                # we compute the contribution in-place without storing the full bond transmission matrix
-                self.observables.bond_currents -= (
-                    2
-                    * xp.imag(bond_transmission)
-                    * fermi_dirac(
-                        self.local_energies[global_energy_ind] - contact.fermi_level,
-                        contact.temperature,
-                    )
-                    * (
-                        self.local_dEp[global_energy_ind]
-                        + self.local_dEn[global_energy_ind]
-                    )
-                    * (e / h)
-                    / self.num_kpoints
-                )
 
     def _compute_ldos(
         self,

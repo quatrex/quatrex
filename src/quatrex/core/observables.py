@@ -72,49 +72,6 @@ def density(x: DSDBSparse, overlap: DSDBSparse | None = None) -> NDArray:
         mask=x._stack_padding_mask,
     )
 
-
-def device_current(x_lesser: DSDBSparse, operator: DSDBSparse) -> NDArray:
-    """Computes the current from the lesser Green's function.
-
-    Parameters
-    ----------
-    x_lesser : DSDBSparse
-        The lesser Green's function.
-    operator : DSDBSparse
-        The operator that governs the system dynamics.
-
-    Returns
-    -------
-    NDArray
-        The current, gathered across all participating ranks.
-
-    """
-
-    local_current = []
-    num_offdiags = x_lesser.num_local_blocks
-    if comm.block.rank == comm.block.size - 1:
-        num_offdiags -= 1
-
-    for i in range(num_offdiags):
-        j = i + 1
-        layer_current = (
-            operator.blocks[i, j] * x_lesser.blocks[j, i].swapaxes(-2, -1)
-            - x_lesser.blocks[i, j] * operator.blocks[j, i].swapaxes(-2, -1)
-        ).sum(axis=(-1, -2))
-        local_current.append(layer_current)
-
-    local_current = xp.array(local_current)
-    block_local_current = comm.block.all_gather_v(local_current, axis=0)
-    block_local_current = xp.ascontiguousarray(block_local_current)
-    block_local_current = xp.moveaxis(block_local_current, 0, -1)
-
-    return comm.stack.all_gather_v(
-        block_local_current,
-        axis=0,
-        mask=x_lesser._stack_padding_mask,
-    )
-
-
 def current_conservation(
     x_lesser: DSDBSparse,
     x_greater: DSDBSparse,

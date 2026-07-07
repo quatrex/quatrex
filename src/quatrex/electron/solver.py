@@ -138,7 +138,8 @@ class ElectronSolver(SubsystemSolver):
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
-        self.compute_meir_wingreen_current = config.electron.solver.compute_current
+        self.compute_meir_wingreen_current = config.outputs.meir_wingreen_currents
+        self.compute_device_current = config.outputs.device_currents
 
         self.dos_peak_limit = config.electron.dos_peak_limit
 
@@ -859,6 +860,7 @@ class ElectronSolver(SubsystemSolver):
         batch_sizes, batch_offsets = get_batches(sse_lesser.shape[0], max_batch_size)
 
         self.meir_wingreen_current = []
+        self.device_current = []
 
         for i in range(len(batch_sizes)):
 
@@ -890,31 +892,26 @@ class ElectronSolver(SubsystemSolver):
                     out_g.stack[batch_slice],
                     out_r.stack[batch_slice],
                 )
-                if comm.block.size > 1:
-                    self.meir_wingreen_current.append(
-                        self.solver_dist.selected_solve(
-                            a=self.system_matrix,
-                            sigma_lesser=sse_lesser_batch,
-                            sigma_greater=sse_greater_batch,
-                            obc_blocks=self.obc_blocks,
-                            out=out_slice,
-                            return_retarded=True,
-                            return_current=self.compute_meir_wingreen_current,
-                        )
-                    )
+                solver = self.solver_dist if comm.block.size > 1 else self.solver
+                result = solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser_batch,
+                    sigma_greater=sse_greater_batch,
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=True,
+                    return_meir_wingreen_current=self.compute_meir_wingreen_current,
+                    return_device_current=self.compute_device_current,
+                )
 
-                else:
-                    self.meir_wingreen_current.append(
-                        self.solver.selected_solve(
-                            a=self.system_matrix,
-                            sigma_lesser=sse_lesser_batch,
-                            sigma_greater=sse_greater_batch,
-                            obc_blocks=self.obc_blocks,
-                            out=out_slice,
-                            return_retarded=True,
-                            return_current=self.compute_meir_wingreen_current,
-                        )
-                    )
+                if self.compute_device_current and self.compute_meir_wingreen_current:
+                    meir_wingreen_current, device_current = result
+                    self.meir_wingreen_current.append(meir_wingreen_current)
+                    self.device_current.append(device_current)
+                elif self.compute_meir_wingreen_current:
+                    self.meir_wingreen_current.append(result)
+                elif self.compute_device_current:
+                    self.device_current.append(result)
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
@@ -927,5 +924,8 @@ class ElectronSolver(SubsystemSolver):
             self.meir_wingreen_current = xp.concatenate(
                 self.meir_wingreen_current, axis=0
             )
+
+        if self.compute_device_current:
+            self.device_current = xp.concatenate(self.device_current, axis=0)
 
         self.call_count += 1

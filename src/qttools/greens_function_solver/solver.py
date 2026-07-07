@@ -64,7 +64,8 @@ class GFSolver(ABC):
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
+        return_meir_wingreen_current: bool = False,
+        return_device_current: bool = False,
     ) -> None | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -93,15 +94,22 @@ class GFSolver(ABC):
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_current : bool, optional
+        return_meir_wingreen_current : bool, optional
             Whether to compute and return the current for each layer via
             the Meir-Wingreen formula. By default False.
+        return_device_current : bool, optional
+            Whether to additionally compute and return the coherent bond
+            current between adjacent blocks, evaluated from the *dense*
+            off-diagonal Green's function blocks. Only supported
+            together with `return_meir_wingreen_current`. By default
+            False.
 
         Returns
         -------
-        None | NDArray
-            If `return_current` is True, returns the
-            current for each layer.
+        None | tuple | NDArray
+            If `return_meir_wingreen_current` is True, returns the
+            current for each layer. If `return_device_current` is True,
+            the bond current as well.
 
         """
         ...

@@ -132,8 +132,9 @@ class RGFDist(GFSolver):
         out: tuple[DSDBSparse, ...] | tuple[_DStackView, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
-    ) -> None | NDArray:
+        return_meir_wingreen_current: bool = False,
+        return_device_current: bool = False,
+    ) -> None | tuple | NDArray:
         r"""Performs selected inversion of a block-tridiagonal matrix.
 
         Can optionally solve the quadratic system associated with the
@@ -144,8 +145,8 @@ class RGFDist(GFSolver):
         a : DSDBSparse
             Matrix to invert.
         sigma_lesser : DSDBSparse
-            Lesser matrix. This matrix is expected to be
-            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+            Lesser matrix. This matrix is expected to be skew-hermitian,
+            i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
@@ -157,19 +158,35 @@ class RGFDist(GFSolver):
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_current : bool, optional
+        return_meir_wingreen_current : bool, optional
             Whether to compute and return the current for each layer via
             the Meir-Wingreen formula. By default False. Note that this
             is currently only partially supported, and only the boundary
             currents are computed correctly.
+        return_meir_wingreen_current : bool, optional
+            Whether to compute and return the current for each layer via
+            the Meir-Wingreen formula. By default False.
+        return_device_current : bool, optional
+            Whether to additionally compute and return the coherent bond
+            current between adjacent blocks, evaluated from the *dense*
+            off-diagonal Green's function blocks. Only supported
+            together with `return_meir_wingreen_current`. By default
+            False.
 
         Returns
         -------
-        None | NDArray
-            If `return_current` is True, returns the
-            current for each layer.
+        None | tuple | NDArray
+            If `return_meir_wingreen_current` is True, returns the
+            current for each layer. If `return_device_current` is True,
+            the bond current as well.
 
         """
+        if return_device_current:
+            raise NotImplementedError(
+                "`return_device_current` is not supported with block-distributed RGF "
+                "(comm.block.size > 1). Run without block parallelism to compute "
+                "the dense bond current."
+            )
 
         with profiler.profile_range(
             label="RGF dist: init", level="default", comm=comm.block
@@ -177,19 +194,6 @@ class RGFDist(GFSolver):
 
             if obc_blocks is None:
                 obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
-
-            if return_current:
-                # Allocate a buffer for the current. This includes current
-                # between each layer and from/to the leads (in total
-                # num_blocks + 1).
-                current = xp.zeros(
-                    (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
-                    dtype=sigma_lesser.dtype,
-                )
-                # TODO: Only boundary currents are currently supported.
-                # Invalidate the remaining layers by setting them to
-                # xp.nan.
-                current[..., 1:-1] = xp.nan
 
             xl_out, xg_out, *xr_out = out
             if return_retarded:
@@ -248,6 +252,19 @@ class RGFDist(GFSolver):
             a_ = a.stack[stack_slice]
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
+
+            if return_meir_wingreen_current:
+                # Allocate a buffer for the current. This includes current
+                # between each layer and from/to the leads (in total
+                # num_blocks + 1).
+                current = xp.zeros(
+                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
+                    dtype=sigma_lesser.dtype,
+                )
+                # TODO: Only boundary currents are currently supported.
+                # Invalidate the remaining layers by setting them to
+                # xp.nan.
+                current[..., 1:-1] = xp.nan
 
             xl_out_ = xl_out.stack[stack_slice]
             xg_out_ = xg_out.stack[stack_slice]
@@ -431,7 +448,7 @@ class RGFDist(GFSolver):
                         return_retarded=return_retarded,
                     )
 
-            if return_current:
+            if return_meir_wingreen_current:
                 if comm.block.rank == 0:
                     current[stack_slice, ..., 0] = xp.trace(
                         obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
@@ -449,7 +466,6 @@ class RGFDist(GFSolver):
                         axis2=-1,
                     )
 
-        if return_current:
             # Now we need to allreduce the current across the block
             # communicator to get the total current for each layer.
             # NOTE: We use allreduce instead of allgather since every

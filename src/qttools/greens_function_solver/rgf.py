@@ -110,8 +110,9 @@ class RGF(GFSolver):
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
-    ) -> None | NDArray:
+        return_meir_wingreen_current: bool = False,
+        return_device_current: bool = False,
+    ) -> None | tuple | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
@@ -139,15 +140,21 @@ class RGF(GFSolver):
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_current : bool, optional
+        return_meir_wingreen_current : bool, optional
             Whether to compute and return the current for each layer via
             the Meir-Wingreen formula. By default False.
+        return_device_current : bool, optional
+            Whether to additionally compute and return the coherent
+            bond current between adjacent blocks, evaluated from the
+            *dense* off-diagonal Green's function blocks. Only
+            supported together with `return_meir_wingreen_current`. By default False.
 
         Returns
         -------
-        None | NDArray
-            If `return_current` is True, returns the current for each
-            layer.
+        None | tuple | NDArray
+            If `return_meir_wingreen_current` is True, returns the current for each
+            layer. If `return_device_current` is True, the
+            bond current as well.
 
         """
         # Initialize empty lists for the dense diagonal blocks.
@@ -158,12 +165,17 @@ class RGF(GFSolver):
         if obc_blocks is None:
             obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_blocks)
 
-        if return_current:
-            # Allocate a buffer for the current. This includes current
-            # between each layer and from/to the leads (in total
-            # num_blocks + 1).
+        # Allocate a buffer for the current. This includes current
+        # between each layer and from/to the leads (in total
+        # num_blocks + 1).
+        if return_meir_wingreen_current:
             current = xp.zeros(
                 (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
+                dtype=sigma_lesser.dtype,
+            )
+        if return_device_current:
+            device_current = xp.zeros(
+                (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks - 1),
                 dtype=sigma_lesser.dtype,
             )
 
@@ -350,6 +362,23 @@ class RGF(GFSolver):
                 if xl_.symmetry is None:
                     xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
+                if return_device_current:
+                    # Coherent bond current across the interface between
+                    # block i and i+1, using the *dense* off-diagonal
+                    # G^< block (xl_ij) and the full effective coupling
+                    # from the system matrix (a_ij = E*S - H - Sigma).
+                    # This mirrors observables.device_current with
+                    # T_ij = H - E*S = -a_ij, but without the sparsity
+                    # truncation that affects the stored G^< blocks:
+                    #   J_i = Tr[G^<_ij a_ji - a_ij G^<_ji],
+                    # with G^<_ji = -(G^<_ij)^dagger.
+                    gl_ji = -xl_ij.conj().swapaxes(-2, -1)
+                    device_current[stack_slice, ..., i] = xp.trace(
+                        xl_ij @ a_ji - a_ij @ gl_ji,
+                        axis1=-2,
+                        axis2=-1,
+                    )
+
                 xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
                 xl_.blocks[i, i] = 0.5 * (
                     xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
@@ -377,7 +406,7 @@ class RGF(GFSolver):
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                if return_current:
+                if return_meir_wingreen_current:
                     a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
                     a_ji_xr_ii = a_ji @ xr_ii
                     a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
@@ -403,7 +432,7 @@ class RGF(GFSolver):
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 
-            if return_current:
+            if return_meir_wingreen_current:
                 current[stack_slice, ..., 0] = xp.trace(
                     obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
                     - xg_diag_blocks[0] @ obc_blocks.lesser[0][stack_slice],
@@ -419,5 +448,7 @@ class RGF(GFSolver):
                     axis2=-1,
                 )
 
-        if return_current:
+        if return_meir_wingreen_current:
+            if return_device_current:
+                return current, device_current
             return current

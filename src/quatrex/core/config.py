@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 import warnings
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Sequence
 
 import numba as nb
 import numpy as np
@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    FiniteFloat,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveFloat,
@@ -1487,13 +1488,11 @@ class PhononConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
     """Parameters concerning the Lyapunov solver."""
 
-    model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
+    model: Literal["pseudo-scattering", "long-wavelength", "negf"] = "pseudo-scattering"
     r"""Which model to use for the electron-phonon interaction.
 
-    Currently, only a monochromatic `"pseudo-scattering"` model is
-    implemented.
-
-    In this model, the electron-phonon interaction is modeled as
+    In the monochromatic `"pseudo-scattering"` model, the electron-phonon interaction
+    is modeled as
 
     $$
     \Sigma^{\lessgtr}(E) = D^2 \left[ (N_{ph} + 1) G^{\lessgtr}(E - \hbar
@@ -1506,6 +1505,7 @@ class PhononConfig(BaseModel):
     distribution at the specified [`temperature`](#temperature).
 
     """
+    # TODO: Documentation for long-wavelength
 
     phonon_energy: NonNegativeFloat | None = None
     """The energy of the phonon mode in eV."""
@@ -1516,6 +1516,14 @@ class PhononConfig(BaseModel):
     temperature: PositiveFloat = 300.0  # K
     """The temperature of the system in Kelvin."""
 
+    # Long-wavelength phonons
+    acoustic_deformation_potentials: Sequence[FiniteFloat] | None = None
+    acoustic_speeds_of_sound: Sequence[NonNegativeFloat] | None = None
+    optical_deformation_potentials: Sequence[FiniteFloat] | None = None
+    optical_phonon_energies: Sequence[FiniteFloat] | None = None
+    q_grid_maximum: NonNegativeFloat | None = None
+    q_grid_N_target: PositiveInt | None = None
+
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
         """Check if 'phonon_energy' and 'deformation_potential' are set."""
@@ -1523,6 +1531,39 @@ class PhononConfig(BaseModel):
             self.phonon_energy is None or self.deformation_potential is None
         ):
             raise ValueError("'phonon_energy' and 'deformation_potential' must be set.")
+
+        return self
+
+    @model_validator(mode="after")
+    def check_long_wavelength_properties(self):
+        """Check whether the long-wavelength properties are set correctly."""
+
+        if self.model != "long-wavelength":
+            return self
+
+        if (self.acoustic_deformation_potentials is None) ^ (
+            self.acoustic_speeds_of_sound is None
+        ):
+            raise ValueError(
+                "The acoustic phonons require both 'acoustic_deformation_potentials' and 'acoustic_speeds_of_sound' to be set. Please provide both or none."
+            )
+
+        if (self.optical_deformation_potentials is None) ^ (
+            self.optical_phonon_energies is None
+        ):
+            raise ValueError(
+                "The optical phonons require both 'optical_deformation_potentials' and 'optical_phonon_energies' to be set. Please provide both or none."
+            )
+
+        if self.q_grid_maximum is None:
+            raise ValueError(
+                "The long-wavelength phonon model requires 'q_grid_maximum' to be set."
+            )
+
+        if self.q_grid_N_target is None:
+            raise ValueError(
+                "The long-wavelength phonon model requires 'q_grid_N_target' to be set."
+            )
 
         return self
 

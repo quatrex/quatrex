@@ -1,0 +1,121 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "negf" # "negf" or "wf"
+
+[device]
+transport_direction = 'x'
+block_size = 32
+
+[scba] # ===============================================================
+max_iterations = 2
+mixing_factor = 0.5
+
+coulomb_screening = true
+phonon = true
+
+symmetric = true
+
+[outputs] # Select which outputs to write.
+electron_ldos = true
+device_currents = true
+electron_density = false
+hole_density = false
+
+polarization_density = true
+coulomb_screening_density = true
+
+self_energy_density = true
+
+# If enabled, the profiling stats will take a bit of time to crunch the
+# numbers.
+save_profiling_results = true
+
+
+[electron] # ===========================================================
+left_contact.name = "source"
+left_contact.fermi_level = -3.600012853 # eV
+left_contact.mid_gap_energy = -3.8      # eV
+
+right_contact.name = "drain"
+right_contact.fermi_level = -3.600012853 # eV
+right_contact.mid_gap_energy = -3.8      # eV
+
+band_edge_tracking = true
+
+# Energy grid.
+energy_window_min = -10
+energy_window_max = 0
+energy_window_num = 100
+
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+solver.compute_current = true # Compute Meir-Wingreen current.
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+obc.block_sections = 1
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 2
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 31
+obc.num_quad_points = 31
+
+obc.memoizer.mode = "off"
+obc.memoizer.num_ref_iterations = 3
+obc.memoizer.relative_tol = 1e-2
+obc.memoizer.absolute_tol = 1e-8
+obc.residual_tolerance = 1e-4
+
+[coulomb_screening] # ==================================================
+interaction_cutoff = 8 # Å
+epsilon_r = 4.0
+
+num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
+
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+obc.block_sections = 1
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 2
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 32
+obc.num_quad_points = 31
+obc.residual_tolerance = 1e-4
+
+obc.memoizer.mode = "off"
+obc.memoizer.num_ref_iterations = 3
+obc.memoizer.relative_tol = 1e-2
+obc.memoizer.absolute_tol = 1e-8
+
+lyapunov.algorithm = "spectral"
+lyapunov.num_ref_iterations = 1
+
+lyapunov.memoizer.mode = "off"
+lyapunov.memoizer.num_ref_iterations = 3
+lyapunov.memoizer.relative_tol = 2e-1
+lyapunov.memoizer.absolute_tol = 1e-6
+
+
+[phonon]
+# TODO: find reasonable values
+interaction_cutoff = 5.5  # Å
+model = "long-wavelength"
+temperature = 300  # K
+acoustic_deformation_potentials = [5e-3, 0, 0]  # eV
+acoustic_speeds_of_sound = [2e15, 1e15, 1e15]  # Å/s
+optical_deformation_potentials = [1e-3]  # eV
+optical_phonon_energies = [6e-2]  # eV
+q_grid_maximum = 1  # 1/Å
+q_grid_N_target = 100

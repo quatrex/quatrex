@@ -1256,7 +1256,6 @@ class ElectronConfig(BaseModel):
             or self.energy_window_num is not None
             or self.energy_window_num_per_rank is not None
         ):
-
             if (self.energy_window_min is None) and (self.energy_window_max is None):
                 raise ValueError(
                     "When the energy grid is not read from file, should set both `energy_window_min` and `energy_window_max`."
@@ -1517,12 +1516,15 @@ class PhononConfig(BaseModel):
     """The temperature of the system in Kelvin."""
 
     # Long-wavelength phonons
+    # TODO: Don't allow None to simplify the type handling. Use child classes for
+    #       the different ways of handling phonons and initialize an empy list
+    #       for unused lists.
     acoustic_deformation_potentials: Sequence[FiniteFloat] | None = None
     acoustic_speeds_of_sound: Sequence[NonNegativeFloat] | None = None
     optical_deformation_potentials: Sequence[FiniteFloat] | None = None
     optical_phonon_energies: Sequence[FiniteFloat] | None = None
     q_grid_maximum: NonNegativeFloat | None = None
-    q_grid_N_target: PositiveInt | None = None
+    q_grid_n_target: PositiveInt | None = None
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
@@ -1535,8 +1537,8 @@ class PhononConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_long_wavelength_properties(self):
-        """Check whether the long-wavelength properties are set correctly."""
+    def check_long_wavelength_properties_provided(self):
+        """Check whether all required long-wavelength properties are provided."""
 
         if self.model != "long-wavelength":
             return self
@@ -1560,9 +1562,30 @@ class PhononConfig(BaseModel):
                 "The long-wavelength phonon model requires 'q_grid_maximum' to be set."
             )
 
-        if self.q_grid_N_target is None:
+        if self.q_grid_n_target is None:
             raise ValueError(
                 "The long-wavelength phonon model requires 'q_grid_N_target' to be set."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_long_wavelength_properties_compatibility(self):
+        """
+        Check whether the long-wavelength properties are compatible with each other.
+        """
+
+        if self.model != "long-wavelength":
+            return self
+
+        if self.acoustic_deformation_potentials is not None:
+            assert len(self.acoustic_deformation_potentials) == len(
+                self.acoustic_speeds_of_sound
+            )
+
+        if self.optical_deformation_potentials is not None:
+            assert len(self.optical_deformation_potentials) == len(
+                self.optical_phonon_energies
             )
 
         return self

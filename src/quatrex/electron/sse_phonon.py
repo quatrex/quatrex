@@ -81,7 +81,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                     # TODO: Convert to expected units (e.g. h or hbar?)
                     self.phonon_energies[:, mode_index] = (
                         config.phonon.acoustic_speeds_of_sound[list_index]
-                        * self.phonon_momenta
+                        * xp.abs(self.phonon_momenta)
                         * constants.hbar
                     )
                     # TODO: Check this equation for the coupling
@@ -122,6 +122,14 @@ class SigmaPhonon(ScatteringSelfEnergy):
                         )
                     )
 
+            # Assuming equispaced energies (TODO: assert that)
+            energy_spacing = electron_energies[1] - electron_energies[0]
+            # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing
+            # is the phonon energy rounded to the electron energy grid
+            self.phonon_energy_shifts = xp.astype(
+                xp.rint(self.phonon_energies / energy_spacing), int
+            )
+            assert xp.all(self.phonon_energy_shifts >= 0)
             self.occupancies = bose_einstein(
                 self.phonon_energies, config.phonon.temperature
             )
@@ -207,10 +215,27 @@ class SigmaPhonon(ScatteringSelfEnergy):
             The greater Green's function.
         out : tuple[DSDBSparse, ...]
             The lesser, greater and retarded self-energies.
-
         """
-        sigma_lesser, sigma_greater, sigma_retarded_hermitian = out
+        sigma_lesser, sigma_greater, __ = out
+        for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
+            assert m.distribution_state == "nnz"
 
-        # TODO: Implement
-        # sigma_greater = xp.abs(self.coupling_constants) ** 2
-        raise NotImplementedError
+        # OPTIMIZATION: Mitigate the python loops
+        for momentum_index in range(self.n_phonon_momenta):
+            for mode_index in range(self.n_modes):
+                shift = self.phonon_energy_shifts[momentum_index, mode_index]
+                occupancy = self.occupancies[momentum_index, mode_index]
+                coupling_constant = self.coupling_constants[momentum_index, mode_index]
+                coupling_factor = xp.abs(coupling_constant) ** 2
+                sigma_lesser[:-shift, :, :] += (
+                    coupling_factor * (occupancy + 1) * g_lesser[shift:, :, :]
+                )
+                sigma_lesser[shift:, :, :] += (
+                    coupling_factor * occupancy * g_lesser[:-shift, :, :]
+                )
+                sigma_greater[shift:, :, :] += (
+                    coupling_factor * (occupancy + 1) * g_greater[:-shift, :, :]
+                )
+                sigma_greater[:-shift, :, :] += (
+                    coupling_factor * occupancy * g_greater[shift:, :, :]
+                )

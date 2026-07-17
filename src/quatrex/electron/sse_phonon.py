@@ -220,6 +220,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
             assert m.distribution_state == "nnz"
 
+        ne = g_lesser.data.shape[0]
+
         # OPTIMIZATION: Mitigate the python loops
         for momentum_index in range(self.n_phonon_momenta):
             for mode_index in range(self.n_modes):
@@ -227,15 +229,16 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 occupancy = self.occupancies[momentum_index, mode_index]
                 coupling_constant = self.coupling_constants[momentum_index, mode_index]
                 coupling_factor = xp.abs(coupling_constant) ** 2
-                sigma_lesser[:-shift, :, :] += (
-                    coupling_factor * (occupancy + 1) * g_lesser[shift:, :, :]
+
+                sigma_lesser.data[: ne - shift, :] += (
+                    coupling_factor * (occupancy + 1) * g_lesser.data[shift:, :]
                 )
-                sigma_lesser[shift:, :, :] += (
-                    coupling_factor * occupancy * g_lesser[:-shift, :, :]
+                sigma_lesser.data[shift:, :] += (
+                    coupling_factor * occupancy * g_lesser.data[: ne - shift, :]
                 )
-                sigma_greater[shift:, :, :] += (
-                    coupling_factor * (occupancy + 1) * g_greater[:-shift, :, :]
+                sigma_greater.data[shift:, :] += (
+                    coupling_factor * (occupancy + 1) * g_greater.data[: ne - shift, :]
                 )
-                sigma_greater[:-shift, :, :] += (
-                    coupling_factor * occupancy * g_greater[shift:, :, :]
+                sigma_greater.data[: ne - shift, :] += (
+                    coupling_factor * occupancy * g_greater.data[shift:, :]
                 )

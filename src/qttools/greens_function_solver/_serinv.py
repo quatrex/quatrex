@@ -1159,8 +1159,10 @@ def downward_selinv(
     sigma_greater: DSDBSparse | _DStackView = None,
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse | _DStackView = None,
+    device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    return_device_current: bool = False,
 ):
     """Performs the downward selected inversion."""
     for i in range(a.num_local_blocks - 2, -1, -1):
@@ -1231,6 +1233,16 @@ def downward_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if return_device_current:
+                gl_ji = -xl_ij.conj().swapaxes(-2, -1)
+                device_current[..., a.block_section_offsets[comm.block.rank] + i] = (
+                    xp.trace(
+                        xl_ij @ a_ji - a_ij @ gl_ji,
+                        axis1=-2,
+                        axis2=-1,
+                    )
+                )
+
         x_lower_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_upper_block = -xr_ii_a_ij @ xr_diag_blocks[j]
         xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
@@ -1253,8 +1265,10 @@ def upward_selinv(
     sigma_greater: DSDBSparse = None,
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse = None,
+    device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    return_device_current: bool = False,
 ):
     """Performs the upward selected inversion."""
     for i in range(1, a.num_local_blocks):
@@ -1337,6 +1351,16 @@ def upward_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if return_device_current:
+                gl_ji = -xl_ij.conj().swapaxes(-2, -1)
+                device_current[
+                    ..., a.block_section_offsets[comm.block.rank] + i - 1
+                ] = xp.trace(
+                    a_ij @ gl_ji - xl_ij @ a_ji,
+                    axis1=-2,
+                    axis2=-1,
+                )
+
         x_upper_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_lower_block = -xr_ii_a_ij @ xr_diag_blocks[j]
         xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
@@ -1365,8 +1389,10 @@ def permuted_selinv(
     xg_buffer_lower: list[NDArray] = None,
     xg_buffer_upper: list[NDArray] = None,
     xg_out: DSDBSparse | _DStackView = None,
+    device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    return_device_current: bool = False,
 ):
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
@@ -1523,6 +1549,16 @@ def permuted_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if return_device_current:
+                gl_ji = -bl_upper_block.conj().swapaxes(-2, -1)
+                device_current[..., a.block_section_offsets[comm.block.rank] + i] = (
+                    xp.trace(
+                        bl_upper_block @ a_ip1_i - a_i_ip1 @ gl_ji,
+                        axis1=-2,
+                        axis2=-1,
+                    )
+                )
+
         if return_retarded:
             xr_out.blocks[i, i + 1] = -xr_i @ B1
             xr_out.blocks[i + 1, i] = -C1 @ xr_i
@@ -1547,3 +1583,12 @@ def permuted_selinv(
         if xg_out.symmetry is None:
             xg_out.blocks[1, 0] = xg_buffer_upper[0]
         xg_out.blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
+
+        if return_device_current:
+            gl_10 = xl_buffer_upper[0]
+            xl_01 = -gl_10.conj().swapaxes(-2, -1)
+            device_current[..., a.block_section_offsets[comm.block.rank]] = xp.trace(
+                xl_01 @ a.blocks[1, 0] - a.blocks[0, 1] @ gl_10,
+                axis1=-2,
+                axis2=-1,
+            )

@@ -181,12 +181,6 @@ class RGFDist(GFSolver):
             the bond current as well.
 
         """
-        if return_device_current:
-            raise NotImplementedError(
-                "`return_device_current` is not supported with block-distributed RGF "
-                "(comm.block.size > 1). Run without block parallelism to compute "
-                "the dense bond current."
-            )
 
         with profiler.profile_range(
             label="RGF dist: init", level="default", comm=comm.block
@@ -214,6 +208,51 @@ class RGFDist(GFSolver):
 
             batch_sizes, batch_offsets = get_batches(
                 sigma_lesser.local_stack_shape[0], self.max_batch_size
+            )
+
+        for i in range(len(batch_sizes)):
+
+            if obc_blocks is None:
+                obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
+
+            if return_meir_wingreen_current:
+                # Allocate a buffer for the current. This includes current
+                # between each layer and from/to the leads (in total
+                # num_blocks + 1).
+                meir_wingreen_current = xp.zeros(
+                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
+                    dtype=sigma_lesser.dtype,
+                )
+                # TODO: Only boundary currents are currently supported.
+                # Invalidate the remaining layers by setting them to
+                # xp.nan.
+                meir_wingreen_current[..., 1:-1] = xp.nan
+
+            if return_device_current:
+                device_current = xp.zeros(
+                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks - 1),
+                    dtype=sigma_lesser.dtype,
+                )
+
+            xl_out, xg_out, *xr_out = out
+            if return_retarded:
+                if len(xr_out) != 1:
+                    raise ValueError("Invalid number of output matrices.")
+                xr_out = xr_out[0]
+
+            if xl_out.symmetry not in [None, "skew-hermitian"]:
+                raise ValueError(
+                    "Invalid symmetry for lesser Green's function. "
+                    "Expected None or 'skew-hermitian'."
+                )
+            if xg_out.symmetry not in [None, "skew-hermitian"]:
+                raise ValueError(
+                    "Invalid symmetry for greater Green's function. "
+                    "Expected None or 'skew-hermitian'."
+                )
+
+            batch_sizes, batch_offsets = get_batches(
+                sigma_lesser.shape[0], self.max_batch_size
             )
 
         for i in range(len(batch_sizes)):
@@ -252,19 +291,6 @@ class RGFDist(GFSolver):
             a_ = a.stack[stack_slice]
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
-
-            if return_meir_wingreen_current:
-                # Allocate a buffer for the current. This includes current
-                # between each layer and from/to the leads (in total
-                # num_blocks + 1).
-                current = xp.zeros(
-                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
-                    dtype=sigma_lesser.dtype,
-                )
-                # TODO: Only boundary currents are currently supported.
-                # Invalidate the remaining layers by setting them to
-                # xp.nan.
-                current[..., 1:-1] = xp.nan
 
             xl_out_ = xl_out.stack[stack_slice]
             xg_out_ = xg_out.stack[stack_slice]
@@ -390,6 +416,22 @@ class RGFDist(GFSolver):
                 label="RGF dist: Selinv", level="default", comm=comm.block
             ):
 
+                if return_device_current:
+                    if comm.block.rank != comm.block.size - 1:
+                        i = a_.num_local_blocks - 1
+                        j = i + 1
+                        idx = 0 if comm.block.rank == 0 else 2 * comm.block.rank
+                        xl_ij = reduced_system.xl_upper_blocks[idx]
+                        a_ji = a_.blocks[j, i]
+                        a_ij = a_.blocks[i, j]
+                        gl_ji = -xl_ij.conj().swapaxes(-2, -1)
+                        boundary_idx = a.block_section_offsets[comm.block.rank] + i
+                        device_current[stack_slice, ..., boundary_idx] = xp.trace(
+                            xl_ij @ a_ji - a_ij @ gl_ji,
+                            axis1=-2,
+                            axis2=-1,
+                        )
+
                 if comm.block.rank == 0:
                     # Direction: upward sell-inv
                     _serinv.downward_selinv(
@@ -404,8 +446,14 @@ class RGFDist(GFSolver):
                         sigma_greater=sigma_greater_,
                         xg_diag_blocks=xg_diag_blocks,
                         xg_out=xg_out_,
+                        device_current=(
+                            device_current[stack_slice]
+                            if return_device_current
+                            else None
+                        ),
                         selected_solve=True,
                         return_retarded=return_retarded,
+                        return_device_current=return_device_current,
                     )
                 elif comm.block.rank == comm.block.size - 1:
                     # Direction: downward sell-inv
@@ -421,8 +469,14 @@ class RGFDist(GFSolver):
                         sigma_greater=sigma_greater_,
                         xg_diag_blocks=xg_diag_blocks,
                         xg_out=xg_out_,
+                        device_current=(
+                            device_current[stack_slice]
+                            if return_device_current
+                            else None
+                        ),
                         selected_solve=True,
                         return_retarded=return_retarded,
+                        return_device_current=return_device_current,
                     )
                 else:
                     # Permuted Sell-inv
@@ -444,13 +498,19 @@ class RGFDist(GFSolver):
                         # xg_buffer_lower=xg_buffer_lower,
                         xg_buffer_upper=xg_buffer_upper,
                         xg_out=xg_out_,
+                        device_current=(
+                            device_current[stack_slice]
+                            if return_device_current
+                            else None
+                        ),
                         selected_solve=True,
                         return_retarded=return_retarded,
+                        return_device_current=return_device_current,
                     )
 
             if return_meir_wingreen_current:
                 if comm.block.rank == 0:
-                    current[stack_slice, ..., 0] = xp.trace(
+                    meir_wingreen_current[stack_slice, ..., 0] = xp.trace(
                         obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
                         - xg_diag_blocks[0] @ obc_blocks.lesser[0][stack_slice],
                         axis1=-2,
@@ -459,18 +519,29 @@ class RGFDist(GFSolver):
                 if comm.block.rank == comm.block.size - 1:
                     # NOTE: Negative sign is needed to get the current flowing
                     # in the correct direction (positive from left to right).
-                    current[stack_slice, ..., -1] = -xp.trace(
+                    meir_wingreen_current[stack_slice, ..., -1] = -xp.trace(
                         obc_blocks.greater[-1][stack_slice] @ xl_diag_blocks[-1]
                         - xg_diag_blocks[-1] @ obc_blocks.lesser[-1][stack_slice],
                         axis1=-2,
                         axis2=-1,
                     )
 
-            # Now we need to allreduce the current across the block
-            # communicator to get the total current for each layer.
-            # NOTE: We use allreduce instead of allgather since every
-            # rank allocates the full current
-            total_current = xp.empty_like(current)
-            comm.block.all_reduce(current, total_current, op="sum")
+        # Now we need to allreduce the current across the block
+        # communicator to get the total current for each layer.
+        # NOTE: We use allreduce instead of allgather since every
+        # rank allocates the full current
+        if return_meir_wingreen_current:
+            total_meir_wingreen_current = xp.empty_like(meir_wingreen_current)
+            comm.block.all_reduce(
+                meir_wingreen_current, total_meir_wingreen_current, op="sum"
+            )
+        if return_device_current:
+            total_device_current = xp.empty_like(device_current)
+            comm.block.all_reduce(device_current, total_device_current, op="sum")
 
-            return total_current
+        if return_meir_wingreen_current and return_device_current:
+            return total_meir_wingreen_current, total_device_current
+        elif return_meir_wingreen_current:
+            return total_meir_wingreen_current
+        elif return_device_current:
+            return total_device_current

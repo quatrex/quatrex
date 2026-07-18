@@ -1105,6 +1105,11 @@ class _DStackView(_StackView):
             dsdbsparse=self._dsdbsparse, stack_index=self._stack_index
         )
 
+    @property
+    def block_section_offsets(self) -> list[int]:
+        """Returns the block section offsets."""
+        return self._dsdbsparse.block_section_offsets
+
 
 class _BlockIndexer(ABC):
     """Abstract base class for block indexers.

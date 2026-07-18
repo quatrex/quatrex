@@ -2336,13 +2336,6 @@ class QuatrexConfig(BaseModel):
                 "when the `electron` solver `algorithm` is set to `inv`."
             )
 
-        if self.outputs.meir_wingreen_currents and (
-            self.compute.comm.block_comm_size > 1
-        ):
-            raise ValueError(
-                "Meir-Wingreen current is not supported in the domain distributed case."
-            )
-
         return self
 
 

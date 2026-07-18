@@ -72,6 +72,7 @@ def density(x: DSDBSparse, overlap: DSDBSparse | None = None) -> NDArray:
         mask=x._stack_padding_mask,
     )
 
+
 def current_conservation(
     x_lesser: DSDBSparse,
     x_greater: DSDBSparse,

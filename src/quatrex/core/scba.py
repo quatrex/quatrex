@@ -561,12 +561,10 @@ class SCBA(TransportSolver):
             self.observables.hole_density *= 2  # Spin
 
         if self.config.outputs.device_currents:
-            self.observables.electron_current["device"] = (
-                comm.stack.all_gather_v(
-                    self.electron_solver.device_current,
-                    axis=0,
-                    mask=self.data.g_lesser._stack_padding_mask,
-                )
+            self.observables.electron_current["device"] = comm.stack.all_gather_v(
+                self.electron_solver.device_current,
+                axis=0,
+                mask=self.data.g_lesser._stack_padding_mask,
             )
 
         if self.config.outputs.meir_wingreen_currents:
@@ -577,9 +575,7 @@ class SCBA(TransportSolver):
                 mask=self.data.g_lesser._stack_padding_mask,
             )
 
-            self.observables.electron_current["meir-wingreen"] = (
-                meir_wingreen_current
-            )
+            self.observables.electron_current["meir-wingreen"] = meir_wingreen_current
 
         if self.config.outputs.self_energy_density:
             self.observables.sigma_lesser_density = density(

@@ -169,7 +169,7 @@ class RGF(GFSolver):
         # between each layer and from/to the leads (in total
         # num_blocks + 1).
         if return_meir_wingreen_current:
-            current = xp.zeros(
+            meir_wingreen_current = xp.zeros(
                 (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
                 dtype=sigma_lesser.dtype,
             )
@@ -367,11 +367,6 @@ class RGF(GFSolver):
                     # block i and i+1, using the *dense* off-diagonal
                     # G^< block (xl_ij) and the full effective coupling
                     # from the system matrix (a_ij = E*S - H - Sigma).
-                    # This mirrors observables.device_current with
-                    # T_ij = H - E*S = -a_ij, but without the sparsity
-                    # truncation that affects the stored G^< blocks:
-                    #   J_i = Tr[G^<_ij a_ji - a_ij G^<_ji],
-                    # with G^<_ji = -(G^<_ij)^dagger.
                     gl_ji = -xl_ij.conj().swapaxes(-2, -1)
                     device_current[stack_slice, ..., i] = xp.trace(
                         xl_ij @ a_ji - a_ij @ gl_ji,
@@ -421,7 +416,7 @@ class RGF(GFSolver):
                         + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij
                     )
-                    current[stack_slice, ..., j] = xp.trace(
+                    meir_wingreen_current[stack_slice, ..., j] = xp.trace(
                         sigma_greater_tilde @ xl_diag_blocks[j]
                         - xg_diag_blocks[j] @ sigma_lesser_tilde,
                         axis1=-2,
@@ -432,8 +427,9 @@ class RGF(GFSolver):
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 
+            # The contact (lead) currents from the boundary self-energies.
             if return_meir_wingreen_current:
-                current[stack_slice, ..., 0] = xp.trace(
+                meir_wingreen_current[stack_slice, ..., 0] = xp.trace(
                     obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
                     - xg_diag_blocks[0] @ obc_blocks.lesser[0][stack_slice],
                     axis1=-2,
@@ -441,14 +437,16 @@ class RGF(GFSolver):
                 )
                 # NOTE: Negative sign is needed to get the current flowing
                 # in the correct direction (positive from left to right).
-                current[stack_slice, ..., -1] = -xp.trace(
+                meir_wingreen_current[stack_slice, ..., -1] = -xp.trace(
                     obc_blocks.greater[-1][stack_slice] @ xl_diag_blocks[-1]
                     - xg_diag_blocks[-1] @ obc_blocks.lesser[-1][stack_slice],
                     axis1=-2,
                     axis2=-1,
                 )
 
-        if return_meir_wingreen_current:
-            if return_device_current:
-                return current, device_current
-            return current
+        if return_meir_wingreen_current and return_device_current:
+            return meir_wingreen_current, device_current
+        elif return_meir_wingreen_current:
+            return meir_wingreen_current
+        elif return_device_current:
+            return device_current

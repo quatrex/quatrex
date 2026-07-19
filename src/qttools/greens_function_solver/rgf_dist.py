@@ -189,6 +189,25 @@ class RGFDist(GFSolver):
             if obc_blocks is None:
                 obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
 
+            if return_meir_wingreen_current:
+                # Allocate a buffer for the current. This includes current
+                # between each layer and from/to the leads (in total
+                # num_blocks + 1).
+                meir_wingreen_current = xp.zeros(
+                    (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
+                    dtype=sigma_lesser.dtype,
+                )
+                # TODO: Only boundary currents are currently supported.
+                # Invalidate the remaining layers by setting them to
+                # xp.nan.
+                meir_wingreen_current[..., 1:-1] = xp.nan
+
+            if return_device_current:
+                device_current = xp.zeros(
+                    (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks - 1),
+                    dtype=sigma_lesser.dtype,
+                )
+
             xl_out, xg_out, *xr_out = out
             if return_retarded:
                 if len(xr_out) != 1:
@@ -208,51 +227,6 @@ class RGFDist(GFSolver):
 
             batch_sizes, batch_offsets = get_batches(
                 sigma_lesser.local_stack_shape[0], self.max_batch_size
-            )
-
-        for i in range(len(batch_sizes)):
-
-            if obc_blocks is None:
-                obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
-
-            if return_meir_wingreen_current:
-                # Allocate a buffer for the current. This includes current
-                # between each layer and from/to the leads (in total
-                # num_blocks + 1).
-                meir_wingreen_current = xp.zeros(
-                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
-                    dtype=sigma_lesser.dtype,
-                )
-                # TODO: Only boundary currents are currently supported.
-                # Invalidate the remaining layers by setting them to
-                # xp.nan.
-                meir_wingreen_current[..., 1:-1] = xp.nan
-
-            if return_device_current:
-                device_current = xp.zeros(
-                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks - 1),
-                    dtype=sigma_lesser.dtype,
-                )
-
-            xl_out, xg_out, *xr_out = out
-            if return_retarded:
-                if len(xr_out) != 1:
-                    raise ValueError("Invalid number of output matrices.")
-                xr_out = xr_out[0]
-
-            if xl_out.symmetry not in [None, "skew-hermitian"]:
-                raise ValueError(
-                    "Invalid symmetry for lesser Green's function. "
-                    "Expected None or 'skew-hermitian'."
-                )
-            if xg_out.symmetry not in [None, "skew-hermitian"]:
-                raise ValueError(
-                    "Invalid symmetry for greater Green's function. "
-                    "Expected None or 'skew-hermitian'."
-                )
-
-            batch_sizes, batch_offsets = get_batches(
-                sigma_lesser.shape[0], self.max_batch_size
             )
 
         for i in range(len(batch_sizes)):

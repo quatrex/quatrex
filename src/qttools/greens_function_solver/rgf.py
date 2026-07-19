@@ -175,7 +175,7 @@ class RGF(GFSolver):
             )
         if return_device_current:
             device_current = xp.zeros(
-                (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks - 1),
+                (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks - 1),
                 dtype=sigma_lesser.dtype,
             )
 

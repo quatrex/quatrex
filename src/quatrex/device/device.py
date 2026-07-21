@@ -65,12 +65,13 @@ class Device:
 
     """
 
-    def __init__(self, config: QuatrexConfig) -> None:
+    def __init__(self, config: QuatrexConfig, hamiltonians: dict | None = None) -> None:
         """Initializes a Device object from configuration."""
 
         self.config = config
         self.device_config = config.device
 
+        self.hamiltonians = hamiltonians
         self._init_hamiltonian()
         (
             self.orbital_coordinates,
@@ -239,7 +240,7 @@ class Device:
             raise ValueError("Hamiltonian matrix not found.")
 
         self.hamiltonians = load_matrices(
-            self.config, "hamiltonian", force_complex=False
+            self.config, "hamiltonian", force_complex=False, matrices=self.hamiltonians
         )
 
         for r, h_r in self.hamiltonians.items():

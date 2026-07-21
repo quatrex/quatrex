@@ -70,6 +70,31 @@ def _run_wf(config):
         typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
+def _run_wf_hamiltonians(config, matrices):
+    """Runs quatrex with the given configuration.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+
+    """
+    from quatrex.core.qtbm import QTBM
+    from quatrex.device import Device
+
+    print(f"[RANK {comm.rank}] Using pre-loaded Hamiltonians.", flush=True)
+
+    device = Device(config, hamiltonians=matrices)
+    qtbm = QTBM(device, config)
+
+    tic = time.perf_counter()
+    qtbm.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
+
+
 def _run_negf(config):
     """Runs quatrex with the given configuration using SCBA.
 
@@ -208,6 +233,13 @@ def run(
             help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
         ),
     ] = True,
+    hamiltonians: Annotated[
+        bool,
+        typer.Option(
+            "--hamiltonians",
+            help="Force pre-loading the Hamiltonian matrices.",
+        ),
+    ] = False,
 ):
     """Runs quatrex with the provided configuration."""
 
@@ -234,7 +266,13 @@ def run(
             if config.scsp is not None:
                 _run_scsp(config)
             elif config.formalism == "wf":
-                _run_wf(config)
+                if hamiltonians:
+                    from qttools.utils.mpi_utils import distributed_load
+
+                    matrices = distributed_load(config.input_dir / "hamiltonian.h5")
+                    _run_wf_hamiltonians(config, matrices)
+                else:
+                    _run_wf(config)
             elif config.formalism == "negf":
                 _run_negf(config)
             else:

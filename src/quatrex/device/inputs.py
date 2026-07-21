@@ -416,6 +416,7 @@ def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
     force_complex: bool = True,
+    matrices: dict | None = None,
 ):
     """Loads a Hermitian matrix from file
 
@@ -428,6 +429,9 @@ def load_matrices(
     force_complex : bool
         Whether to force the loaded matrices to be complex. If `True`,
         the loaded matrices will be cast to `xp.complex128`.
+    matrices : dict | None
+        Optional pre-loaded matrices. If provided, the function will use
+        these matrices instead of loading them from file.
 
     Returns
     -------
@@ -438,7 +442,7 @@ def load_matrices(
     """
 
     # load the matrices
-    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
+    matrix_dict = matrices or distributed_load(config.input_dir / f"{matrix_name}.h5")
 
     if (0, 0, 0) not in matrix_dict:
         raise ValueError(

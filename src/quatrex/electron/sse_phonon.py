@@ -10,6 +10,16 @@ from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
 
 
+def _get_equal_spacing(a: NDArray):
+    assert len(a.shape) == 1
+
+    differences = xp.diff(a)
+    spacing = differences[0]
+    assert xp.allclose(differences, spacing), "`a` is not equispaced"
+
+    return spacing
+
+
 class SigmaPhonon(ScatteringSelfEnergy):
     """Computes the electron-phonon self-energy.
 
@@ -33,8 +43,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             raise NotImplementedError
 
         if config.phonon.model == "pseudo-scattering":
-            # TODO: Get rid of the compute_fn attribute and use a more elegant solution.
-            self.compute_fn = self._compute_pseudo_scattering
+            self._compute_fn = self._compute_pseudo_scattering
             if electron_energies is None:
                 raise ValueError(
                     "Electron energies must be provided for deformation potential model."
@@ -52,22 +61,20 @@ class SigmaPhonon(ScatteringSelfEnergy):
             return
 
         if config.phonon.model == "long-wavelength":
-            self.compute_fn = self._compute_long_wavelength
+            self._compute_fn = self._compute_long_wavelength
             if electron_energies is None:
                 raise ValueError(
                     "Electron energies must be provided for the long-wavelength model."
-                    # TODO: Really?
                 )
+                # TODO: Check that the other required variables are set
 
             # Compute phonon modes and coupling constants
             # Generate a grid of phonon momenta.
-            # TODO: 3d momenta
             self.phonon_momenta = xp.linspace(
                 -config.phonon.q_grid_maximum,
                 config.phonon.q_grid_maximum,
                 config.phonon.q_grid_n_target,
             )
-            # TODO: The following approach does not allow acoustic/optical to be None.
             self.n_phonon_momenta = len(self.phonon_momenta)
             self.n_acoustic_modes = len(config.phonon.acoustic_deformation_potentials)
             self.n_optical_modes = len(config.phonon.optical_deformation_potentials)
@@ -85,9 +92,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
                         * constants.hbar
                     )
                     # TODO: Check this equation for the coupling
-                    # TODO: Add polarization $\epsilon$
-                    # TODO: Relax or assert the constraint that the basis functions must
-                    #       be orthonormal
                     self.coupling_constants[:, mode_index] = (
                         1j
                         * config.phonon.acoustic_deformation_potentials[list_index]
@@ -122,8 +126,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                         )
                     )
 
-            # Assuming equispaced energies (TODO: assert that)
-            energy_spacing = electron_energies[1] - electron_energies[0]
+            energy_spacing = _get_equal_spacing(electron_energies)
             # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing
             # is the phonon energy rounded to the electron energy grid
             self.phonon_energy_shifts = xp.astype(
@@ -153,7 +156,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             sigma_lesser, sigma_greater, sigma_retarded_hermitian.
 
         """
-        return self.compute_fn(g_lesser, g_greater, out)
+        return self._compute_fn(g_lesser, g_greater, out)
 
     def _compute_pseudo_scattering(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]

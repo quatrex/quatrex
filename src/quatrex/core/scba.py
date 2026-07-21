@@ -363,8 +363,17 @@ class SCBA(TransportSolver):
                 self.phonon_solver = PhononSolver(config, self.phonon_energies)
                 self.sigma_phonon = SigmaPhonon(...)
 
-            elif self.config.phonon.model in ("pseudo-scattering", "long-wavelength"):
+            elif self.config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
+
+            elif self.config.phonon.model == "long-wavelength":
+                assert (
+                    self.electron_solver.overlap is None
+                ), "The long-wavelength model is only implemented for an ortonormal basis."
+                self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
+
+            else:
+                raise ValueError(f"Unknown phonon model: {self.config.phonon.model}")
 
         self.data = SCBAData(
             config, electron_energies=self.electron_energies
@@ -588,7 +597,6 @@ class SCBA(TransportSolver):
 
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)
     def _compute_coulomb_screening_observables(self) -> None:
-
         # NOTE: The overlap is maybe missing here (it is not used)
         if self.config.outputs.polarization_density:
             self.observables.p_lesser_density = density(self.data.p_lesser) / (

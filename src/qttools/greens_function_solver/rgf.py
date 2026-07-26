@@ -109,6 +109,7 @@ class RGF(GFSolver):
         sigma_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
+        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
         return_meir_wingreen_current: bool = False,
         return_device_current: bool = False,
@@ -137,6 +138,9 @@ class RGF(GFSolver):
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
+        a_hat : DSDBSparse, optional
+            The bare system matrix without self-energy contributions.
+            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
@@ -178,6 +182,10 @@ class RGF(GFSolver):
                 (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks - 1),
                 dtype=sigma_lesser.dtype,
             )
+            if a_hat is None:
+                raise ValueError(
+                    "The bare system matrix must be provided to compute the device current."
+                )
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(
@@ -207,6 +215,7 @@ class RGF(GFSolver):
             stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
 
             a_ = a.stack[stack_slice]
+            a_hat_ = a_hat.stack[stack_slice] if a_hat is not None else None
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
 
@@ -366,10 +375,13 @@ class RGF(GFSolver):
                     # Coherent bond current across the interface between
                     # block i and i+1, using the *dense* off-diagonal
                     # G^< block (xl_ij) and the full effective coupling
-                    # from the system matrix (a_ij = E*S - H - Sigma).
+                    # from the system matrix (E*S - H).
+                    a_hat_ij = a_hat_.blocks[i, j]
+                    a_hat_ji = a_hat_.blocks[j, i]
+
                     gl_ji = -xl_ij.conj().swapaxes(-2, -1)
                     device_current[stack_slice, ..., i] = xp.trace(
-                        xl_ij @ a_ji - a_ij @ gl_ji,
+                        xl_ij @ a_hat_ji - a_hat_ij @ gl_ji,
                         axis1=-2,
                         axis2=-1,
                     )

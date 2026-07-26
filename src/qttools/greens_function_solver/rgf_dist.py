@@ -131,6 +131,7 @@ class RGFDist(GFSolver):
         sigma_greater: DSDBSparse | _DStackView,
         out: tuple[DSDBSparse, ...] | tuple[_DStackView, ...],
         obc_blocks: OBCBlocks | None = None,
+        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
         return_meir_wingreen_current: bool = False,
         return_device_current: bool = False,
@@ -155,6 +156,9 @@ class RGFDist(GFSolver):
         obc_blocks : dict[int, OBCBlocks], optional
             OBC blocks for lesser, greater and retarded Green's
             functions, by default None.
+        a_hat : DSDBSparse, optional
+            The bare system matrix without self-energy contributions.
+            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
@@ -207,6 +211,10 @@ class RGFDist(GFSolver):
                     (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks - 1),
                     dtype=sigma_lesser.dtype,
                 )
+                if a_hat is None:
+                    raise ValueError(
+                        "The bare system matrix must be provided to compute the device current."
+                    )
 
             xl_out, xg_out, *xr_out = out
             if return_retarded:
@@ -263,6 +271,7 @@ class RGFDist(GFSolver):
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
 
             a_ = a.stack[stack_slice]
+            a_hat_ = a_hat.stack[stack_slice] if a_hat is not None else None
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
 
@@ -396,8 +405,8 @@ class RGFDist(GFSolver):
                         j = i + 1
                         idx = 0 if comm.block.rank == 0 else 2 * comm.block.rank
                         xl_ij = reduced_system.xl_upper_blocks[idx]
-                        a_ji = a_.blocks[j, i]
-                        a_ij = a_.blocks[i, j]
+                        a_ji = a_hat_.blocks[j, i]
+                        a_ij = a_hat_.blocks[i, j]
                         gl_ji = -xl_ij.conj().swapaxes(-2, -1)
                         boundary_idx = a.block_section_offsets[comm.block.rank] + i
                         device_current[stack_slice, ..., boundary_idx] = xp.trace(
@@ -420,6 +429,7 @@ class RGFDist(GFSolver):
                         sigma_greater=sigma_greater_,
                         xg_diag_blocks=xg_diag_blocks,
                         xg_out=xg_out_,
+                        a_hat=a_hat_,
                         device_current=(
                             device_current[stack_slice]
                             if return_device_current
@@ -443,6 +453,7 @@ class RGFDist(GFSolver):
                         sigma_greater=sigma_greater_,
                         xg_diag_blocks=xg_diag_blocks,
                         xg_out=xg_out_,
+                        a_hat=a_hat_,
                         device_current=(
                             device_current[stack_slice]
                             if return_device_current
@@ -472,6 +483,7 @@ class RGFDist(GFSolver):
                         # xg_buffer_lower=xg_buffer_lower,
                         xg_buffer_upper=xg_buffer_upper,
                         xg_out=xg_out_,
+                        a_hat=a_hat_,
                         device_current=(
                             device_current[stack_slice]
                             if return_device_current

@@ -1159,6 +1159,7 @@ def downward_selinv(
     sigma_greater: DSDBSparse | _DStackView = None,
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse | _DStackView = None,
+    a_hat: DSDBSparse | _DStackView = None,
     device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
@@ -1234,10 +1235,12 @@ def downward_selinv(
             )
 
             if return_device_current:
+                a_hat_ij = a_hat.blocks[i, j]
+                a_hat_ji = a_hat.blocks[j, i]
                 gl_ji = -xl_ij.conj().swapaxes(-2, -1)
                 device_current[..., a.block_section_offsets[comm.block.rank] + i] = (
                     xp.trace(
-                        xl_ij @ a_ji - a_ij @ gl_ji,
+                        xl_ij @ a_hat_ji - a_hat_ij @ gl_ji,
                         axis1=-2,
                         axis2=-1,
                     )
@@ -1265,6 +1268,7 @@ def upward_selinv(
     sigma_greater: DSDBSparse = None,
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse = None,
+    a_hat: DSDBSparse | _DStackView = None,
     device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
@@ -1352,11 +1356,13 @@ def upward_selinv(
             )
 
             if return_device_current:
+                a_ij_hat = a_hat.blocks[i, j]
+                a_ji_hat = a_hat.blocks[j, i]
                 gl_ji = -xl_ij.conj().swapaxes(-2, -1)
                 device_current[
                     ..., a.block_section_offsets[comm.block.rank] + i - 1
                 ] = xp.trace(
-                    a_ij @ gl_ji - xl_ij @ a_ji,
+                    a_ij_hat @ gl_ji - xl_ij @ a_ji_hat,
                     axis1=-2,
                     axis2=-1,
                 )
@@ -1389,6 +1395,7 @@ def permuted_selinv(
     xg_buffer_lower: list[NDArray] = None,
     xg_buffer_upper: list[NDArray] = None,
     xg_out: DSDBSparse | _DStackView = None,
+    a_hat: DSDBSparse | _DStackView = None,
     device_current: NDArray = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
@@ -1550,10 +1557,12 @@ def permuted_selinv(
             )
 
             if return_device_current:
+                a_hat_ij = a_hat.blocks[i, i + 1]
+                a_hat_ji = a_hat.blocks[i + 1, i]
                 gl_ji = -bl_upper_block.conj().swapaxes(-2, -1)
                 device_current[..., a.block_section_offsets[comm.block.rank] + i] = (
                     xp.trace(
-                        bl_upper_block @ a_ip1_i - a_i_ip1 @ gl_ji,
+                        bl_upper_block @ a_hat_ji - a_hat_ij @ gl_ji,
                         axis1=-2,
                         axis2=-1,
                     )
@@ -1588,7 +1597,7 @@ def permuted_selinv(
             gl_10 = xl_buffer_upper[0]
             xl_01 = -gl_10.conj().swapaxes(-2, -1)
             device_current[..., a.block_section_offsets[comm.block.rank]] = xp.trace(
-                xl_01 @ a.blocks[1, 0] - a.blocks[0, 1] @ gl_10,
+                xl_01 @ a_hat.blocks[1, 0] - a_hat.blocks[0, 1] @ gl_10,
                 axis1=-2,
                 axis2=-1,
             )

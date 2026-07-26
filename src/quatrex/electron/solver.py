@@ -485,6 +485,7 @@ class ElectronSolver(SubsystemSolver):
 
         # Will be initialized in the `_assemble_system_matrix` method.
         self.system_matrix = None
+        self.bare_system_matrix = None
 
         self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
@@ -952,6 +953,13 @@ class ElectronSolver(SubsystemSolver):
             sse_greater=sse_greater,
             sse_retarded_hermitian=sse_retarded_hermitian,
         )
+        self.bare_system_matrix = SystemMatrix(
+            stack_shape=sse_lesser.local_stack_shape,
+            stack_index=(...,),
+            energies=self.local_energies[batch_slice] + 1j * self.eta,
+            hamiltonian=self.hamiltonian,
+            overlap=self.overlap,
+        )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -1112,6 +1120,7 @@ class ElectronSolver(SubsystemSolver):
                     sigma_greater=sse_greater_batch,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
+                    a_hat=self.bare_system_matrix,
                     return_retarded=True,
                     return_meir_wingreen_current=self.compute_meir_wingreen_current,
                     return_device_current=self.compute_device_current,

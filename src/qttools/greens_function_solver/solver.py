@@ -63,6 +63,7 @@ class GFSolver(ABC):
         sigma_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
+        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
         return_meir_wingreen_current: bool = False,
         return_device_current: bool = False,
@@ -91,6 +92,9 @@ class GFSolver(ABC):
         obc_blocks : dict[int, OBCBlocks], optional
             OBC blocks for lesser, greater and retarded Green's
             functions, by default None.
+        a_hat : DSDBSparse, optional
+            The bare system matrix without self-energy contributions.
+            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False

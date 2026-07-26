@@ -285,7 +285,6 @@ class SCBA(TransportSolver):
         self.electron_solver = ElectronSolver(
             self.config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------

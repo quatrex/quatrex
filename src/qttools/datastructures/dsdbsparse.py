@@ -855,9 +855,8 @@ def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:
             raise IndexError("an index can only have a single ellipsis ('...')")
 
         loc = is_ellipsis[0]
-        extra_dimensions = (ndim - 1) - (
-            len(stack_index) - sum(i is None for i in stack_index) - 1
-        )
+        explicit_indices = len(stack_index) - sum(i is None for i in stack_index) - 1
+        extra_dimensions = ndim - explicit_indices
         stack_index = (
             stack_index[:loc]
             + (slice(None, None, None),) * extra_dimensions
@@ -1068,6 +1067,8 @@ class _DStackView(_StackView):
         "num_blocks",
         "block_sizes",
         "num_local_blocks",
+        "local_block_sizes",
+        "local_block_offsets",
     )
 
     def __init__(
@@ -1191,7 +1192,7 @@ class _DSDBlockIndexer(_BlockIndexer):
 
         return row, col
 
-    def __getitem__(self, index: tuple) -> NDArray | tuple:
+    def __getitem__(self, index: tuple) -> NDArray:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
         return self._dsdbsparse._get_block(self._stack_index, row, col)

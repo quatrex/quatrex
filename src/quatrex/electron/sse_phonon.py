@@ -2,6 +2,8 @@
 
 """Includes the scattering self-energy from the electron-phonon interaction."""
 
+import h5py  # TODO: Import data elsewhere and remove this import
+
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from quatrex.core import constants
@@ -66,15 +68,11 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 raise ValueError(
                     "Electron energies must be provided for the long-wavelength model."
                 )
-                # TODO: Check that the other required variables are set
 
-            # Compute phonon modes and coupling constants
-            # Generate a grid of phonon momenta.
-            self.phonon_momenta = xp.linspace(
-                -config.phonon.q_grid_maximum,
-                config.phonon.q_grid_maximum,
-                config.phonon.q_grid_n_target,
-            )
+            # Load phonon modes
+            # TODO: Do this elsewhere
+            with h5py.File(config.input_dir + "/phonon_data.hdf5", "r") as f:
+                self.phonon_momenta = f["momentum_x"]
             self.n_phonon_momenta = len(self.phonon_momenta)
             self.n_acoustic_modes = len(config.phonon.acoustic_deformation_potentials)
             self.n_optical_modes = len(config.phonon.optical_deformation_potentials)

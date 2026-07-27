@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 import warnings
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
 
 import numba as nb
 import numpy as np
@@ -1519,12 +1519,8 @@ class PhononConfig(BaseModel):
     # TODO: Don't allow None to simplify the type handling. Use child classes for
     #       the different ways of handling phonons and initialize an empy list
     #       for unused lists.
-    acoustic_deformation_potentials: Sequence[FiniteFloat] | None = None
-    acoustic_speeds_of_sound: Sequence[NonNegativeFloat] | None = None
-    optical_deformation_potentials: Sequence[FiniteFloat] | None = None
-    optical_phonon_energies: Sequence[FiniteFloat] | None = None
-    q_grid_maximum: NonNegativeFloat | None = None
-    q_grid_n_target: PositiveInt | None = None
+    acoustic_deformation_potential: FiniteFloat | None = None
+    optical_deformation_potential: FiniteFloat | None = None
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
@@ -1543,49 +1539,12 @@ class PhononConfig(BaseModel):
         if self.model != "long-wavelength":
             return self
 
-        if (self.acoustic_deformation_potentials is None) ^ (
-            self.acoustic_speeds_of_sound is None
+        if (
+            self.acoustic_deformation_potential is None
+            or self.optical_deformation_potential is None
         ):
             raise ValueError(
-                "The acoustic phonons require both 'acoustic_deformation_potentials' and 'acoustic_speeds_of_sound' to be set. Please provide both or none."
-            )
-
-        if (self.optical_deformation_potentials is None) ^ (
-            self.optical_phonon_energies is None
-        ):
-            raise ValueError(
-                "The optical phonons require both 'optical_deformation_potentials' and 'optical_phonon_energies' to be set. Please provide both or none."
-            )
-
-        if self.q_grid_maximum is None:
-            raise ValueError(
-                "The long-wavelength phonon model requires 'q_grid_maximum' to be set."
-            )
-
-        if self.q_grid_n_target is None:
-            raise ValueError(
-                "The long-wavelength phonon model requires 'q_grid_N_target' to be set."
-            )
-
-        return self
-
-    @model_validator(mode="after")
-    def check_long_wavelength_properties_compatibility(self):
-        """
-        Check whether the long-wavelength properties are compatible with each other.
-        """
-
-        if self.model != "long-wavelength":
-            return self
-
-        if self.acoustic_deformation_potentials is not None:
-            assert len(self.acoustic_deformation_potentials) == len(
-                self.acoustic_speeds_of_sound
-            )
-
-        if self.optical_deformation_potentials is not None:
-            assert len(self.optical_deformation_potentials) == len(
-                self.optical_phonon_energies
+                "'acoustic_deformation_potential' and 'optical_deformation_potential' must be set."
             )
 
         return self

@@ -4,14 +4,14 @@ input_dir = "../inputs"
 formalism = "negf" # "negf" or "wf"
 
 [compute.comm]
-block_comm_size = 3
+block_comm_size = 2
 
 [device]
 transport_direction = 'x'
 block_size = 32
 
 [scba] # ===============================================================
-max_iterations = 2
+max_iterations = 15
 mixing_factor = 0.5
 
 coulomb_screening = true
@@ -22,7 +22,7 @@ symmetric = true
 [outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
-electron_density = false
+electron_density = true
 hole_density = false
 
 polarization_density = true
@@ -47,9 +47,9 @@ right_contact.mid_gap_energy = -3.8      # eV
 band_edge_tracking = true
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 0
-energy_window_num = 100
+energy_window_min = -11.6
+energy_window_max = 0.9
+energy_window_num = 1000
 
 max_batch_size = 30
 solver.algorithm = "rgf"
@@ -78,6 +78,7 @@ obc.residual_tolerance = 1e-4
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Å
 epsilon_r = 4.0
+spin = true
 
 num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
 

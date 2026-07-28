@@ -281,6 +281,9 @@ class SCBA(TransportSolver):
             print(
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
             )
+            print(
+                f'spin-resolved: {config.coulomb_screening.spin}'
+            )
 
         self.electron_solver = ElectronSolver(
             self.config,

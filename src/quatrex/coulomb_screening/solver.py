@@ -6,7 +6,7 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.datastructures import DSDBSparse
+from qttools.datastructures import DSDBSparse, DSDBCOO
 from qttools.datastructures.dsdbsparse import _DStackView
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
@@ -23,9 +23,159 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import compute_num_connected_blocks
 from quatrex.device.contact import get_inverse_order, order_block
+from quatrex.device.inputs import assemble_matrix
+from qttools.kernels.datastructure import dsdbcoo_kernels
 
 profiler = Profiler()
 
+
+def _spin_extended_sparsity_pattern(
+    sparsity_pattern: sparse.coo_matrix
+) -> sparse.coo_matrix:
+    """Extends the sparsity pattern for the spin resolved case.
+    
+    Each non-zero element of sparsity_pattern is turned into a 2x2 spin block
+    (i,j) -> (2i,2j), (2i+1,2j), (2i,2j+1), (2i+1,2j+1)
+
+    Parameters
+    ----------
+    sparsity_pattern : sparse.coo_matrix
+        The sparsity pattern of the non spin-resolved case
+
+    Returns
+    -------
+    double_sparsity_pattern : sparse.coo_matrix
+        The extended sparsity pattern 
+    """
+
+    col = sparsity_pattern.col
+    row = sparsity_pattern.row
+    size_extended = len(col) * 4
+
+    col_extended = np.zeros(shape=(size_extended), dtype = np.int32)
+    row_extended = np.zeros(shape=(size_extended), dtype = np.int32)
+
+    idx = np.arange(0, size_extended, 4)
+    col_extended[idx] = 2 * col
+    row_extended[idx] = 2 * row
+
+    idx = np.add(idx, 1)
+    col_extended[idx] = np.add(2 * col, 1)
+    row_extended[idx] = np.add(2 * row, 0)
+
+    idx = np.add(idx, 1)
+    col_extended[idx] = np.add(2 * col, 0)
+    row_extended[idx] = np.add(2 * row, 1)
+
+    idx = np.add(idx, 1)
+    col_extended[idx] = np.add(2 * col, 1)
+    row_extended[idx] = np.add(2 * row, 1)
+
+    data_extended = np.ones(shape=(len(col) * 4), dtype = np.float32)
+
+    spin_extended_sparsity_pattern = sparse.coo_matrix((data_extended, (row_extended, col_extended)), dtype=np.float32)
+
+    return spin_extended_sparsity_pattern
+
+def _cast_to_spin_matrix(
+    A: DSDBSparse, B: DSDBSparse | None = None
+) -> DSDBSparse:
+    """Casts A and B to a matrix of size 2Nx2N the following way:
+
+    |A_11 B_11|A_12 B_12| ...
+    |B_11 A_11|B_12 A_12|
+    |A_21 B_21|A_22 B_22|
+    |B_21 A_21|B_22 A_22|
+    ...
+
+    Parameters
+    ----------
+    A : DSDBSparse
+        The matrix to be cast to a bigger matrix
+
+    B : DSDBSparse
+        optional, if None all B_ij = 0
+
+    Returns
+    -------
+    spin_matrix : DSBSSparse
+        A matrix of size 2Nx2N
+
+    """
+    if B is not None and A.shape != B.shape:
+        raise AssertionError("A and B must have the same shape")
+
+    if B is not None and not np.array_equal(A.block_sizes, B.block_sizes):
+        raise AssertionError("A and B must have the same block sizes")
+    
+    data_A = np.concatenate((A.data, A.data), axis = 1)
+    rows_A = np.concatenate((2*A.rows, np.add(2*A.rows, 1)))
+    cols_A = np.concatenate((2*A.cols, np.add(2*A.cols, 1)))
+
+    if B is not None:
+        data_B = np.concatenate((B.data, B.data), axis = 1)
+        rows_B = np.concatenate((np.add(2*B.rows, 1), 2*B.rows))
+        cols_B = np.concatenate((2*B.cols, np.add(2*B.cols, 1)))
+    else:
+        data_B = np.zeros(shape=data_A.shape)
+        rows_B = np.concatenate((np.add(2*A.rows, 1), 2*A.rows))
+        cols_B = np.concatenate((2*A.cols, np.add(2*A.cols, 1)))
+
+    _data = np.concatenate((data_A, data_B), axis = 1)
+    _rows = np.concatenate((rows_A, rows_B))
+    _cols = np.concatenate((cols_A, cols_B))
+    
+    block_sizes = A.block_sizes * 2
+
+    block_sort_index = dsdbcoo_kernels.compute_block_sort_index(
+        _rows, _cols, block_sizes
+    )
+    data = _data[:,block_sort_index]
+    rows = _rows[block_sort_index]
+    cols = _cols[block_sort_index]
+
+    spin_matrix = DSDBCOO(A.dtype, rows, cols, block_sizes, A.local_stack_shape, A.global_stack_shape, A.symmetry)
+    spin_matrix.allocate_data()
+    spin_matrix.data = data
+    
+    return spin_matrix
+
+def _cast_from_spin_matrix(
+    A: DSDBSparse, out: DSDBSparse | None = None
+) -> DSDBSparse:
+    """ Takes a spin resolved matrix A of size 2Nx2N and returns the elements 
+    corresponding to (up, up) as a NxN matrix
+
+    Parameters
+    ----------
+    A : DSDBSparse
+        spin resolved matrix
+
+    out : DSDBSparse
+        The (up, up) components of A
+
+    """
+
+    _rows = A.rows
+    _cols = A.cols
+
+    mask = np.argwhere(np.logical_and(_rows % 2, _cols % 2)).flatten()
+
+    data = A.data[:, mask]
+    rows = np.right_shift(np.subtract(_rows[mask], 1), 1)
+    cols = np.right_shift(np.subtract(_cols[mask], 1), 1)
+
+    if out is not None:
+        out.data = data
+        out.rows = rows
+        out.cols = cols
+    else:
+        block_sizes = A.block_sizes / 2
+        out = DSDBCOO(A.dtype, rows, cols, block_sizes, A.local_stack_shape, A.global_stack_shape, A.symmetry)
+        out.allocate_data()
+        out.data = data
+
+    return out
 
 def _compute_sparsity_pattern(
     *matrices: DSDBSparse, dtype: xp.dtype = None
@@ -69,8 +219,34 @@ class CoulombScreeningSolver(SubsystemSolver):
         """Initializes the solver."""
         super().__init__(config, energies)
 
-        self.coulomb_matrix = coulomb_matrix
+        self.spin = config.coulomb_screening.spin
+
+        # read exchange matrix v_ap
+        if self.spin:
+            # Load the Exchange matrix.
+            exchange_matrix, __ = assemble_matrix(
+                config=config,
+                matrix_name="exchange_matrix",
+                sparsity_pattern=sparsity_pattern,
+                shift_kpoints=True,
+            )
+
+            # Make sure the exchange matrix is hermitian.
+            # TODO: Check that this is correct for kpoints.
+            if exchange_matrix.symmetry is None:
+                exchange_matrix.symmetrize("hermitian")
+            exchange_matrix._data /= config.coulomb_screening.epsilon_r
+
+        if self.spin:
+            self.coulomb_matrix = _cast_to_spin_matrix(coulomb_matrix, exchange_matrix)
+        else:
+            self.coulomb_matrix = coulomb_matrix
+
         self.small_block_sizes = self.coulomb_matrix.block_sizes
+
+        if self.spin:
+            sparsity_pattern = _spin_extended_sparsity_pattern(sparsity_pattern)
+
 
         self.num_connected_blocks = config.coulomb_screening.num_connected_blocks
         if self.num_connected_blocks == "auto":
@@ -749,6 +925,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             max_batch_size = self.max_batch_size
         batch_sizes, batch_offsets = get_batches(p_lesser.shape[0], max_batch_size)
 
+        if self.spin:
+            p_lesser = _cast_to_spin_matrix(p_lesser)
+            p_greater = _cast_to_spin_matrix(p_greater)
+            p_retarded_hermitian = _cast_to_spin_matrix(p_retarded_hermitian)
+
         for i in range(len(batch_sizes)):
 
             batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
@@ -842,6 +1023,10 @@ class CoulombScreeningSolver(SubsystemSolver):
                 label="CoulombScreeningSolver: Solve", level="default", comm=comm
             ):
                 out_l, out_g = out
+                if self.spin:
+                    out_l = _cast_to_spin_matrix(out_l, out_l)
+                    out_g = _cast_to_spin_matrix(out_g, out_g)
+
                 out_slice = (
                     out_l.stack[batch_slice],
                     out_g.stack[batch_slice],
@@ -867,6 +1052,12 @@ class CoulombScreeningSolver(SubsystemSolver):
                         out=out_slice,
                         return_retarded=False,
                     )
+
+        if self.spin:
+            w_lesser, w_greater, *_ = out
+            _cast_from_spin_matrix(out_l, w_lesser)
+            _cast_from_spin_matrix(out_g, w_greater)
+
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Filter", level="default", comm=comm

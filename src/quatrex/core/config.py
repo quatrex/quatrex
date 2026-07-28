@@ -1316,6 +1316,8 @@ class CoulombScreeningConfig(BaseModel):
 
     """
 
+    spin: bool = False
+
     align_polarization_to_complex_axes: bool = True
     r"""Whether to discard certain parts of the polarization.
 

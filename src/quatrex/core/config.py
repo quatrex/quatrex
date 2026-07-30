@@ -1428,6 +1428,7 @@ class PhononConfig(BaseModel):
     #       for unused lists.
     acoustic_deformation_potential: FiniteFloat | None = None
     optical_deformation_potential: FiniteFloat | None = None
+    atom_mass: NonNegativeFloat | None = None
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):

@@ -109,9 +109,11 @@ lyapunov.memoizer.absolute_tol = 1e-6
 
 
 [phonon]
-# TODO: find reasonable values
 interaction_cutoff = 5.5  # Å
 model = "long-wavelength"
 temperature = 300  # K
-acoustic_deformation_potentials = [5e-3, 5e-4]  # eV
-optical_deformation_potentials = [1e-3]  # eV
+# TODO: find reasonable deformation potentials
+acoustic_deformation_potential = 5e-3  # eV
+optical_deformation_potential = 1e-3  # eV / Å
+# 1.99264688270e-26 kg / (1e-20 / e)
+atom_mass = 3.192572275274879e-25  # (eV s^2) / Å^2

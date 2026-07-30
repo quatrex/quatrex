@@ -12,3 +12,4 @@ alpha = physical_constants["fine-structure constant"][0]  # dimensionless
 epsilon_0 = 1 / (2 * alpha * h * c_0)  # 1 / (eV Å)
 mu_0 = 2 * alpha * h / c_0
 k_B = physical_constants["Boltzmann constant in eV/K"][0]  # eV / K
+kg = 1e-20 / e  # (eV s^2) / Å^2

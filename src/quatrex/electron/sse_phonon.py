@@ -2,6 +2,7 @@
 
 """Includes the scattering self-energy from the electron-phonon interaction."""
 
+import time
 import h5py  # TODO: Import data elsewhere and remove this import
 
 from qttools import NDArray, xp
@@ -71,57 +72,63 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
             # Load phonon modes
             # TODO: Do this elsewhere
-            with h5py.File(config.input_dir + "/phonon_data.hdf5", "r") as f:
-                self.phonon_momenta = f["momentum_x"]
+            with h5py.File(config.input_dir / "phonon_data.h5", "r") as f:
+                # Dimensions:
+                # phonon_momenta[qx]
+                # phonon_energies[mode, qx]
+                # acoustic_mode_indices[polarized along x/y/z]
+                # acoustic_epsilon[x/y/z, mode polarized along x/y/z]
+                self.phonon_momenta = f["momentum-x"][:]
+                phonon_energies_in = constants.hbar * f["omega"][:]
+                acoustic_mode_indices = f["acoustic-mode-indices"][:]
+                acoustic_epsilon = f["acoustic-epsilon"][:]
+
+            # We ignore the transverse acoustic modes since the corresponding
+            # long-wavelength coupling vanishes. This assumes small complex parts
+            # of the corresponding epsilon.
+            # The longitudinal mode is chosen as the first one.
+            longitudinal_mode_index = acoustic_mode_indices[0]
+            longitudinal_phonon_energies = phonon_energies_in[
+                [longitudinal_mode_index], :
+            ]
+            self.longitudinal_epsilon = acoustic_epsilon[:, 0]
+            self.phonon_energies = xp.delete(
+                phonon_energies_in, acoustic_mode_indices, axis=0
+            )
+            self.phonon_energies = xp.concatenate(
+                (longitudinal_phonon_energies, self.phonon_energies), axis=0
+            )
+
             self.n_phonon_momenta = len(self.phonon_momenta)
-            self.n_acoustic_modes = len(config.phonon.acoustic_deformation_potentials)
-            self.n_optical_modes = len(config.phonon.optical_deformation_potentials)
-            self.n_modes = self.n_acoustic_modes + self.n_optical_modes
-            self.phonon_energies = xp.zeros((self.n_phonon_momenta, self.n_modes))
-            self.coupling_constants = xp.zeros((self.n_phonon_momenta, self.n_modes))
+            self.n_modes = self.phonon_energies.shape[0]
+            # There are 3 * "number of atoms in unit cell" modes
+            self.n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
+
+            # Compute coupling constants
+            self.coupling_constants = xp.zeros((self.n_modes, self.n_phonon_momenta))
             for mode_index in range(self.n_modes):
-                if mode_index < self.n_acoustic_modes:
-                    # Acoustic phonons
-                    list_index = mode_index
-                    # TODO: Convert to expected units (e.g. h or hbar?)
-                    self.phonon_energies[:, mode_index] = (
-                        config.phonon.acoustic_speeds_of_sound[list_index]
-                        * xp.abs(self.phonon_momenta)
-                        * constants.hbar
+                # [prefactor] = Å
+                prefactor = xp.sqrt(
+                    constants.hbar**2
+                    / (
+                        2
+                        * config.phonon.atom_mass
+                        * self.phonon_energies[mode_index, :]
                     )
-                    # TODO: Check this equation for the coupling
-                    self.coupling_constants[:, mode_index] = (
+                )
+                if mode_index == 0:
+                    # Acoustic longitudinal phonons
+                    self.coupling_constants[mode_index, :] = (
                         1j
-                        * config.phonon.acoustic_deformation_potentials[list_index]
-                        * xp.sqrt(
-                            constants.hbar
-                            / (
-                                2
-                                * self.n_phonon_momenta
-                                * self.n_modes
-                                * self.phonon_energies[:, mode_index]
-                            )
-                        )
+                        * config.phonon.acoustic_deformation_potential
+                        * prefactor
                         * self.phonon_momenta
+                        * self.longitudinal_epsilon[0]
                     )
                 else:
                     # Optical phonons
-                    list_index = mode_index - self.n_acoustic_modes
-                    self.phonon_energies[:, mode_index] = (
-                        config.phonon.optical_phonon_energies[list_index]
-                    )
-                    self.coupling_constants[
-                        :, mode_index
-                    ] = config.phonon.optical_deformation_potentials[
-                        list_index
-                    ] * xp.sqrt(
-                        constants.hbar
-                        / (
-                            2
-                            * self.n_phonon_momenta
-                            * self.n_modes
-                            * self.phonon_energies[:, mode_index]
-                        )
+                    self.coupling_constants[mode_index, :] = (
+                        config.phonon.optical_deformation_potential * prefactor
                     )
 
             energy_spacing = _get_equal_spacing(electron_energies)
@@ -134,6 +141,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             self.occupancies = bose_einstein(
                 self.phonon_energies, config.phonon.temperature
             )
+            breakpoint()
             return
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
@@ -224,22 +232,26 @@ class SigmaPhonon(ScatteringSelfEnergy):
         ne = g_lesser.data.shape[0]
 
         # OPTIMIZATION: Mitigate the python loops
-        for momentum_index in range(self.n_phonon_momenta):
-            for mode_index in range(self.n_modes):
-                shift = self.phonon_energy_shifts[momentum_index, mode_index]
-                occupancy = self.occupancies[momentum_index, mode_index]
-                coupling_constant = self.coupling_constants[momentum_index, mode_index]
-                coupling_factor = xp.abs(coupling_constant) ** 2
+        start_time = time.perf_counter()
+        for mode_index in range(self.n_modes):
+            print("Mode", mode_index, ", Time", time.perf_counter() - start_time, "s")
+            for momentum_index in range(self.n_phonon_momenta):
+                shift = self.phonon_energy_shifts[mode_index, momentum_index]
+                occupancy = self.occupancies[mode_index, momentum_index]
+                coupling_constant = self.coupling_constants[mode_index, momentum_index]
+                prefactor = xp.abs(coupling_constant) ** 2 / (
+                    self.n_phonon_momenta * self.n_atoms_unit_cell
+                )
 
                 sigma_lesser.data[: ne - shift, :] += (
-                    coupling_factor * (occupancy + 1) * g_lesser.data[shift:, :]
+                    prefactor * (occupancy + 1) * g_lesser.data[shift:, :]
                 )
                 sigma_lesser.data[shift:, :] += (
-                    coupling_factor * occupancy * g_lesser.data[: ne - shift, :]
+                    prefactor * occupancy * g_lesser.data[: ne - shift, :]
                 )
                 sigma_greater.data[shift:, :] += (
-                    coupling_factor * (occupancy + 1) * g_greater.data[: ne - shift, :]
+                    prefactor * (occupancy + 1) * g_greater.data[: ne - shift, :]
                 )
                 sigma_greater.data[: ne - shift, :] += (
-                    coupling_factor * occupancy * g_greater.data[shift:, :]
+                    prefactor * occupancy * g_greater.data[shift:, :]
                 )

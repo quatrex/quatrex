@@ -78,7 +78,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 # phonon_energies[mode, qx]
                 # acoustic_mode_indices[polarized along x/y/z]
                 # acoustic_epsilon[x/y/z, mode polarized along x/y/z]
-                self.phonon_momenta = f["momentum-x"][:]
+                phonon_momenta = f["momentum-x"][:]
                 phonon_energies_in = constants.hbar * f["omega"][:]
                 acoustic_mode_indices = f["acoustic-mode-indices"][:]
                 acoustic_epsilon = f["acoustic-epsilon"][:]
@@ -91,57 +91,62 @@ class SigmaPhonon(ScatteringSelfEnergy):
             longitudinal_phonon_energies = phonon_energies_in[
                 [longitudinal_mode_index], :
             ]
-            self.longitudinal_epsilon = acoustic_epsilon[:, 0]
-            self.phonon_energies = xp.delete(
+            longitudinal_epsilon = acoustic_epsilon[:, 0]
+            phonon_energies = xp.delete(
                 phonon_energies_in, acoustic_mode_indices, axis=0
             )
-            self.phonon_energies = xp.concatenate(
-                (longitudinal_phonon_energies, self.phonon_energies), axis=0
+            phonon_energies = xp.concatenate(
+                (longitudinal_phonon_energies, phonon_energies), axis=0
             )
 
-            self.n_phonon_momenta = len(self.phonon_momenta)
-            self.n_modes = self.phonon_energies.shape[0]
+            n_phonon_momenta = len(phonon_momenta)
+            n_modes = phonon_energies.shape[0]
             # There are 3 * "number of atoms in unit cell" modes
-            self.n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
+            n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
 
             # Compute coupling constants
-            self.coupling_constants = xp.zeros((self.n_modes, self.n_phonon_momenta))
-            for mode_index in range(self.n_modes):
+            coupling_constants = xp.zeros((n_modes, n_phonon_momenta))
+            for mode_index in range(n_modes):
                 # [prefactor] = Å
                 prefactor = xp.sqrt(
                     constants.hbar**2
-                    / (
-                        2
-                        * config.phonon.atom_mass
-                        * self.phonon_energies[mode_index, :]
-                    )
+                    / (2 * config.phonon.atom_mass * phonon_energies[mode_index, :])
                 )
                 if mode_index == 0:
                     # Acoustic longitudinal phonons
-                    self.coupling_constants[mode_index, :] = (
+                    coupling_constants[mode_index, :] = (
                         1j
                         * config.phonon.acoustic_deformation_potential
                         * prefactor
-                        * self.phonon_momenta
-                        * self.longitudinal_epsilon[0]
+                        * phonon_momenta
+                        * longitudinal_epsilon[0]
                     )
                 else:
                     # Optical phonons
-                    self.coupling_constants[mode_index, :] = (
+                    coupling_constants[mode_index, :] = (
                         config.phonon.optical_deformation_potential * prefactor
                     )
 
             energy_spacing = _get_equal_spacing(electron_energies)
             # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing
             # is the phonon energy rounded to the electron energy grid
-            self.phonon_energy_shifts = xp.astype(
-                xp.rint(self.phonon_energies / energy_spacing), int
+            phonon_energy_shifts = xp.astype(
+                xp.rint(phonon_energies / energy_spacing), int
             )
-            assert xp.all(self.phonon_energy_shifts >= 0)
-            self.occupancies = bose_einstein(
-                self.phonon_energies, config.phonon.temperature
+            assert xp.all(phonon_energy_shifts >= 0)
+            occupancies = bose_einstein(phonon_energies, config.phonon.temperature)
+
+            # Compute V
+            prefactor = 1 / (n_phonon_momenta * n_atoms_unit_cell)
+            coupling_factors = xp.abs(coupling_constants) ** 2
+            self.V_em = prefactor * xp.bincount(
+                phonon_energy_shifts.flatten(),
+                weights=(coupling_factors * (occupancies + 1)).flatten(),
             )
-            breakpoint()
+            self.V_abs = prefactor * xp.bincount(
+                phonon_energy_shifts.flatten(),
+                weights=(coupling_factors * occupancies).flatten(),
+            )
             return
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
@@ -231,27 +236,18 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
         ne = g_lesser.data.shape[0]
 
-        # OPTIMIZATION: Mitigate the python loops
         start_time = time.perf_counter()
-        for mode_index in range(self.n_modes):
-            print("Mode", mode_index, ", Time", time.perf_counter() - start_time, "s")
-            for momentum_index in range(self.n_phonon_momenta):
-                shift = self.phonon_energy_shifts[mode_index, momentum_index]
-                occupancy = self.occupancies[mode_index, momentum_index]
-                coupling_constant = self.coupling_constants[mode_index, momentum_index]
-                prefactor = xp.abs(coupling_constant) ** 2 / (
-                    self.n_phonon_momenta * self.n_atoms_unit_cell
-                )
-
-                sigma_lesser.data[: ne - shift, :] += (
-                    prefactor * (occupancy + 1) * g_lesser.data[shift:, :]
-                )
-                sigma_lesser.data[shift:, :] += (
-                    prefactor * occupancy * g_lesser.data[: ne - shift, :]
-                )
-                sigma_greater.data[shift:, :] += (
-                    prefactor * (occupancy + 1) * g_greater.data[: ne - shift, :]
-                )
-                sigma_greater.data[: ne - shift, :] += (
-                    prefactor * occupancy * g_greater.data[shift:, :]
-                )
+        for shift in range(len(self.V_em)):
+            print("Energy bin", shift, ", Time", time.perf_counter() - start_time, "s")
+            sigma_lesser.data[: ne - shift, :] += (
+                self.V_em[shift] * g_lesser.data[shift:, :]
+            )
+            sigma_lesser.data[shift:, :] += (
+                self.V_abs[shift] * g_lesser.data[: ne - shift, :]
+            )
+            sigma_greater.data[shift:, :] += (
+                self.V_em[shift] * g_greater.data[: ne - shift, :]
+            )
+            sigma_greater.data[: ne - shift, :] += (
+                self.V_abs[shift] * g_greater.data[shift:, :]
+            )

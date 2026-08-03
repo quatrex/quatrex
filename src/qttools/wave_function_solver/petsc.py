@@ -68,6 +68,8 @@ try:
 except ImportError:
     petsc_available = False
 
+import numpy as np
+
 from qttools import NDArray, sparse, xp
 from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
@@ -93,22 +95,10 @@ def _get_data_pointer(arr: NDArray) -> ctypes.c_void_p:
         A ctypes pointer to the data of the array.
 
     """
-    if xp.__name__ == "cupy":
+    if type(arr).__module__ == "cupy":
         return ctypes.c_void_p(arr.data.ptr)
 
     return ctypes.c_void_p(arr.ctypes.data)
-
-
-# Maps the combination of (backend, dense) to the appropriate PETSc
-# matrix type suffix.
-_petsc_mat_type_suffixes = {
-    ("cpu", False): "aij",
-    ("cpu", True): "dense",
-    ("cuda", False): "aijcusparse",
-    ("cuda", True): "densecuda",
-    ("hip", False): "aijhipsparse",
-    ("hip", True): "densehip",
-}
 
 
 def _get_petsc_mat_type(distributed: bool, dense: bool) -> str:
@@ -133,14 +123,16 @@ def _get_petsc_mat_type(distributed: bool, dense: bool) -> str:
     """
     prefix = "mpi" if distributed else "seq"
 
-    if xp.__name__ != "cupy":
-        backend = "cpu"
-    elif xp.cuda.runtime.is_hip:
-        backend = "hip"
-    else:
-        backend = "cuda"
+    if dense:
+        return prefix + "dense"
 
-    return prefix + _petsc_mat_type_suffixes[backend, dense]
+    if xp.__name__ != "cupy":
+        return prefix + "aij"
+
+    if xp.cuda.runtime.is_hip:
+        return prefix + "aijhipsparse"
+
+    return prefix + "aijcusparse"
 
 
 class PETSc(WFSolver):
@@ -236,7 +228,7 @@ class PETSc(WFSolver):
                 "Both 'comm' and 'local_rows' must be provided together or not at all."
             )
 
-        distributed = comm is not None and local_rows is not None
+        distributed = comm is not None and comm.size > 1 and local_rows is not None
 
         self.comm = comm._mpi_comm if distributed else petsc.COMM_SELF
         self.local_rows = local_rows
@@ -267,12 +259,13 @@ class PETSc(WFSolver):
             The PETSc matrix corresponding to the input CSR matrix.
 
         """
+
         # NOTE: We assume that the matrix is always square and in the
         # case of a distributed matrix, we partition the matrix along
         # the rows.
-        n = a.shape[1]
+        n_local, n = a.shape
 
-        rows = xp.repeat(xp.arange(n, dtype=xp.int32), xp.diff(a.indptr))
+        rows = xp.repeat(xp.arange(n_local, dtype=xp.int32), xp.diff(a.indptr))
 
         sizes = (n, n)
         if self.local_rows is not None:
@@ -320,7 +313,12 @@ class PETSc(WFSolver):
         sizes = arr.shape
         if self.local_rows is not None:
             num_local_rows = self.local_rows[1] - self.local_rows[0]
-            sizes = ((num_local_rows, petsc.DETERMINE), (arr.shape[1], arr.shape[1]))
+            if sizes[0] != num_local_rows:
+                raise ValueError(
+                    f"Local array shape {sizes} does not match the "
+                    f"expected local row count {num_local_rows}."
+                )
+            sizes = ((num_local_rows, petsc.DETERMINE), (petsc.DECIDE, sizes[1]))
 
         mat = petsc.Mat().create(comm=self.comm)
         mat.setSizes(sizes)
@@ -330,6 +328,8 @@ class PETSc(WFSolver):
             libpetsc.MatMPIDenseSetPreallocation(mat.handle, _get_data_pointer(arr))
         else:
             libpetsc.MatSeqDenseSetPreallocation(mat.handle, _get_data_pointer(arr))
+
+        mat.assemble()
 
         return mat
 
@@ -342,6 +342,14 @@ class PETSc(WFSolver):
         reuse_factorization: bool = False,
     ):
         """Solves the sparse linear system a @ x = b using PETSc.
+
+        Note
+        ----
+        PETSc only accepts right-hand side arrays on the host. If the
+        input array is a CuPy array, it will be transferred to the host
+        before solving. The solution will also be returned in the same
+        format as the input array (i.e., if the input is a CuPy array,
+        the solution will be a CuPy array).
 
         Parameters
         ----------
@@ -387,8 +395,18 @@ class PETSc(WFSolver):
                 f"Data type of a ({a.dtype}) does not match data type "
                 f"of b ({b.dtype})."
             )
+        if not xp.isfortran(b):
+            b = xp.asfortranarray(b)
 
-        x = xp.zeros_like(b)
+        transferred = False
+        if type(b).__module__ == "cupy":
+            # NOTE: PETSc cannot handle CuPy arrays for the RHS and the
+            # solution directly, so we need to transfer the data to
+            # NumPy arrays.
+            b = np.asfortranarray(b.get())
+            transferred = True
+
+        x = np.empty_like(b, order="F")
 
         matrix = self._create_petsc_csr(a)
         rhs = self._create_petsc_array(b)
@@ -405,5 +423,10 @@ class PETSc(WFSolver):
 
         rhs.destroy()
         solution.destroy()
+
+        if transferred:
+            # NOTE: Transfer the solution back to the original CuPy
+            # array.
+            x = xp.asarray(x)
 
         return x

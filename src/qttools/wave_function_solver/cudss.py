@@ -54,7 +54,11 @@ class cuDSS(WFSolver):
     local row distribution. The communicator must be compatible with the
     cuDSS communication layer, which can be set via the CUDSS_COMM_LIB
     environment variable. The local row distribution is specified as a
-    tuple of the form (start_row, end_row) for each process.
+    tuple of the form (`start_row`, `end_row`) for each process.
+
+    Note that even though cuDSS MGMN mode takes end_row to be inclusive,
+    we use the exclusive convention in this solver to be consistent with
+    Python slicing.
 
     The solver also supports multithreading via the cuDSS threading
     layer, which can be set via the CUDSS_THREADING_LIB environment
@@ -115,7 +119,12 @@ class cuDSS(WFSolver):
                 "Both 'comm' and 'local_rows' must be provided together or not at all."
             )
 
-        self.local_rows = local_rows
+        try:
+            start, stop = local_rows
+            # NOTE: cuDSS uses inclusive end row
+            self.local_rows = (int(start), int(stop) - 1)
+        except ValueError:
+            self.local_rows = None
 
         if comm is not None:
             comm_lib = os.getenv("CUDSS_COMM_LIB")
@@ -130,23 +139,27 @@ class cuDSS(WFSolver):
             # Set up communication layer.
             cudss.set_comm_layer(self._solver_handle, comm_lib)
 
-            _comm = np.array([comm.py2f()], dtype=np.int32)
+            # NOTE: Saving this as an attribute to prevent it from being
+            # garbage collected, since cuDSS really only stores a
+            # pointer to this.
+            self._comm_handle = np.array([comm._mpi_comm.py2f()], dtype=np.int32)
 
             cudss.data_set(
                 self._solver_handle,
                 self._solver_data,
                 cudss.DataParam.COMM_HOST,
-                _comm.ctypes.data,
-                size_in_bytes=_comm.nbytes,
+                self._comm_handle.ctypes.data,
+                size_in_bytes=self._comm_handle.nbytes,
             )
 
-            # TODO: Add some logic to get a NCCL communicator.
+            # TODO: Add some logic to get a NCCL communicator. For now,
+            # we just use the MPI communicator for both host and device.
             cudss.data_set(
                 self._solver_handle,
                 self._solver_data,
                 cudss.DataParam.COMM_DEVICE,
-                _comm.ctypes.data,
-                size_in_bytes=_comm.nbytes,
+                self._comm_handle.ctypes.data,
+                size_in_bytes=self._comm_handle.nbytes,
             )
 
         threading_lib = os.getenv("CUDSS_THREADING_LIB")
@@ -209,7 +222,7 @@ class cuDSS(WFSolver):
 
         return csr_handle
 
-    def _create_cudss_array(self, arr: NDArray) -> int:
+    def _create_cudss_array(self, arr: NDArray, nrows_global: int) -> int:
         """Create a cuDSS wrapper for a dense array.
 
         Used for the right-hand side and solution.
@@ -218,6 +231,11 @@ class cuDSS(WFSolver):
         ----------
         arr : NDArray
             The dense array for which to create the cuDSS wrapper.
+        nrows_global : int
+            The global number of rows of the array, which is required
+            for distributed solves. If arr is a local slice of a
+            distributed array, this should be the total number of rows
+            in the global array.
 
         Returns
         -------
@@ -234,9 +252,9 @@ class cuDSS(WFSolver):
             )
 
         array_handle = cudss.matrix_create_dn(
-            nrows=arr.shape[0],
-            ncols=arr.shape[1],
-            ld=arr.shape[0],  # leading dimension
+            nrows=nrows_global,  # global number of rows
+            ncols=arr.shape[1],  # global number of columns
+            ld=arr.shape[0],  # local (!) leading dimension
             values=arr.data.ptr,
             value_type=value_type,
             layout=cudss.Layout.COL_MAJOR,  # Fortran order
@@ -382,8 +400,8 @@ class cuDSS(WFSolver):
 
         # Set up the linear system.
         matrix = self._create_cudss_csr(a)
-        solution = self._create_cudss_array(x)
-        rhs = self._create_cudss_array(b)
+        solution = self._create_cudss_array(x, nrows_global=a.shape[1])
+        rhs = self._create_cudss_array(b, nrows_global=a.shape[1])
 
         if not self.analyzed or not reuse_analysis:
             self._analyze(matrix, solution, rhs)

@@ -1,8 +1,11 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import pytest
+from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.comm.comm import _SubCommunicator
+from qttools.utils.mpi_utils import get_section_sizes
 
 from .conftest import WFSolverSpec
 
@@ -240,6 +243,50 @@ def test_complex_hermitian_system(n: int, m: int, solver_spec: WFSolverSpec):
     x = solver.solve(
         sparse.triu(a, format=solver_spec.sparse_format), b, **solver_spec.solve_kwargs
     )
+
+    assert x.shape == (n, m)
+    assert xp.allclose(a @ x, b, atol=1e-6)
+
+
+@pytest.mark.mpi(min_size=2)
+def test_distributed_solve(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver in a distributed setting."""
+    if not solver_spec.supports_distributed:
+        pytest.skip(
+            f"{solver_spec.solver_type.__name__} does not support distributed solving."
+        )
+
+    a, b = None, None
+    if comm.rank == 0:
+        a, b = _assemble_system(
+            n,
+            m,
+            sparse_format=solver_spec.sparse_format,
+            order=solver_spec.order,
+            use_banded=solver_spec.use_banded,
+        )
+
+    a = comm.bcast(a, root=0)
+    b = comm.bcast(b, root=0)
+
+    section_sizes, __ = get_section_sizes(n, comm.size)
+    section_offsets = [sum(section_sizes[:i]) for i in range(comm.size + 1)]
+
+    local_rows = (section_offsets[comm.rank], section_offsets[comm.rank + 1])
+
+    solver = solver_spec.solver_type(
+        comm=_SubCommunicator(comm, {}), local_rows=local_rows
+    )
+
+    a_local = a[local_rows[0] : local_rows[1], :]
+    b_local = xp.require(
+        b[local_rows[0] : local_rows[1], :],
+        requirements=solver_spec.order,
+    )
+
+    x_local = solver.solve(a_local, b_local, **solver_spec.solve_kwargs)
+
+    x = xp.concatenate(comm.allgather(x_local), axis=0)
 
     assert x.shape == (n, m)
     assert xp.allclose(a @ x, b, atol=1e-6)

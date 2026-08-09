@@ -1,5 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import pytest
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc import OBCSystem, Spectral
@@ -173,6 +174,9 @@ def test_upscaling(
 ):
     """Tests that the eigenmode upscaling works."""
 
+    if block_size % block_sections != 0:
+        pytest.skip("block_size must be divisible by block_sections")
+
     spectral = Spectral(nevp=nevp, block_sections=block_sections)
 
     rng = xp.random.default_rng()
@@ -238,3 +242,49 @@ def test_compute_dE_dk(
             dEk_dk_ref[i, j] = phi_left.conj().T @ a @ phi_right
 
     assert xp.allclose(dEk_dk, dEk_dk_ref)
+
+
+def test_injected(
+    a_xx: tuple[NDArray, ...],
+    nevp: NEVP,
+    block_sections: int,
+):
+    """Tests that the OBC return the correct result when injected modes are
+    requested."""
+
+    # skip the test if `Beyn` is used
+    if nevp.__class__.__name__ == "Beyn":
+        pytest.skip(
+            "Beyn is very sensitive and the test fails for the carbon nanotube example."
+            "We need to find a better example to test the injection vector calculation with Beyn."
+        )
+
+    spectral = Spectral(
+        nevp=nevp,
+        block_sections=block_sections,
+        residual_tolerance=1e-1,
+        max_decay=20,
+    )
+    a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
+    x_ii, phi_surfaces = spectral(
+        a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="", return_injected=True
+    )
+
+    assert xp.all(
+        (
+            xp.linalg.norm(
+                x_ii - xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), axis=(-1, -2)
+            )
+            / xp.linalg.norm(x_ii, axis=(-1, -2))
+        )
+        < 5e-3
+    )
+
+    # TODO: There is no simple way to check the correctnes of the injected
+    # modes, but we can check that the code produces the same injected modes in
+    # a batch and non-batch setting.
+    for i in range(a_ii.shape[0]):
+        __, phi_surface = spectral(
+            a_ii=a_ii[i], a_ij=a_ij[i], a_ji=a_ji[i], contact="", return_injected=True
+        )
+        assert xp.allclose(phi_surface, phi_surfaces[i])

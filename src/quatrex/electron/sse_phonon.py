@@ -78,10 +78,10 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 # phonon_energies[mode, qx]
                 # acoustic_mode_indices[polarized along x/y/z]
                 # acoustic_epsilon[x/y/z, mode polarized along x/y/z]
-                phonon_momenta = f["momentum-x"][:]
-                phonon_energies_in = constants.hbar * f["omega"][:]
-                acoustic_mode_indices = f["acoustic-mode-indices"][:]
-                acoustic_epsilon = f["acoustic-epsilon"][:]
+                phonon_momenta = xp.asarray(f["momentum-x"][:])
+                phonon_energies_in = xp.asarray(constants.hbar * f["omega"][:])
+                acoustic_mode_indices = xp.asarray(f["acoustic-mode-indices"][:])
+                acoustic_epsilon = xp.asarray(f["acoustic-epsilon"][:])
 
             # We ignore the transverse acoustic modes since the corresponding
             # long-wavelength coupling vanishes. This assumes small complex parts
@@ -105,7 +105,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
 
             # Compute coupling constants
-            coupling_constants = xp.zeros((n_modes, n_phonon_momenta))
+            coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
             for mode_index in range(n_modes):
                 # [prefactor] = Å
                 prefactor = xp.sqrt(
@@ -237,8 +237,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
         ne = g_lesser.data.shape[0]
 
         start_time = time.perf_counter()
+        print("Computing the electron-phonon self-energy...", end="", flush=True)
         for shift in range(len(self.V_em)):
-            print("Energy bin", shift, ", Time", time.perf_counter() - start_time, "s")
             sigma_lesser.data[: ne - shift, :] += (
                 self.V_em[shift] * g_lesser.data[shift:, :]
             )
@@ -251,3 +251,10 @@ class SigmaPhonon(ScatteringSelfEnergy):
             sigma_greater.data[: ne - shift, :] += (
                 self.V_abs[shift] * g_greater.data[shift:, :]
             )
+        print(
+            "  Done in",
+            time.perf_counter() - start_time,
+            "s",
+            f"({len(self.V_em)} energy points)",
+            flush=True,
+        )

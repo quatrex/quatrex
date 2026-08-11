@@ -8,8 +8,8 @@ transport_direction = 'x'
 block_size = 32
 
 [scba] # ===============================================================
-max_iterations = 50
-mixing_factor = 0.9
+max_iterations = 4
+mixing_factor = 1
 
 phonon = true
 

@@ -35,6 +35,18 @@ from quatrex.photon import PhotonSolver, PiPhoton
 profiler = Profiler()
 
 
+def _max(a: NDArray):
+    """Compute the maximum of the real array `a`."""
+    # TODO: Move this to qttools.utils?
+    # TODO: Assert that a is real
+
+    local_maximum = get_host(xp.max(a))
+    maximum = np.empty_like(local_maximum)
+    global_comm.Allreduce(local_maximum, maximum, op=MPI.MAX)
+
+    return maximum
+
+
 class SCBAData:
     """Data container class for the SCBA.
 
@@ -438,13 +450,18 @@ class SCBA(TransportSolver):
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = (
-            self.data.sigma_retarded_hermitian.data
-            - self.data.sigma_retarded_hermitian_prev.data
+        max_diff_sigma_retarded = _max(
+            xp.abs(
+                self.data.sigma_retarded_hermitian.data
+                - self.data.sigma_retarded_hermitian_prev.data
+            )
         )
-        local_max_diff = get_host(xp.max(xp.abs(diff)))
-        max_diff = np.empty_like(local_max_diff)
-        global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
+        max_diff_sigma_lesser = _max(
+            xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data)
+        )
+        max_diff_sigma_greater = _max(
+            xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data)
+        )
 
         meir_wingreen_current = self.observables.electron_current.get(
             "meir-wingreen", [0, 0]
@@ -463,7 +480,18 @@ class SCBA(TransportSolver):
         )
 
         if comm.rank == 0:
-            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
+            print(
+                f"Maximum Retarded Self-Energy Update: {max_diff_sigma_retarded}",
+                flush=True,
+            )
+            print(
+                f"Maximum Lesser Self-Energy Update: {max_diff_sigma_lesser}",
+                flush=True,
+            )
+            print(
+                f"Maximum Greater Self-Energy Update: {max_diff_sigma_greater}",
+                flush=True,
+            )
             print(f"Contact Current Difference: {current_diff}", flush=True)
             print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
             print(f"Current Conservation rel: {current_conservation_rel}", flush=True)

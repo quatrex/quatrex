@@ -3,7 +3,8 @@
 """Includes the scattering self-energy from the electron-phonon interaction."""
 
 import time
-import h5py  # TODO: Import data elsewhere and remove this import
+
+import h5py
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
@@ -71,7 +72,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 )
 
             # Load phonon modes
-            # TODO: Do this elsewhere
             with h5py.File(config.input_dir / "phonon_data.h5", "r") as f:
                 # Dimensions:
                 # phonon_momenta[qx]

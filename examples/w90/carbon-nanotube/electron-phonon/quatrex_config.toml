@@ -9,7 +9,7 @@ block_size = 32
 
 [scba] # ===============================================================
 max_iterations = 2
-mixing_factor = 0.9
+mixing_factor = 1
 
 phonon = true
 
@@ -36,8 +36,8 @@ right_contact.name = "drain"
 right_contact.fermi_level = -3.6  # eV
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 0
+energy_window_min = -5.6
+energy_window_max = -1.6
 energy_window_num = 100
 
 solver.algorithm = "rgf"
@@ -59,8 +59,9 @@ obc.memoizer.mode = "off"
 interaction_cutoff = 5.5  # Å
 model = "long-wavelength"
 temperature = 300  # K
-# TODO: find reasonable deformation potentials
-acoustic_deformation_potential = 5e-3  # eV
-optical_deformation_potential = 1e-3  # eV / Å
+# Deformation potentials are of order 1 eV / 1 eV/Å:
+# https://journals.aps.org/prb/abstract/10.1103/PhysRevB.104.195201#s3
+acoustic_deformation_potential = 1  # eV
+optical_deformation_potential = 1  # eV / Å
 # 1.99264688270e-26 kg / (1e-20 / e)
 atom_mass = 3.192572275274879e-25  # (eV s^2) / Å^2

@@ -4,8 +4,6 @@
 
 import time
 
-import h5py
-
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from quatrex.core import constants
@@ -72,37 +70,38 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 )
 
             # Load phonon modes
-            with h5py.File(config.input_dir / "phonon_data.h5", "r") as f:
-                # Dimensions:
-                # phonon_momenta[qx]
+            with open(config.input_dir / "phonon_dispersion.npy", "rb") as f:
+                """
+                Specification on phonon_dispersion.npy:
+                This file contains the angular velocities `omega[mode, momentum]`
+                for the different
+                modes and phonon momenta. The phonon momenta are equally spaced as
+                `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
+                constant.
+                The longitudinal acoustic mode along x is the first one
+                (`omega[0, :]`), followed by the two transverse acoustic modes.
+                The remaining modes are in no particular order.
+                """
                 # phonon_energies[mode, qx]
-                # acoustic_mode_indices[polarized along x/y/z]
-                # acoustic_epsilon[x/y/z, mode polarized along x/y/z]
-                phonon_momenta = xp.asarray(f["momentum-x"][:])
-                phonon_energies_in = xp.asarray(constants.hbar * f["omega"][:])
-                acoustic_mode_indices = xp.asarray(f["acoustic-mode-indices"][:])
-                acoustic_epsilon = xp.asarray(f["acoustic-epsilon"][:])
+                phonon_energies_in = constants.hbar * xp.load(f)
 
             # We ignore the transverse acoustic modes since the corresponding
             # long-wavelength coupling vanishes. This assumes small complex parts
             # of the corresponding epsilon.
-            # The longitudinal mode is chosen as the first one.
-            longitudinal_mode_index = acoustic_mode_indices[0]
-            longitudinal_phonon_energies = phonon_energies_in[
-                [longitudinal_mode_index], :
-            ]
-            longitudinal_epsilon = acoustic_epsilon[:, 0]
-            phonon_energies = xp.delete(
-                phonon_energies_in, acoustic_mode_indices, axis=0
-            )
-            phonon_energies = xp.concatenate(
-                (longitudinal_phonon_energies, phonon_energies), axis=0
-            )
+            phonon_energies = xp.delete(phonon_energies_in, [1, 2], axis=0)
 
-            n_phonon_momenta = len(phonon_momenta)
-            n_modes = phonon_energies.shape[0]
+            # Infer quantities from the loaded dispersion
+            n_modes, n_phonon_momenta = phonon_energies.shape
             # There are 3 * "number of atoms in unit cell" modes
+            assert (
+                phonon_energies_in.shape[0] % 3 == 0
+            ), "Not the correct amount of modes"
             n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
+            max_phonon_momentum = xp.pi / config.phonon.lattice_constant
+            phonon_momenta = xp.linspace(
+                -max_phonon_momentum, max_phonon_momentum, n_phonon_momenta
+            )
+            longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
 
             # Compute coupling constants
             coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
@@ -119,7 +118,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                         * config.phonon.acoustic_deformation_potential
                         * prefactor
                         * phonon_momenta
-                        * longitudinal_epsilon[0]
+                        * longitudinal_epsilon_x
                     )
                 else:
                     # Optical phonons

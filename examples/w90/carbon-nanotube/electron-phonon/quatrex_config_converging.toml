@@ -65,6 +65,8 @@ acoustic_deformation_potential = 1  # eV
 optical_deformation_potential = 1  # eV / Å
 # 1.99264688270e-26 kg / (1e-20 / e)
 atom_mass = 3.192572275274879e-25  # (eV s^2) / Å^2
+lattice_constant = 4.26  # Å
+
 # model = "pseudo-scattering"
 # phonon_energy = 50e-3
 # deformation_potential = 5e-3

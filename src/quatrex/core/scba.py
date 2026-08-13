@@ -450,17 +450,17 @@ class SCBA(TransportSolver):
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        max_diff_sigma_retarded = _max(
-            xp.abs(
-                self.data.sigma_retarded_hermitian.data
-                - self.data.sigma_retarded_hermitian_prev.data
-            )
-        )
         max_diff_sigma_lesser = _max(
             xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data)
         )
         max_diff_sigma_greater = _max(
             xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data)
+        )
+        max_diff_sigma_retarded_hermitian = _max(
+            xp.abs(
+                self.data.sigma_retarded_hermitian.data
+                - self.data.sigma_retarded_hermitian_prev.data
+            )
         )
 
         meir_wingreen_current = self.observables.electron_current.get(
@@ -481,15 +481,15 @@ class SCBA(TransportSolver):
 
         if comm.rank == 0:
             print(
-                f"Maximum Retarded Self-Energy Update: {max_diff_sigma_retarded}",
-                flush=True,
-            )
-            print(
                 f"Maximum Lesser Self-Energy Update: {max_diff_sigma_lesser}",
                 flush=True,
             )
             print(
                 f"Maximum Greater Self-Energy Update: {max_diff_sigma_greater}",
+                flush=True,
+            )
+            print(
+                f"Maximum Hermitian Retarded Self-Energy Update: {max_diff_sigma_retarded_hermitian}",
                 flush=True,
             )
             print(f"Contact Current Difference: {current_diff}", flush=True)

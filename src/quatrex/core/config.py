@@ -1522,6 +1522,7 @@ class PhononConfig(BaseModel):
     acoustic_deformation_potential: FiniteFloat | None = None
     optical_deformation_potential: FiniteFloat | None = None
     atom_mass: NonNegativeFloat | None = None
+    lattice_constant: PositiveFloat | None = None
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):

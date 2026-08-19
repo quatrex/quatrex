@@ -959,6 +959,7 @@ class ElectronSolver(SubsystemSolver):
             energies=self.local_energies[batch_slice] + 1j * self.eta,
             hamiltonian=self.hamiltonian,
             overlap=self.overlap,
+            potential=self.potential[self.hamiltonian.global_block_offset :],
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:

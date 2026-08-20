@@ -555,8 +555,6 @@ class QTBM(TransportSolver):
         self,
         kpoint: xp.complex128,
         energy: xp.float64,
-        obc_results: dict[Contact, OBCResult],
-        energy_ind: int,
     ) -> None:
         """Assembles the system matrix for a given k-point and energy index.
 
@@ -577,13 +575,6 @@ class QTBM(TransportSolver):
         # Add the Hamiltonian and overlap to the system matrix
         self._add_matrix_to_system_matrix(kpoint, -1, type="hamiltonian")
         self._add_matrix_to_system_matrix(kpoint, energy, type="overlap")
-
-        if self.config.qtbm.low_rank_obc:
-            # No need to add the OBC self-energy to the system matrix
-            return
-
-        # Add the boundary self-energy contributions.
-        self._add_sigma_obc_to_system_matrix(-1.0, obc_results, energy_ind)
 
     def _assemble_pseudo_inverse(
         self,
@@ -1296,21 +1287,25 @@ class QTBM(TransportSolver):
                             flush=True,
                         )
 
-                    # Compute the boundary self-energy and injection vector.
-                    obc_results = {}
-                    free_mempool()
-
-                    with profiler.profile_range(
-                        label="QTBM: Boundary conditions", level="default"
-                    ):
-                        for contact in self.device.contacts:
-                            obc_results[contact] = contact.compute_boundary(
-                                kpoint * 2 * np.pi,
-                                energy_batch,
-                                return_modes_only=self.config.qtbm.low_rank_obc,
-                            )
-
                     for energy_ind, energy in enumerate(energy_batch):
+
+                        self._assemble_system_matrix(kpoint, energy)
+
+                        # Compute the boundary self-energy and injection vector.
+                        obc_results = {}
+                        free_mempool()
+
+                        with profiler.profile_range(
+                            label="QTBM: Boundary conditions", level="default"
+                        ):
+                            for contact in self.device.contacts:
+                                obc_results[contact] = contact.compute_boundary(
+                                    self.system_matrix,
+                                    self.system_matrix_view == "upper",
+                                    list(kpoint * 2 * np.pi),
+                                    return_modes_only=self.config.qtbm.low_rank_obc,
+                                )
+
                         rhs = self._assemble_rhs(obc_results, energy_ind)
 
                         if rhs.size == 0:
@@ -1318,9 +1313,10 @@ class QTBM(TransportSolver):
                             # can skip the calculation.
                             continue
 
-                        self._assemble_system_matrix(
-                            kpoint, energy, obc_results, energy_ind
-                        )
+                        if not self.config.qtbm.low_rank_obc:
+                            self._add_sigma_obc_to_system_matrix(
+                                -1.0, obc_results, energy_ind
+                            )
 
                         # Solve for the wavefunction
                         phi = self.solver.solve(

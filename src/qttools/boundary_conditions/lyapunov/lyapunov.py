@@ -23,8 +23,7 @@ class LyapunovSolver(ABC):
     @abstractmethod
     def __call__(
         self,
-        a: NDArray,
-        q: NDArray,
+        a_q: tuple[NDArray, NDArray],
         contact: str,
     ) -> NDArray:
         r"""Computes the solution of the discrete-time Lyapunov equation.
@@ -35,10 +34,8 @@ class LyapunovSolver(ABC):
 
         Parameters
         ----------
-        a : NDArray
-            The system matrix.
-        q : NDArray
-            The right-hand side matrix.
+        a_q : tuple[NDArray, NDArray]
+            The matrices a and q of the discrete-time Lyapunov equation.
         contact : str
             The contact to which the boundary blocks belong.
 

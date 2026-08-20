@@ -1002,7 +1002,7 @@ class ElectronSolver(SubsystemSolver):
 
         # TODO: use residuals to filter "bad" energies
         g_00, *__ = self.obc(
-            (m_00 + s_00, m_01 + s_01, m_10 + s_10),
+            (m_10 + s_10, m_00 + s_00, m_01 + s_01),
             contact="G: " + contact,
         )
         # Apply the retarded boundary self-energy.

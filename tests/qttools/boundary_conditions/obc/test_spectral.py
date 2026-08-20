@@ -80,7 +80,7 @@ def test_correctness(
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji, a_ii, a_ij = a_ji[0], a_ii[0], a_ij[0]
-    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="")
+    x_ii = spectral(a_xx=(a_ji, a_ii, a_ij), contact="")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -105,7 +105,39 @@ def test_correctness_batch(
         max_decay=20,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
-    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="")
+    x_ii = spectral(a_xx=(a_ji, a_ii, a_ij), contact="")
+    assert xp.all(
+        (
+            xp.linalg.norm(
+                x_ii - xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), axis=(-1, -2)
+            )
+            / xp.linalg.norm(x_ii, axis=(-1, -2))
+        )
+        < 5e-3
+    )
+
+
+def test_correctness_inferred_sections(
+    a_xx: tuple[NDArray, ...],
+    nevp: NEVP,
+    block_sections: int,
+):
+    """Tests that the OBC return the correct result."""
+    spectral = Spectral(
+        nevp=nevp,
+        residual_tolerance=1e-1,
+        max_decay=20,
+    )
+    a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
+    a_xx = Spectral._extract_subblocks((a_ji, a_ii, a_ij), block_sections)
+
+    # pad if blocks were trimmed
+    if len(a_xx) < 2 * block_sections + 1:
+        zero_block = xp.zeros_like(a_xx[0])
+        n_pad = (2 * block_sections + 1 - len(a_xx)) // 2
+        a_xx = (zero_block,) * n_pad + a_xx + (zero_block,) * n_pad
+
+    x_ii = spectral(a_xx=a_xx, contact="")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -141,7 +173,7 @@ def test_memoizer(
         (a_ji_hat, a_ii_hat, a_ij_hat), block_sections
     )
 
-    x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
+    x_ii, *__ = obc_system((a_ji, a_ii, a_ij), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -152,7 +184,7 @@ def test_memoizer(
         < 5e-3
     )
 
-    x_ii, *__ = obc_system((a_ii_hat, a_ij_hat, a_ji_hat), contact="contact")
+    x_ii, *__ = obc_system((a_ji_hat, a_ii_hat, a_ij_hat), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -185,7 +217,7 @@ def test_upscaling(
         (batch_size, block_size // block_sections, block_size)
     ) + 1j * rng.random((batch_size, block_size // block_sections, block_size))
 
-    _, vs_upscaled = spectral._upscale_eigenmodes(ws, vs)
+    _, vs_upscaled = spectral._upscale_eigenmodes(ws, vs, block_sections)
 
     vs_upscaled_ref = xp.zeros((batch_size, block_size, block_size), dtype=vs.dtype)
     for i in range(batch_size):

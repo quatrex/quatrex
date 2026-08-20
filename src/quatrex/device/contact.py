@@ -1099,9 +1099,7 @@ class Contact:
             if return_modes_only:
                 _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (
                     self.obc_solver(
-                        A_tot[1],
-                        A_tot[2],
-                        A_tot[0],
+                        A_tot,
                         "",
                         return_injected=True,
                         return_modes_only=True,
@@ -1116,9 +1114,7 @@ class Contact:
             else:
                 # Solve the OBC for the given ki and kj and store the
                 # results in dictionaries
-                x_ii, b_injected = self.obc_solver(
-                    A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
-                )
+                x_ii, b_injected = self.obc_solver(A_tot, "", return_injected=True)
                 sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
                 bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 

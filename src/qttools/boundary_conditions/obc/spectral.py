@@ -32,8 +32,9 @@ class Spectral(OBCSolver):
     ----------
     nevp : NEVP
         The non-linear eigenvalue problem solver to use.
-    block_sections : int, optional
+    block_sections : int | None, optional
         The number of sections to split the periodic matrix layer into.
+        If None, the periodicity is determined from the lenght of the blocks.
     min_decay : float, optional
         The decay threshold after which modes are considered to be
         evanescent.
@@ -68,7 +69,7 @@ class Spectral(OBCSolver):
     def __init__(
         self,
         nevp: NEVP,
-        block_sections: int = 1,
+        block_sections: int | None = None,
         min_decay: float = 1e-3,
         max_decay: float = 6.9,
         num_ref_iterations: int = 2,
@@ -96,22 +97,19 @@ class Spectral(OBCSolver):
         if self.num_ref_iterations < 1:
             raise ValueError("Number of refinement iterations must be at least 1.")
 
+    @staticmethod
     def _extract_subblocks(
-        self,
-        a_ji: NDArray,
-        a_ii: NDArray,
-        a_ij: NDArray,
+        a_xx: tuple[NDArray, ...],
+        block_sections: int,
     ) -> tuple[NDArray, ...]:
         """Extracts the coefficient blocks from the periodic matrix.
 
         Parameters
         ----------
-        a_ji : NDArray
-            The subdiagonal block of the periodic matrix.
-        a_ii : NDArray
-            The diagonal block of the periodic matrix.
-        a_ij : NDArray
-            The superdiagonal block of the periodic matrix.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        block_sections : int
+            The number of sections to split the periodic matrix layer into.
 
         Returns
         -------
@@ -120,18 +118,17 @@ class Spectral(OBCSolver):
 
         """
         # Construct layer of periodic matrix in semi-infinite lead.
-        layer = (a_ji, a_ii, a_ij)
-        if self.block_sections == 1:
-            return layer
+        if block_sections == 1:
+            return a_xx
 
         # Get a nested block view of the layer.
-        view = _block_view(xp.concatenate(layer, axis=-1), -1, 3 * self.block_sections)
-        view = _block_view(view, -2, self.block_sections)
+        view = _block_view(xp.concatenate(a_xx, axis=-1), -1, 3 * block_sections)
+        view = _block_view(view, -2, block_sections)
 
         # Make sure that the reduction leads to periodic sublayers.
-        relative_errors = xp.zeros(self.block_sections - 1)
+        relative_errors = xp.zeros(block_sections - 1)
         first_block_norm = xp.linalg.norm(view[0, :])
-        for i in range(1, self.block_sections):
+        for i in range(1, block_sections):
             relative_errors[i - 1] = (
                 xp.linalg.norm(view[0, :] - xp.roll(view[i, :], -i, axis=0))
                 / first_block_norm
@@ -144,7 +141,7 @@ class Spectral(OBCSolver):
             )
 
         # Select relevant blocks and remove empty ones.
-        blocks = view[0, : -self.block_sections + 1]
+        blocks = view[0, : -block_sections + 1]
         indices = np.where([get_host(xp.any(b)) for b in blocks])[0]
 
         if indices.size == 0 or len(blocks) <= 3:
@@ -158,6 +155,64 @@ class Spectral(OBCSolver):
         n = min(n_data, n_limit)
 
         return tuple(blocks[n:-n]) if n > 0 else tuple(blocks)
+
+    @staticmethod
+    def _upscale_subblocks(
+        blocks: tuple[NDArray, ...],
+        block_sections: int,
+    ) -> tuple[NDArray, ...]:
+        """Upscales the full blocks from the periodic layer.
+
+        Parameters
+        ----------
+        blocks : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        block_sections : int
+            The number of sections to split the periodic matrix layer into.
+
+        Returns
+        -------
+        blocks : tuple[NDArray, ...]
+            The non-zero blocks making up the matrix layer.
+
+        """
+        if block_sections == 1:
+            return blocks
+
+        n_blocks = len(blocks)
+        if n_blocks % 2 == 0:
+            raise ValueError("Expected an odd number of coefficient blocks.")
+
+        max_len = 2 * block_sections + 1
+        if n_blocks > max_len:
+            raise ValueError(
+                f"Too many coefficient blocks ({n_blocks}) for the requested "
+                f"block_sections ({block_sections}); expected at most {max_len}."
+            )
+
+        zero_block = xp.zeros_like(blocks[0])
+
+        # Undo the symmetric trimming
+        n_pad = (max_len - n_blocks) // 2
+        band = (zero_block,) * n_pad + tuple(blocks) + (zero_block,) * n_pad
+
+        # Undo the truncation
+        row0 = band + (zero_block,) * (block_sections - 1)
+
+        # Rebuild all `block_sections` periodic rows via cyclic shifts of row 0.
+        row0_stack = xp.stack(row0, axis=0)
+        rows = [xp.roll(row0_stack, i, axis=0) for i in range(block_sections)]
+
+        # Re-tile the nested block grid back into a flat (N, 3N) matrix.
+        row_arrays = [
+            xp.concatenate([row[j] for j in range(3 * block_sections)], axis=-1)
+            for row in rows
+        ]
+        matrix = xp.concatenate(row_arrays, axis=-2)
+
+        # Split back into the 3 macro blocks.
+        n = matrix.shape[-1] // 3
+        return tuple(matrix[..., k * n : (k + 1) * n] for k in range(3))
 
     def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.
@@ -201,7 +256,7 @@ class Spectral(OBCSolver):
         self,
         ws: NDArray,
         vs: NDArray,
-        a_xx: list[NDArray],
+        a_xx: tuple[NDArray, ...],
         find_injected: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Determines which eigenvalues correspond to reflected (and injected) modes.
@@ -313,9 +368,7 @@ class Spectral(OBCSolver):
         return mask_reflected
 
     def _upscale_eigenmodes(
-        self,
-        ws: NDArray,
-        vs: NDArray,
+        self, ws: NDArray, vs: NDArray, block_sections: int
     ) -> tuple[NDArray, NDArray]:
         """Upscales the eigenvectors to the full periodic matrix layer.
 
@@ -330,6 +383,8 @@ class Spectral(OBCSolver):
             The eigenvalues of the NEVP.
         vs : NDArray
             The eigenvectors of the (potentially) higher order NEVP.
+        block_sections : int
+            The number of sections to split the periodic matrix layer into.
 
         Returns
         -------
@@ -339,7 +394,7 @@ class Spectral(OBCSolver):
             The upscaled eigenvectors.
 
         """
-        if self.block_sections == 1:
+        if block_sections == 1:
             with warnings.catch_warnings(
                 action="ignore", category=RuntimeWarning
             ):  # Ignore division by zero.
@@ -350,10 +405,10 @@ class Spectral(OBCSolver):
         ndim_batch = len(batchsize)
         subblock_size = vs.shape[-2]
         num_modes = vs.shape[-1]
-        block_size = subblock_size * self.block_sections
+        block_size = subblock_size * block_sections
 
         ws_upscaled = xp.moveaxis(
-            xp.array([ws**n for n in range(self.block_sections)]), 0, ndim_batch
+            xp.array([ws**n for n in range(block_sections)]), 0, ndim_batch
         )
 
         vs_upscaled = (
@@ -367,13 +422,11 @@ class Spectral(OBCSolver):
                 vs_upscaled, axis=-2, keepdims=True
             )
 
-        return ws**self.block_sections, vs_upscaled
+        return ws**block_sections, vs_upscaled
 
     def _compute_x_ii(
         self,
-        a_ii: NDArray,
-        a_ij: NDArray,
-        a_ji: NDArray,
+        a_xx: tuple[NDArray, ...],
         ws: NDArray,
         vs: NDArray,
         mask: NDArray,
@@ -382,12 +435,8 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        a_ii : NDArray
-            The diagonal block of the periodic matrix.
-        a_ij : NDArray
-            The superdiagonal block of the periodic matrix.
-        a_ji : NDArray
-            The subdiagonal block of the periodic matrix.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
         ws : NDArray
             The eigenvalues of the NEVP.
         vs : NDArray
@@ -402,6 +451,8 @@ class Spectral(OBCSolver):
             The surface Green's function.
 
         """
+        a_ji, a_ii, a_ij = a_xx
+
         # Equation (13.1).
         x_ii_a_ij = xp.zeros(mask.shape[:-1] + a_ij.shape[-2:], dtype=a_ij.dtype)
         for i in xp.ndindex(mask.shape[:-1]):
@@ -417,9 +468,7 @@ class Spectral(OBCSolver):
 
     def _compute_pseudo_inverse(
         self,
-        a_ii: NDArray,
-        a_ij: NDArray,
-        a_ji: NDArray,
+        a_xx: tuple[NDArray, ...],
         ws: NDArray,
         vs: NDArray,
         mask: NDArray,
@@ -435,12 +484,8 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        a_ii : NDArray
-            The diagonal block of the periodic matrix.
-        a_ij : NDArray
-            The superdiagonal block of the periodic matrix.
-        a_ji : NDArray
-            The subdiagonal block of the periodic matrix.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
         ws : NDArray
             The eigenvalues of the NEVP.
         vs : NDArray
@@ -456,6 +501,7 @@ class Spectral(OBCSolver):
 
         """
         phi_inv_reflected = []
+        _, _, a_ij = a_xx
 
         for i in xp.ndindex(mask.shape[:-1]):
             m = mask[i]
@@ -474,9 +520,7 @@ class Spectral(OBCSolver):
 
     def __call__(
         self,
-        a_ii: NDArray,
-        a_ij: NDArray,
-        a_ji: NDArray,
+        a_xx: tuple[NDArray, ...],
         contact: str,
         return_injected: bool = False,
         return_modes_only: bool = False,
@@ -485,14 +529,8 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        a_ii : NDArray
-            Diagonal boundary block of a system matrix.
-        a_ij : NDArray
-            Superdiagonal boundary block of a system matrix.
-        a_ji : NDArray
-            Subdiagonal boundary block of a system matrix.
-        contact : str
-            The contact to which the boundary blocks belong.
+        a_xx : tuple[NDArray, NDArray, NDArray]
+            The blocks of the contact.
         return_injected: bool, optional
             Whether to return the injection vector. If True, the
             function returns a tuple of the surface Green's function and
@@ -523,41 +561,54 @@ class Spectral(OBCSolver):
 
         """
 
+        if a_xx[0].ndim == 2:
+            a_xx = tuple([a_x[xp.newaxis, :, :] for a_x in a_xx])
+
+        if self.block_sections is None:
+            blocks = a_xx
+            block_sections = (len(a_xx) - 1) // 2
+            a_xx = self._upscale_subblocks(blocks, block_sections)
+
+        else:
+            if len(a_xx) != 3:
+                raise ValueError(
+                    f"Spectral OBC requires exactly 3 boundary blocks "
+                    f"if block_sections is not None, but {len(a_xx)} were provided."
+                )
+            block_sections = self.block_sections
+            blocks = self._extract_subblocks(a_xx, block_sections)
+
+        a_ji, a_ii, a_ij = a_xx
+
         if return_modes_only and not return_injected:
             raise NotImplementedError(
                 "Returning only reflected modes is not implemented yet."
             )
 
-        if a_ii.ndim == 2:
-            a_ii = a_ii[xp.newaxis, :, :]
-            a_ij = a_ij[xp.newaxis, :, :]
-            a_ji = a_ji[xp.newaxis, :, :]
-
-        blocks = self._extract_subblocks(a_ji, a_ii, a_ij)
         ws, vs = self.nevp(blocks)
 
-        ws, vs = self._upscale_eigenmodes(ws, vs)
+        ws, vs = self._upscale_eigenmodes(ws, vs, block_sections)
 
         if return_injected:
             mask_reflected, mask_injected, dEk_dk = self._find_reflected_modes(
                 ws,
                 vs,
-                a_xx=[a_ji, a_ii, a_ij],
+                a_xx=a_xx,
                 find_injected=return_injected,
             )
         else:
             mask_reflected = self._find_reflected_modes(
                 ws,
                 vs,
-                a_xx=[a_ji, a_ii, a_ij],
+                a_xx=a_xx,
             )
 
         if return_modes_only:
             phi_inv_reflected = self._compute_pseudo_inverse(
-                a_ii, a_ij, a_ji, ws, vs, mask_reflected
+                a_xx, ws, vs, mask_reflected
             )
         else:
-            x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
+            x_ii = self._compute_x_ii(a_xx, ws, vs, mask_reflected)
 
             # Perform a number of refinement iterations.
             for __ in range(self.num_ref_iterations - 1):

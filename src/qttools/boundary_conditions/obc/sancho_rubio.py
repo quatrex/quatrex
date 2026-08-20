@@ -34,21 +34,15 @@ class SanchoRubio(OBCSolver):
 
     def __call__(
         self,
-        a_ii: NDArray,
-        a_ij: NDArray,
-        a_ji: NDArray,
+        a_xx: tuple[NDArray, ...],
         contact: str,
     ) -> NDArray:
         """Returns the surface Green's function.
 
         Parameters
         ----------
-        a_ii : NDArray
-            Diagonal boundary block of a system matrix.
-        a_ij : NDArray
-            Superdiagonal boundary block of a system matrix.
-        a_ji : NDArray
-            Subdiagonal boundary block of a system matrix.
+        a_xx : tuple[NDArray, ...]
+            The boundary blocks of the system matrix.
         contact : str
             The contact to which the boundary blocks belong.
 
@@ -58,6 +52,13 @@ class SanchoRubio(OBCSolver):
             The system's surface Green's function.
 
         """
+        if len(a_xx) != 3:
+            raise ValueError(
+                f"Sancho-Rubio OBC requires exactly 3 boundary blocks, "
+                f"but {len(a_xx)} were provided."
+            )
+        a_ji, a_ii, a_ij = a_xx
+
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()
         alpha = a_ji.copy()

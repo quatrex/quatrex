@@ -282,7 +282,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             comm=comm.stack,
         ):
 
-            x_00, *__ = self.obc((m_00, m_01, m_10), contact="W: " + contact)
+            x_00, *__ = self.obc((m_10, m_00, m_01), contact="W: " + contact)
 
             m_10_x_00 = m_10 @ x_00
             obc_retarded = m_10_x_00 @ m_01

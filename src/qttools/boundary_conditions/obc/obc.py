@@ -25,21 +25,15 @@ class OBCSolver(ABC):
     @abstractmethod
     def __call__(
         self,
-        a_ii: NDArray,
-        a_ij: NDArray,
-        a_ji: NDArray,
+        a_xx: tuple[NDArray, ...],
         contact: str,
     ) -> NDArray:
         """Returns the surface Green's function.
 
         Parameters
         ----------
-        a_ii : NDArray
-            Diagonal boundary block of a system matrix.
-        a_ij : NDArray
-            Superdiagonal boundary block of a system matrix.
-        a_ji : NDArray
-            Subdiagonal boundary block of a system matrix.
+        a_xx : tuple[NDArray, ...]
+            The boundary blocks of the system matrix.
         contact : str
             The contact to which the boundary blocks belong.
 
@@ -119,7 +113,7 @@ class OBCSystem(BaseBoundarySystem):
         ----------
         boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
+            It is expected to be a tuple (a_ji, a_ii, a_ij)
         solution : NDArray
             The current solution to refine.
 
@@ -129,7 +123,7 @@ class OBCSystem(BaseBoundarySystem):
             The refined solution after one fixed-point iteration step.
 
         """
-        a_ii, a_ij, a_ji = boundary_system
+        a_ji, a_ii, a_ij = boundary_system
         return linalg.inv(a_ii - a_ji @ solution @ a_ij)
 
     def _get_starting_guess(
@@ -145,7 +139,7 @@ class OBCSystem(BaseBoundarySystem):
         ----------
         boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
+            It is expected to be a tuple (a_ji, a_ii, a_ij)
 
         Returns
         -------
@@ -153,7 +147,7 @@ class OBCSystem(BaseBoundarySystem):
             The starting guess for the boundary system.
 
         """
-        a_ii, *__ = boundary_system
+        __, a_ii, __ = boundary_system
         return linalg.inv(a_ii)
 
     def _get_residuals(
@@ -175,7 +169,7 @@ class OBCSystem(BaseBoundarySystem):
         ----------
         boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
+            It is expected to be a tuple (a_ji, a_ii, a_ij)
         test_solution : NDArray
             The test solution to evaluate.
 

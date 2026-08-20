@@ -24,63 +24,82 @@ from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import compute_num_connected_blocks
 from quatrex.device.contact import get_inverse_order, order_block
 from quatrex.device.inputs import assemble_matrix
-from qttools.kernels.datastructure import dsdbcoo_kernels
+from quatrex.device import Device
+from quatrex.device.inputs import assemble_matrix, get_block_sizes
+from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
+from quatrex.grid import get_electron_energies
 
 profiler = Profiler()
 
-
-def _spin_extended_sparsity_pattern(
-    sparsity_pattern: sparse.coo_matrix
-) -> sparse.coo_matrix:
-    """Extends the sparsity pattern for the spin resolved case.
-    
-    Each non-zero element of sparsity_pattern is turned into a 2x2 spin block
-    (i,j) -> (2i,2j), (2i+1,2j), (2i,2j+1), (2i+1,2j+1)
+def _spin_resolved_sparsity_pattern(
+    config: QuatrexConfig
+) -> DSDBSparse :
+    """Resolves the spin degeneracy of each atomic orbital
 
     Parameters
     ----------
-    sparsity_pattern : sparse.coo_matrix
-        The sparsity pattern of the non spin-resolved case
+    config : QuatrexConfig
+        Device configuration
 
     Returns
     -------
-    double_sparsity_pattern : sparse.coo_matrix
-        The extended sparsity pattern 
+    sparsity_pattern : sparse.coo_matrix
+        The spin resolved sparsity pattern 
     """
+    
+    grid, __, __ = Device.load_structure(config)
 
-    col = sparsity_pattern.col
-    row = sparsity_pattern.row
-    size_extended = len(col) * 4
+    block_sizes = get_block_sizes(config, grid)
 
-    col_extended = np.zeros(shape=(size_extended), dtype = np.int32)
-    row_extended = np.zeros(shape=(size_extended), dtype = np.int32)
+    block_sizes *= 2
+    spin_resolved_grid = grid.repeat(2, axis = 0)
+    
 
-    idx = np.arange(0, size_extended, 4)
-    col_extended[idx] = 2 * col
-    row_extended[idx] = 2 * row
+    # Find the maximum interaction cutoff.
+    max_interaction_cutoff = 0.0
+    if config.scba.coulomb_screening:
+        max_interaction_cutoff = max(
+            max_interaction_cutoff,
+            config.coulomb_screening.interaction_cutoff,
+        )
+    if config.scba.photon:
+        max_interaction_cutoff = max(
+            max_interaction_cutoff,
+            config.photon.interaction_cutoff,
+        )
+    if config.scba.phonon:
+        max_interaction_cutoff = max(
+            max_interaction_cutoff,
+            config.phonon.interaction_cutoff,
+        )
+    if max_interaction_cutoff == 0.0:
+        raise NotImplementedError(
+            "At least one interaction must be enabled in the SCBA."
+            "Ballistic transport is not properly supported yet."
+        )
 
-    idx = np.add(idx, 1)
-    col_extended[idx] = np.add(2 * col, 1)
-    row_extended[idx] = np.add(2 * row, 0)
+    section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+    section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+    start_idx = block_offsets[section_offsets[comm.block.rank]]
+    end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
 
-    idx = np.add(idx, 1)
-    col_extended[idx] = np.add(2 * col, 0)
-    row_extended[idx] = np.add(2 * row, 1)
+    sparsity_pattern = compute_sparsity_pattern(
+        spin_resolved_grid,
+        max_interaction_cutoff,
+        transport_direction=config.device.transport_direction,
+        start_idx=start_idx,
+        end_idx=end_idx,
+    )
 
-    idx = np.add(idx, 1)
-    col_extended[idx] = np.add(2 * col, 1)
-    row_extended[idx] = np.add(2 * row, 1)
+    return sparsity_pattern
 
-    data_extended = np.ones(shape=(len(col) * 4), dtype = np.float32)
-
-    spin_extended_sparsity_pattern = sparse.coo_matrix((data_extended, (row_extended, col_extended)), dtype=np.float32)
-
-    return spin_extended_sparsity_pattern
 
 def _cast_to_spin_matrix(
-    A: DSDBSparse, B: DSDBSparse | None = None
+    spin_matrix: DSDBSparse, A: DSDBSparse, B: DSDBSparse | None = None, 
 ) -> DSDBSparse:
-    """Casts A and B to a matrix of size 2Nx2N the following way:
+
+    """Casts A and B to a spin matrix of size 2Nx2N the following way. If A and B are both None, all values are set to zero:
 
     |A_11 B_11|A_12 B_12| ...
     |B_11 A_11|B_12 A_12|
@@ -90,11 +109,20 @@ def _cast_to_spin_matrix(
 
     Parameters
     ----------
+    sparsity_pattern : sparse.coo_matrix
+        spin resolved sparsity pattern
+
+    config : QuatrexConfig
+        Device configuration
+
+    spin_matrix : DSDBSparse
+        output matrix of size 2N times 2N
+
     A : DSDBSparse
         The matrix to be cast to a bigger matrix
 
     B : DSDBSparse
-        optional, if None all B_ij = 0
+        optional
 
     Returns
     -------
@@ -102,43 +130,44 @@ def _cast_to_spin_matrix(
         A matrix of size 2Nx2N
 
     """
-    if B is not None and A.shape != B.shape:
-        raise AssertionError("A and B must have the same shape")
 
-    if B is not None and not np.array_equal(A.block_sizes, B.block_sizes):
-        raise AssertionError("A and B must have the same block sizes")
-    
-    data_A = np.concatenate((A.data, A.data), axis = 1)
-    rows_A = np.concatenate((2*A.rows, np.add(2*A.rows, 1)))
-    cols_A = np.concatenate((2*A.cols, np.add(2*A.cols, 1)))
+    # check if A and B are of the same structure
 
-    if B is not None:
-        data_B = np.concatenate((B.data, B.data), axis = 1)
-        rows_B = np.concatenate((np.add(2*B.rows, 1), 2*B.rows))
-        cols_B = np.concatenate((2*B.cols, np.add(2*B.cols, 1)))
-    else:
-        data_B = np.zeros(shape=data_A.shape)
-        rows_B = np.concatenate((np.add(2*A.rows, 1), 2*A.rows))
-        cols_B = np.concatenate((2*A.cols, np.add(2*A.cols, 1)))
-
-    _data = np.concatenate((data_A, data_B), axis = 1)
-    _rows = np.concatenate((rows_A, rows_B))
-    _cols = np.concatenate((cols_A, cols_B))
-    
     block_sizes = A.block_sizes * 2
+    energy_points, _, _ = A.shape
 
-    block_sort_index = dsdbcoo_kernels.compute_block_sort_index(
-        _rows, _cols, block_sizes
-    )
-    data = _data[:,block_sort_index]
-    rows = _rows[block_sort_index]
-    cols = _cols[block_sort_index]
+    # fill spin_matrix with data from A and B
+    N_blocks = len(block_sizes)
+    block_size = block_sizes[0]
+    for i in range(N_blocks):
+        for j in range(N_blocks):
+            spin_matrix_ij = np.zeros(shape=(energy_points, block_size, block_size), dtype = xp.complex128)
+            a_ij = A.blocks[i,j]
 
-    spin_matrix = DSDBCOO(A.dtype, rows, cols, block_sizes, A.local_stack_shape, A.global_stack_shape, A.symmetry)
-    spin_matrix.allocate_data()
-    spin_matrix.data = data
-    
+            rows = np.arange(A.block_sizes[0])
+            cols = np.arange(A.block_sizes[0])
+
+            perm_A = ((0,0), (1,1))
+            for (di, dj) in perm_A:
+                rows_A = rows * 2 + di
+                cols_A = cols * 2 + dj
+                idx = np.ix_(rows_A, cols_A)
+                spin_matrix_ij[:, idx[0], idx[1]] = a_ij
+
+            if B is not None:
+                b_ij = B.blocks[i,j]
+
+                perm_B = ((1,0), (0,1))
+                for (di, dj) in perm_B:
+                    rows_B = rows * 2 + di
+                    cols_B = cols * 2 + dj
+                    idx = np.ix_(rows_B, cols_B)
+                    spin_matrix_ij[:, idx[0], idx[1]] = b_ij    
+
+            spin_matrix.blocks[i,j] = spin_matrix_ij
+
     return spin_matrix
+            
 
 def _cast_from_spin_matrix(
     A: DSDBSparse, out: DSDBSparse | None = None
@@ -238,15 +267,82 @@ class CoulombScreeningSolver(SubsystemSolver):
             exchange_matrix._data /= config.coulomb_screening.epsilon_r
 
         if self.spin:
-            self.coulomb_matrix = _cast_to_spin_matrix(coulomb_matrix, exchange_matrix)
+            sparsity_pattern = _spin_resolved_sparsity_pattern(config)
+
+        if self.spin:
+            self.coulomb_matrix = config.compute.dsdbsparse_type.from_sparray(
+                sparray=sparsity_pattern.astype(xp.complex128),
+                block_sizes=coulomb_matrix.block_sizes * 2,
+                global_stack_shape=(comm.stack.size,)
+                + tuple([k for k in config.device.kpoint_grid if k > 1]),
+                symmetry="hermitian" if config.scba.symmetric else None,
+            )
+            self.coulomb_matrix.data[:] = 0.0  # Initialize to zero.
+
+            self.coulomb_matrix =  _cast_to_spin_matrix(self.coulomb_matrix, coulomb_matrix, exchange_matrix)
         else:
             self.coulomb_matrix = coulomb_matrix
 
-        self.small_block_sizes = self.coulomb_matrix.block_sizes
-
+        # instantiate polarization and screened coulomb interaction matrices
         if self.spin:
-            sparsity_pattern = _spin_extended_sparsity_pattern(sparsity_pattern)
+            electron_energies = get_electron_energies(config)
+            kpoint_grid = config.device.kpoint_grid
 
+            spin_degeneracy = 2
+            grid, __, __ = Device.load_structure(config)
+            block_sizes = get_block_sizes(config, grid)
+            block_sizes *= spin_degeneracy
+
+            self.spin_p_lesser = config.compute.dsdbsparse_type.from_sparray(
+                sparray=sparsity_pattern.astype(xp.complex128),
+                block_sizes=block_sizes,
+                global_stack_shape=electron_energies.shape
+                + tuple([k for k in kpoint_grid if k > 1]),
+                symmetry="skew-hermitian" if config.scba.symmetric else None,
+                allocate=False,
+            )
+
+            self.spin_p_greater = config.compute.dsdbsparse_type.empty_like(self.spin_p_lesser)
+            self.spin_p_retarded_hermitian = config.compute.dsdbsparse_type.empty_like(self.spin_p_lesser)
+
+            if config.scba.symmetric:
+                self.spin_p_retarded_hermitian.symmetry = "hermitian"
+
+            num_connected_blocks = config.coulomb_screening.num_connected_blocks
+            if num_connected_blocks == "auto":
+                num_connected_blocks = compute_num_connected_blocks(
+                    sparsity_pattern, block_sizes
+                )
+
+            # TODO: This only works for constant block sizes.
+            coulomb_screening_block_sizes = (
+                block_sizes[: len(block_sizes) // num_connected_blocks]
+                * num_connected_blocks
+            )
+
+            self.spin_w_lesser = config.compute.dsdbsparse_type.from_sparray(
+                sparray=sparsity_pattern.astype(xp.complex128),
+                block_sizes=coulomb_screening_block_sizes,
+                global_stack_shape=electron_energies.shape
+                + tuple([k for k in kpoint_grid if k > 1]),
+                symmetry="skew-hermitian" if config.scba.symmetric else None,
+                allocate=False,
+            )
+            self.spin_w_greater = config.compute.dsdbsparse_type.empty_like(self.spin_w_lesser)
+
+            self.spin_p_greater.allocate_data()
+            self.spin_p_lesser.allocate_data()
+            self.spin_p_retarded_hermitian.allocate_data()
+            self.spin_w_greater.allocate_data()
+            self.spin_w_lesser.allocate_data()
+
+            self.spin_p_greater.data = 0
+            self.spin_p_lesser.data = 0
+            self.spin_p_retarded_hermitian.data = 0
+            self.spin_w_greater.data = 0
+            self.spin_w_lesser.data = 0
+
+        self.small_block_sizes = self.coulomb_matrix.block_sizes
 
         self.num_connected_blocks = config.coulomb_screening.num_connected_blocks
         if self.num_connected_blocks == "auto":
@@ -926,9 +1022,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         batch_sizes, batch_offsets = get_batches(p_lesser.shape[0], max_batch_size)
 
         if self.spin:
-            p_lesser = _cast_to_spin_matrix(p_lesser)
-            p_greater = _cast_to_spin_matrix(p_greater)
-            p_retarded_hermitian = _cast_to_spin_matrix(p_retarded_hermitian)
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: Spin resolved polarization matrices",
+                level="default", 
+                comm=comm,
+            ):
+                p_lesser = _cast_to_spin_matrix(self.spin_p_lesser, p_lesser)
+                p_greater = _cast_to_spin_matrix(self.spin_p_greater, p_greater)
+                p_retarded_hermitian = _cast_to_spin_matrix(self.spin_p_retarded_hermitian, p_retarded_hermitian)
 
         for i in range(len(batch_sizes)):
 
@@ -1024,8 +1125,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             ):
                 out_l, out_g = out
                 if self.spin:
-                    out_l = _cast_to_spin_matrix(out_l, out_l)
-                    out_g = _cast_to_spin_matrix(out_g, out_g)
+                    with profiler.profile_range(
+                        label = "CoulombScreeningSolver: Solve: Spin resolved screened coulomb matrix"
+                    ):
+                        out_l = _cast_to_spin_matrix(self.spin_w_lesser, out_l)
+                        out_g = _cast_to_spin_matrix(self.spin_w_greater, out_g)
 
                 out_slice = (
                     out_l.stack[batch_slice],

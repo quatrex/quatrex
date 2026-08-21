@@ -2,8 +2,6 @@
 
 """Includes the scattering self-energy from the electron-phonon interaction."""
 
-import time
-
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from quatrex.core import constants
@@ -13,6 +11,7 @@ from quatrex.core.statistics import bose_einstein
 
 
 def _get_equal_spacing(a: NDArray):
+    """Asserts that `a` is equispaced and returns the spacing."""
     assert len(a.shape) == 1
 
     differences = xp.diff(a)
@@ -74,8 +73,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 """
                 Specification on phonon_dispersion.npy:
                 This file contains the angular velocities `omega[mode, momentum]`
-                for the different
-                modes and phonon momenta. The phonon momenta are equally spaced as
+                for the different phonon modes and momenta. The phonon momenta are
+                equally spaced as
                 `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
                 constant.
                 The longitudinal acoustic mode along x is the first one
@@ -86,8 +85,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 phonon_energies_in = constants.hbar * xp.load(f)
 
             # We ignore the transverse acoustic modes since the corresponding
-            # long-wavelength coupling vanishes. This assumes small complex parts
-            # of the corresponding epsilon.
+            # long-wavelength coupling vanishes.
             phonon_energies = xp.delete(phonon_energies_in, [1, 2], axis=0)
 
             # Infer quantities from the loaded dispersion
@@ -103,7 +101,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             )
             longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
 
-            # Compute coupling constants
+            # Compute electron-phonon coupling constants
             coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
             for mode_index in range(n_modes):
                 # [prefactor] = Å
@@ -235,8 +233,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
         ne = g_lesser.data.shape[0]
 
-        start_time = time.perf_counter()
-        print("Computing the electron-phonon self-energy...", end="", flush=True)
         for shift in range(len(self.V_em)):
             sigma_lesser.data[: ne - shift, :] += (
                 self.V_em[shift] * g_lesser.data[shift:, :]
@@ -250,10 +246,3 @@ class SigmaPhonon(ScatteringSelfEnergy):
             sigma_greater.data[: ne - shift, :] += (
                 self.V_abs[shift] * g_greater.data[shift:, :]
             )
-        print(
-            "  Done in",
-            time.perf_counter() - start_time,
-            "s",
-            f"({len(self.V_em)} energy points)",
-            flush=True,
-        )

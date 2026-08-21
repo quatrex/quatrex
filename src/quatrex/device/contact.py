@@ -1090,11 +1090,22 @@ class Contact:
                 )
                 for j, k in np.ndindex(ny, nz):
                     if M_slice[i, j, k].nnz > 0:
-                        temp += M_slice[i, j, k] * xp.exp(1j * ((ky) * j + (kz) * k))
+                        temp += M_slice[i, j, k] * xp.exp(
+                            1j
+                            * (
+                                (ky) * (j - self.origin_cell_offset[0])
+                                + (kz) * (k - self.origin_cell_offset[1])
+                            )
+                        )
                 reduced_M.append(temp)
 
             temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
             A_tot = xp.split(temp, 3, axis=2)
+
+            # HACK
+            A_tot[1][0, :, :] = (
+                A_tot[1][0, :, :] + A_tot[1][0, :, :].conj().T
+            ) / 2  # Ensure Hermitian
 
             if return_modes_only:
                 _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (

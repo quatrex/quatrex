@@ -7,7 +7,7 @@
 The charge carrier densities are computed from the lesser and greater
 Green's functions and saved as `numpy` arrays (`electron_density.npy` /
 `hole_density.npy`) in the
-[`output_directory`](parameters/quatrex/#output_directory). These
+[`output_dir`](parameters/quatrex/#output_dir). These
 quantities are both orbital-resolved and have shapes of `(num_energies,
 *num_kpoints, num_orbitals)`. `*num_kpoints` is only present if the
 simulation is performed with a transverse k-point grid (see
@@ -23,7 +23,7 @@ $$
 Similar to the charge carrier densities, the local density of states
 (LDOS) is computed from the retarded Green's function and saved as a
 `numpy` array (`ldos.npy`) in the
-[`output_directory`](parameters/quatrex/#output_directory). The LDOS is
+[`output_dir`](parameters/quatrex/#output_dir). The LDOS is
 also orbital-resolved and has a shape of `(num_energies, *num_kpoints,
 num_orbitals)`.
 
@@ -139,4 +139,3 @@ accounted for in the total time of `ElectronSolver : 6.0935s`. The word
 `all` means that the timing occurs after synchronization across all MPI
 processes, while the lines without `all` indicate the timing for only
 rank 0.
-

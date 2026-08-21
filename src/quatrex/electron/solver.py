@@ -2,6 +2,7 @@
 
 """Includes the electron solver."""
 
+from collections.abc import Callable
 from typing import Literal
 
 import numpy as np
@@ -10,7 +11,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _BlockIndexer, _DStackView, _StackView
-from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
@@ -31,6 +32,125 @@ from quatrex.device.contact import get_inverse_order, order_block
 from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
+
+
+def meir_wingreen_current(
+    out: NDArray,
+) -> Callable[[BackSubstitutionContext], None]:
+    """Closure for computing the Meir-Wingreen current.
+
+    This function returns a callback that computes the Meir-Wingreen
+    current during the back substitution step of the selected solve. The
+    current is computed using the lesser and greater Green's functions
+    and the lesser and greater self-energies.
+
+    Parameters
+    ----------
+    out : NDArray
+        Preallocated output array for the current. The shape of the
+        array should be (num_batches, num_layers + 1), since this
+        includes current between each layer and from/to the leads.
+
+    """
+
+    def callback(ctx: BackSubstitutionContext):
+        """Computes the Meir-Wingreen current for the current layer."""
+        if comm.block.size == 1:
+            a_ji_dagger = ctx.a_ji.conj().swapaxes(-2, -1)
+            a_ji_xr_ii = ctx.a_ji @ ctx.xr_hat_ii
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_lesser_ij
+            sigma_lesser_tilde = (
+                ctx.a_ji @ ctx.xl_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_greater_ij
+            sigma_greater_tilde = (
+                ctx.a_ji @ ctx.xg_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            out[ctx.stack_slice, ..., ctx.j] = xp.trace(
+                sigma_greater_tilde @ ctx.xl_jj - ctx.xg_jj @ sigma_lesser_tilde,
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+        # The contact (lead) currents from the boundary self-energies.
+        # NOTE: In distributed mode, only the boundary currents are
+        # computed. The remaining currents are set to xp.nan outside of
+        # this callback.
+        if ctx.i == 0 and comm.block.rank == 0:
+            out[ctx.stack_slice, ..., 0] = xp.trace(
+                ctx.obc_blocks.greater[0][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[0][ctx.stack_slice],
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+        if (
+            ctx.i == len(ctx.obc_blocks.retarded) - 1
+            and comm.block.rank == comm.block.size - 1
+        ):
+            # NOTE: Negative sign is needed to get the current flowing
+            # in the correct direction (positive from left to right).
+            out[ctx.stack_slice, ..., -1] = -xp.trace(
+                ctx.obc_blocks.greater[-1][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[-1][ctx.stack_slice],
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+    return callback
+
+
+def device_current(
+    out: NDArray,
+    a_hat: DSDBSparse,
+) -> Callable[[BackSubstitutionContext], None]:
+    """Closure for computing the device current.
+
+    This function returns a callback that computes the device current
+    during the back substitution step of the selected solve. The current
+    is computed using the lesser Green's function and the *bare* system
+    matrix.
+
+    Parameters
+    ----------
+    out : NDArray
+        Preallocated output array for the current. The shape of the
+        array should be (num_batches, num_layers - 1), since this only
+        includes current between each layer.
+    a_hat : DSDBSparse
+        Bare system matrix. This is the system matrix without any
+        self-energy contributions.
+
+    """
+
+    def callback(ctx: BackSubstitutionContext):
+        """Computes the device current for the current layer."""
+
+        a_hat_ = a_hat.stack[ctx.stack_slice]
+
+        # Coherent bond current across the interface between block i and
+        # j, using the *dense* off-diagonal G^< block (xl_ij) and the
+        # full effective coupling from the system matrix (E*S - H).
+        a_hat_ij = a_hat_.blocks[ctx.i, ctx.j]
+        a_hat_ji = a_hat_.blocks[ctx.j, ctx.i]
+
+        upward = ctx.i > ctx.j
+        layer_ind = ctx.j if upward else ctx.i
+        global_layer_ind = a_hat.block_section_offsets[comm.block.rank] + layer_ind
+        prefactor = -1 if upward else 1
+
+        xl_ji = -ctx.xl_ij.conj().swapaxes(-2, -1)
+        out[ctx.stack_slice, ..., global_layer_ind] = xp.trace(
+            prefactor * (ctx.xl_ij @ a_hat_ji - a_hat_ij @ xl_ji),
+            axis1=-2,
+            axis2=-1,
+        ).real
+
+    return callback
 
 
 class SystemMatrix(_StackView):
@@ -607,6 +727,9 @@ class ElectronSolver(SubsystemSolver):
         self.obc_blocks = OBCBlocks(num_blocks=self.hamiltonian.num_local_blocks)
         self.block_sections = config.electron.obc.block_sections
 
+        self.meir_wingreen_current = None
+        self.device_current = None
+
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
@@ -1087,8 +1210,19 @@ class ElectronSolver(SubsystemSolver):
 
         batch_sizes, batch_offsets = get_batches(sse_lesser.shape[0], max_batch_size)
 
-        self.meir_wingreen_current = []
-        self.device_current = []
+        if self.compute_meir_wingreen_current:
+            self.meir_wingreen_current = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks + 1),
+                dtype=xp.float64,
+            )
+        if self.compute_device_current:
+            self.device_current = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks - 1),
+                dtype=xp.float64,
+            )
+
+        domain_distributed = comm.block.size > 1
+        solver = self.solver_dist if domain_distributed else self.solver
 
         for i in range(len(batch_sizes)):
             batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
@@ -1114,40 +1248,54 @@ class ElectronSolver(SubsystemSolver):
                     out_g.stack[batch_slice],
                     out_r.stack[batch_slice],
                 )
-                solver = self.solver_dist if comm.block.size > 1 else self.solver
-                result = solver.selected_solve(
+
+                callback_list = []
+                if self.compute_meir_wingreen_current:
+                    callback_list.append(
+                        meir_wingreen_current(self.meir_wingreen_current[batch_slice])
+                    )
+                if self.compute_device_current:
+                    callback_list.append(
+                        device_current(
+                            self.device_current[batch_slice], self.bare_system_matrix
+                        )
+                    )
+
+                solver.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_batch,
                     sigma_greater=sse_greater_batch,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
-                    a_hat=self.bare_system_matrix,
                     return_retarded=True,
-                    return_meir_wingreen_current=self.compute_meir_wingreen_current,
-                    return_device_current=self.compute_device_current,
+                    callbacks=callback_list,
                 )
 
-                if self.compute_device_current and self.compute_meir_wingreen_current:
-                    meir_wingreen_current, device_current = result
-                    self.meir_wingreen_current.append(meir_wingreen_current)
-                    self.device_current.append(device_current)
-                elif self.compute_meir_wingreen_current:
-                    self.meir_wingreen_current.append(result)
-                elif self.compute_device_current:
-                    self.device_current.append(result)
+        # In the domain-distributed case, we need to allreduce the
+        # current across the block communicator to get the total current
+        # for each layer. NOTE: We use allreduce instead of allgather
+        # since every rank allocates the full current.
+        if self.compute_meir_wingreen_current and domain_distributed:
+            # TODO: Only boundary currents are currently supported in
+            # distributed mode. Invalidate the remaining layers by
+            # setting them to xp.nan.
+            self.meir_wingreen_current[..., 1:-1] = xp.nan
+
+            total_meir_wingreen_current = xp.zeros_like(self.meir_wingreen_current)
+            comm.block.all_reduce(
+                self.meir_wingreen_current, total_meir_wingreen_current, op="sum"
+            )
+            self.meir_wingreen_current = total_meir_wingreen_current
+
+        if self.compute_device_current and domain_distributed:
+            total_device_current = xp.zeros_like(self.device_current)
+            comm.block.all_reduce(self.device_current, total_device_current, op="sum")
+            self.device_current = total_device_current
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
         ):
             if self.call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
-
-        if self.compute_meir_wingreen_current:
-            self.meir_wingreen_current = xp.concatenate(
-                self.meir_wingreen_current, axis=0
-            )
-
-        if self.compute_device_current:
-            self.device_current = xp.concatenate(self.device_current, axis=0)
 
         self.call_count += 1

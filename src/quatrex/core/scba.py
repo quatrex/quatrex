@@ -470,7 +470,11 @@ class SCBA(TransportSolver):
         i_right = xp.real(meir_wingreen_current[..., -1])
 
         dE = self.electron_energies[1] - self.electron_energies[0]
-        current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
+        left_current = xp.sum(i_left) * dE
+        right_current = xp.sum(i_right) * dE
+        avg_current = (left_current + right_current) / 2
+        current_diff = xp.abs(left_current - right_current)
+        rel_current_diff = current_diff / xp.abs(avg_current)
 
         current_conservation_abs, current_conservation_rel = current_conservation(
             self.data.g_lesser,
@@ -492,7 +496,12 @@ class SCBA(TransportSolver):
                 f"Maximum Hermitian Retarded Self-Energy Update: {max_diff_sigma_retarded_hermitian}",
                 flush=True,
             )
+            print(f"Left Contact Current: {left_current}", flush=True)
+            print(f"Right Contact Current: {right_current}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
+            print(
+                f"Relative Contact Current Difference: {rel_current_diff}", flush=True
+            )
             print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
             print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 

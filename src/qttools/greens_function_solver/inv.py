@@ -2,6 +2,8 @@
 
 """Includes the selected inversion solver based on dense inversion."""
 
+from collections.abc import Callable
+
 from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
@@ -87,10 +89,8 @@ class Inv(GFSolver):
         sigma_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
-        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
-        return_meir_wingreen_current: bool = False,
-        return_device_current: bool = False,
+        callbacks: list[Callable] | None = None,
     ) -> None | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -106,8 +106,8 @@ class Inv(GFSolver):
         a : DSDBSparse
             Matrix to invert.
         sigma_lesser : DSDBSparse
-            Lesser matrix. This matrix is expected to be
-            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+            Lesser matrix. This matrix is expected to be skew-hermitian,
+            i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
@@ -122,29 +122,12 @@ class Inv(GFSolver):
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_meir_wingreen_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False.
-        return_device_current : bool, optional
-            Whether to additionally compute and return the coherent bond
-            current between adjacent blocks, evaluated from the *dense*
-            off-diagonal Green's function blocks. Only supported
-            together with `return_meir_wingreen_current`. By default
-            False.
-
-        Returns
-        -------
-        None | tuple | NDArray
-            If `return_meir_wingreen_current` is True, returns the
-            current for each layer. If `return_device_current` is True,
-            the bond current as well.
-
+        callbacks : list[Callable], optional
+            List of callback functions. Not supported in this solver.
 
         """
-        if return_meir_wingreen_current or return_device_current:
-            raise NotImplementedError(
-                "The computation of the current is not implemented."
-            )
+        if callbacks is not None:
+            raise NotImplementedError("The use of callbacks is not implemented.")
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)

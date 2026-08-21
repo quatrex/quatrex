@@ -3,6 +3,8 @@
 """Includes the abstract base class for the Green's function solvers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from qttools import NDArray
 from qttools.datastructures import DSDBSparse
@@ -28,6 +30,81 @@ class OBCBlocks:
         self.retarded: list[NDArray | None] = [None] * num_blocks
         self.lesser: list[NDArray | None] = [None] * num_blocks
         self.greater: list[NDArray | None] = [None] * num_blocks
+
+
+@dataclass
+class BackSubstitutionContext:
+    """Context for the back substitution step of the selected solve.
+
+    This is used to compute observables such as the Meir-Wingreen
+    current and the device current during the back substitution step of
+    the selected solve. This is needed because we discard the dense
+    off-diagonal blocks after they are used to update the diagonal
+    blocks.
+
+    Attributes
+    ----------
+    i : int
+        Current layer index.
+    j : int
+        Previous layer index.
+    stack_slice : slice
+        Stack slice for the current batch.
+    a_ij : NDArray
+        Off-diagonal system matrix block from layer i to layer j.
+    a_ji : NDArray
+        Off-diagonal system matrix block from layer j to layer i.
+    xr_hat_ii : NDArray
+        Dense Retarded Green's function diagonal block **before** back
+        substitution update.
+    xl_hat_ii : NDArray
+        Dense lesser GF diagonal block **before** back substitution
+        update.
+    xl_ij : NDArray
+        Dense lesser GF off-diagonal block **after** back substitution
+        update.
+    xl_jj : NDArray
+        Dense lesser GF diagonal block **after** back substitution
+        update.
+    xg_hat_ii : NDArray
+        Dense greater GF diagonal block **before** back substitution
+        update.
+    xg_ij : NDArray
+        Dense greater GF off-diagonal block **after** back substitution
+        update.
+    xg_jj : NDArray
+        Dense greater GF diagonal block **after** back substitution
+        update.
+    sigma_lesser_ij : NDArray
+        Off-diagonal lesser self-energy block from layer i to layer j.
+    sigma_greater_ij : NDArray
+        Off-diagonal greater self-energy block from layer i to layer j.
+
+    """
+
+    i: int | None = None
+    j: int | None = None
+
+    stack_slice: slice | None = None
+
+    xl_ij: NDArray | None = None
+
+    a_ij: NDArray | None = None
+    a_ji: NDArray | None = None
+
+    obc_blocks: OBCBlocks | None = None
+
+    xr_hat_ii: NDArray | None = None
+
+    xl_hat_ii: NDArray | None = None
+    xl_jj: NDArray | None = None
+
+    xg_hat_ii: NDArray | None = None
+    xg_ij: NDArray | None = None
+    xg_jj: NDArray | None = None
+
+    sigma_lesser_ij: NDArray | None = None
+    sigma_greater_ij: NDArray | None = None
 
 
 class GFSolver(ABC):
@@ -63,11 +140,9 @@ class GFSolver(ABC):
         sigma_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
-        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
-        return_meir_wingreen_current: bool = False,
-        return_device_current: bool = False,
-    ) -> None | NDArray:
+        callbacks: list[Callable[[BackSubstitutionContext], None]] | None = None,
+    ) -> None:
         r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
@@ -92,28 +167,14 @@ class GFSolver(ABC):
         obc_blocks : dict[int, OBCBlocks], optional
             OBC blocks for lesser, greater and retarded Green's
             functions, by default None.
-        a_hat : DSDBSparse, optional
-            The bare system matrix without self-energy contributions.
-            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_meir_wingreen_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False.
-        return_device_current : bool, optional
-            Whether to additionally compute and return the coherent bond
-            current between adjacent blocks, evaluated from the *dense*
-            off-diagonal Green's function blocks. Only supported
-            together with `return_meir_wingreen_current`. By default
-            False.
-
-        Returns
-        -------
-        None | tuple | NDArray
-            If `return_meir_wingreen_current` is True, returns the
-            current for each layer. If `return_device_current` is True,
-            the bond current as well.
+        callbacks : list[Callable], optional
+            List of callback functions to be called during the back
+            substitution step. Each callback function should accept a
+            single argument of type `BackwardSubstitutionContext`, by
+            default None.
 
         """
         ...

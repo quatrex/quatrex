@@ -2,9 +2,15 @@
 
 """Includes the selected inversion solver."""
 
-from qttools import NDArray, xp
+from collections.abc import Callable
+
+from qttools import NDArray
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
+from qttools.greens_function_solver.solver import (
+    BackSubstitutionContext,
+    GFSolver,
+    OBCBlocks,
+)
 from qttools.kernels import linalg
 from qttools.utils.solvers_utils import get_batches
 
@@ -109,11 +115,9 @@ class RGF(GFSolver):
         sigma_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
-        a_hat: DSDBSparse | None = None,
         return_retarded: bool = False,
-        return_meir_wingreen_current: bool = False,
-        return_device_current: bool = False,
-    ) -> None | tuple | NDArray:
+        callbacks: list[Callable] | None = None,
+    ) -> None:
         r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
@@ -138,27 +142,14 @@ class RGF(GFSolver):
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        a_hat : DSDBSparse, optional
-            The bare system matrix without self-energy contributions.
-            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_meir_wingreen_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False.
-        return_device_current : bool, optional
-            Whether to additionally compute and return the coherent
-            bond current between adjacent blocks, evaluated from the
-            *dense* off-diagonal Green's function blocks. Only
-            supported together with `return_meir_wingreen_current`. By default False.
-
-        Returns
-        -------
-        None | tuple | NDArray
-            If `return_meir_wingreen_current` is True, returns the current for each
-            layer. If `return_device_current` is True, the
-            bond current as well.
+        callbacks : list[Callable], optional
+            List of callback functions to be called during the back
+            substitution step. Each callback function should accept a
+            single argument of type `BackwardSubstitutionContext`, by
+            default None.
 
         """
         # Initialize empty lists for the dense diagonal blocks.
@@ -168,24 +159,6 @@ class RGF(GFSolver):
 
         if obc_blocks is None:
             obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_blocks)
-
-        # Allocate a buffer for the current. This includes current
-        # between each layer and from/to the leads (in total
-        # num_blocks + 1).
-        if return_meir_wingreen_current:
-            meir_wingreen_current = xp.zeros(
-                (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
-                dtype=sigma_lesser.dtype,
-            )
-        if return_device_current:
-            device_current = xp.zeros(
-                (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks - 1),
-                dtype=sigma_lesser.dtype,
-            )
-            if a_hat is None:
-                raise ValueError(
-                    "The bare system matrix must be provided to compute the device current."
-                )
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(
@@ -215,7 +188,6 @@ class RGF(GFSolver):
             stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
 
             a_ = a.stack[stack_slice]
-            a_hat_ = a_hat.stack[stack_slice] if a_hat is not None else None
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
 
@@ -371,21 +343,6 @@ class RGF(GFSolver):
                 if xl_.symmetry is None:
                     xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
-                if return_device_current:
-                    # Coherent bond current across the interface between
-                    # block i and i+1, using the *dense* off-diagonal
-                    # G^< block (xl_ij) and the full effective coupling
-                    # from the system matrix (E*S - H).
-                    a_hat_ij = a_hat_.blocks[i, j]
-                    a_hat_ji = a_hat_.blocks[j, i]
-
-                    gl_ji = -xl_ij.conj().swapaxes(-2, -1)
-                    device_current[stack_slice, ..., i] = xp.trace(
-                        xl_ij @ a_hat_ji - a_hat_ij @ gl_ji,
-                        axis1=-2,
-                        axis2=-1,
-                    )
-
                 xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
                 xl_.blocks[i, i] = 0.5 * (
                     xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
@@ -413,52 +370,30 @@ class RGF(GFSolver):
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                if return_meir_wingreen_current:
-                    a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
-                    a_ji_xr_ii = a_ji @ xr_ii
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
-                    sigma_lesser_tilde = (
-                        a_ji @ xl_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sx_ij
-                    )
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_ij
-                    sigma_greater_tilde = (
-                        a_ji @ xg_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sx_ij
-                    )
-                    meir_wingreen_current[stack_slice, ..., j] = xp.trace(
-                        sigma_greater_tilde @ xl_diag_blocks[j]
-                        - xg_diag_blocks[j] @ sigma_lesser_tilde,
-                        axis1=-2,
-                        axis2=-1,
-                    )
-
                 xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 
-            # The contact (lead) currents from the boundary self-energies.
-            if return_meir_wingreen_current:
-                meir_wingreen_current[stack_slice, ..., 0] = xp.trace(
-                    obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
-                    - xg_diag_blocks[0] @ obc_blocks.lesser[0][stack_slice],
-                    axis1=-2,
-                    axis2=-1,
-                )
-                # NOTE: Negative sign is needed to get the current flowing
-                # in the correct direction (positive from left to right).
-                meir_wingreen_current[stack_slice, ..., -1] = -xp.trace(
-                    obc_blocks.greater[-1][stack_slice] @ xl_diag_blocks[-1]
-                    - xg_diag_blocks[-1] @ obc_blocks.lesser[-1][stack_slice],
-                    axis1=-2,
-                    axis2=-1,
+                if callbacks is None:
+                    continue
+
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=j,
+                    stack_slice=stack_slice,
+                    a_ij=a_ij,
+                    a_ji=a_ji,
+                    obc_blocks=obc_blocks,
+                    xr_hat_ii=xr_ii,  # Before back substitution.
+                    xl_hat_ii=xl_ii,  # Before back substitution.
+                    xl_ij=xl_ij,
+                    xl_jj=xl_diag_blocks[j],
+                    xg_hat_ii=xg_ii,  # Before back substitution.
+                    xg_ij=xg_ij,
+                    xg_jj=xg_diag_blocks[j],
+                    sigma_lesser_ij=sigma_lesser_ij,
+                    sigma_greater_ij=sigma_greater_ij,
                 )
 
-        if return_meir_wingreen_current and return_device_current:
-            return meir_wingreen_current, device_current
-        elif return_meir_wingreen_current:
-            return meir_wingreen_current
-        elif return_device_current:
-            return device_current
+                for callback in callbacks:
+                    callback(ctx)

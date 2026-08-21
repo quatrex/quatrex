@@ -38,7 +38,6 @@ profiler = Profiler()
 def _max(a: NDArray):
     """Compute the maximum of the real array `a`."""
     # TODO: Move this to qttools.utils?
-    # TODO: Assert that a is real
 
     local_maximum = get_host(xp.max(a))
     maximum = np.empty_like(local_maximum)
@@ -381,7 +380,7 @@ class SCBA(TransportSolver):
             elif self.config.phonon.model == "long-wavelength":
                 assert (
                     self.electron_solver.overlap is None
-                ), "The long-wavelength model is only implemented for an ortonormal basis."
+                ), "The long-wavelength model is only implemented for an orthonormal basis."
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
             else:

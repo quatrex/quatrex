@@ -1472,10 +1472,9 @@ class PhononConfig(BaseModel):
     self-energy.
 
     !!! note
-        Currently, only the `"pseudo-scattering"` model / deformation
-        potential interaction is implemented, which does not produce
-        any self-energy matrix elements besides the diagonal ones.
-
+        Currently, only the `"pseudo-scattering"` and `"long-wavelength"`
+        models / deformation potential interactions are implemented, which
+        do not take this variable into account.
     """
 
     solver: SolverConfig = SolverConfig()
@@ -1503,8 +1502,25 @@ class PhononConfig(BaseModel):
     $N_{ph}$ is the phonon occupation number given by the Bose-Einstein
     distribution at the specified [`temperature`](#temperature).
 
+    In the `"long-wavelength"` model, the self-energy is computed as
+
+    $$
+    \Sigma^\gtrless(E)
+    = \sum_{E_\mathrm{ph}}
+    V_{E_\mathrm{ph}}^\mathrm{em}
+    G^\gtrless(E\mp E_\mathrm{ph})
+    + V_{E_\mathrm{ph}}^\mathrm{abs}
+    G^\gtrless(E\pm E_\mathrm{ph}),
+    $$
+
+    where the prefactors $V_{E_\mathrm{ph}}^\mathrm{em}$ and
+    $V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from the phonon dispersion.
+    In order to calculate the prefactors, the deformation potential constants
+    [`acoustic_deformation_potential`](#acoustic_deformation_potential) and
+    [`optical_deformation_potential`](#optical_deformation_potential) as well as the
+    [`atom_mass`](#atom_mass) and the
+    [`lattice_constant`](#lattice_constant) are required.
     """
-    # TODO: Documentation for long-wavelength
 
     phonon_energy: NonNegativeFloat | None = None
     """The energy of the phonon mode in eV."""
@@ -1516,13 +1532,17 @@ class PhononConfig(BaseModel):
     """The temperature of the system in Kelvin."""
 
     # Long-wavelength phonons
-    # TODO: Don't allow None to simplify the type handling. Use child classes for
-    #       the different ways of handling phonons and initialize an empy list
-    #       for unused lists.
     acoustic_deformation_potential: FiniteFloat | None = None
+    """The deformation potential of the acoustic phonon modes in eV."""
     optical_deformation_potential: FiniteFloat | None = None
+    """The deformation potential of the optical phonon modes in eV/Å."""
     atom_mass: NonNegativeFloat | None = None
+    """
+    The mass of a single atom in (eV s^2) / Å^2.
+    All atoms are assumed to have the same mass.
+    """
     lattice_constant: PositiveFloat | None = None
+    """The size of the unit cell along the transport direction in Å."""
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
@@ -1544,9 +1564,11 @@ class PhononConfig(BaseModel):
         if (
             self.acoustic_deformation_potential is None
             or self.optical_deformation_potential is None
+            or self.atom_mass is None
+            or self.lattice_constant is None
         ):
             raise ValueError(
-                "'acoustic_deformation_potential' and 'optical_deformation_potential' must be set."
+                "'acoustic_deformation_potential', 'optical_deformation_potential', 'atom_mass', and 'lattice_constant' must be set."
             )
 
         return self

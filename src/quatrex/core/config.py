@@ -2115,6 +2115,22 @@ class ComputeConfig(BaseModel):
         raise ValueError(f"Invalid value '{value}' for dbsparse")
 
 
+class PreProcessConfig(BaseModel):
+    """Top-level configuration for all pre-processing options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # --- Pre-processing options ---------------------------------------
+    plot_contact_band_structure: bool = True
+    """Whether to plot the contact band structure."""
+
+    plot_window: tuple[float, float] | None = None
+    """The energy window to plot the contact band structure.
+    If set to `None`, the energy window is automatically determined by
+    using the mid-gap energy or the fermi level +- 1eV.
+    """
+
+
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
 
@@ -2176,6 +2192,10 @@ class QuatrexConfig(BaseModel):
     # --- Compute options ----------------------------------------------
     compute: ComputeConfig = ComputeConfig()
     """Parameters for the performance and compute options."""
+
+    # --- Pre-processing options ---------------------------------------
+    pre_process: PreProcessConfig = PreProcessConfig()
+    """Parameters for the pre-processing options."""
 
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:

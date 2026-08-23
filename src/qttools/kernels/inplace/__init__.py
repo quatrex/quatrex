@@ -6,15 +6,17 @@ from qttools import xp
 
 if xp.__name__ == "numpy":
     from qttools.kernels.inplace.numba.inplace import (
+        add_bond_resolved_current,
         scatter_add_scaled,
         scatter_add_scaled_obc,
     )
 elif xp.__name__ == "cupy":
     from qttools.kernels.inplace.cupy.inplace import (
+        add_bond_resolved_current,
         scatter_add_scaled,
         scatter_add_scaled_obc,
     )
 else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{xp.__name__}'")
 
-__all__ = ["scatter_add_scaled", "scatter_add_scaled_obc"]
+__all__ = ["scatter_add_scaled", "scatter_add_scaled_obc", "add_bond_resolved_current"]

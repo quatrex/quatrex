@@ -55,7 +55,11 @@ def meir_wingreen_current(
 
     def callback(ctx: BackSubstitutionContext):
         """Computes the Meir-Wingreen current for the current layer."""
-        if comm.block.size == 1:
+        if (
+            comm.block.size == 1
+            and 0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
+            and 0 <= ctx.j <= len(ctx.obc_blocks.retarded) - 1
+        ):
             a_ji_dagger = ctx.a_ji.conj().swapaxes(-2, -1)
             a_ji_xr_ii = ctx.a_ji @ ctx.xr_hat_ii
             a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_lesser_ij
@@ -80,7 +84,7 @@ def meir_wingreen_current(
         # NOTE: In distributed mode, only the boundary currents are
         # computed. The remaining currents are set to xp.nan outside of
         # this callback.
-        if ctx.i == 0 and comm.block.rank == 0:
+        if comm.block.rank == 0 and ctx.j == 0:
             out[ctx.stack_slice, ..., 0] = xp.trace(
                 ctx.obc_blocks.greater[0][ctx.stack_slice] @ ctx.xl_jj
                 - ctx.xg_jj @ ctx.obc_blocks.lesser[0][ctx.stack_slice],
@@ -89,8 +93,8 @@ def meir_wingreen_current(
             ).real
 
         if (
-            ctx.i == len(ctx.obc_blocks.retarded) - 1
-            and comm.block.rank == comm.block.size - 1
+            comm.block.rank == comm.block.size - 1
+            and ctx.j == len(ctx.obc_blocks.retarded) - 1
         ):
             # NOTE: Negative sign is needed to get the current flowing
             # in the correct direction (positive from left to right).
@@ -129,6 +133,14 @@ def device_current(
 
     def callback(ctx: BackSubstitutionContext):
         """Computes the device current for the current layer."""
+
+        if not (
+            0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
+            and 0 <= ctx.j <= len(ctx.obc_blocks.retarded)
+        ):
+            # NOTE: The j index indeed can go up to
+            # len(ctx.obc_blocks.retarded) in distributed mode.
+            return
 
         a_hat_ = a_hat.stack[ctx.stack_slice]
 

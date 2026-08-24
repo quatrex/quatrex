@@ -1280,6 +1280,18 @@ def downward_selinv(
         xr_out.blocks[i, j] = x_upper_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
 
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=-1,
+            j=0,
+            xl_jj=xl_diag_blocks[0],
+            xg_jj=xg_diag_blocks[0],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
+
 
 def upward_selinv(
     a: DSDBSparse,
@@ -1402,6 +1414,18 @@ def upward_selinv(
         xr_out.blocks[j, i] = x_upper_block
         xr_out.blocks[i, j] = x_lower_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
+
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=a.num_local_blocks,
+            j=a.num_local_blocks - 1,
+            xl_jj=xl_diag_blocks[-1],
+            xg_jj=xg_diag_blocks[-1],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
 
 
 def permuted_selinv(

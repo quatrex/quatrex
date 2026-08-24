@@ -374,25 +374,36 @@ class RGF(GFSolver):
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 
-                if callbacks is None:
-                    continue
+                if callbacks is not None:
+                    ctx = BackSubstitutionContext(
+                        i=i,
+                        j=j,
+                        stack_slice=stack_slice,
+                        a_ij=a_ij,
+                        a_ji=a_ji,
+                        obc_blocks=obc_blocks,
+                        xr_hat_ii=xr_ii,  # Before back substitution.
+                        xl_hat_ii=xl_ii,  # Before back substitution.
+                        xl_ij=xl_ij,
+                        xl_jj=xl_jj,
+                        xg_hat_ii=xg_ii,  # Before back substitution.
+                        xg_ij=xg_ij,
+                        xg_jj=xg_jj,
+                        sigma_lesser_ij=sigma_lesser_ij,
+                        sigma_greater_ij=sigma_greater_ij,
+                    )
 
+                    for callback in callbacks:
+                        callback(ctx)
+
+            if callbacks is not None:
                 ctx = BackSubstitutionContext(
-                    i=i,
-                    j=j,
+                    i=-1,
+                    j=0,
+                    xl_jj=xl_diag_blocks[0],
+                    xg_jj=xg_diag_blocks[0],
                     stack_slice=stack_slice,
-                    a_ij=a_ij,
-                    a_ji=a_ji,
                     obc_blocks=obc_blocks,
-                    xr_hat_ii=xr_ii,  # Before back substitution.
-                    xl_hat_ii=xl_ii,  # Before back substitution.
-                    xl_ij=xl_ij,
-                    xl_jj=xl_diag_blocks[j],
-                    xg_hat_ii=xg_ii,  # Before back substitution.
-                    xg_ij=xg_ij,
-                    xg_jj=xg_diag_blocks[j],
-                    sigma_lesser_ij=sigma_lesser_ij,
-                    sigma_greater_ij=sigma_greater_ij,
                 )
 
                 for callback in callbacks:

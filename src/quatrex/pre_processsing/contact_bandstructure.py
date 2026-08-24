@@ -303,7 +303,7 @@ def plot_contact_band_structure(config: QuatrexConfig) -> None:
         ax.set_title(f"{contact.name.capitalize()} Contact")
 
     for ax, kpoint in zip(axes[:, 0], kpoints):
-        ax.set_ylabel(f"k-point: {kpoint}\nEnergy (eV)")
+        ax.set_ylabel(f"k-point:\n{kpoint}\nEnergy (eV)")
 
     for ax in axes[-1]:
         ax.set_xlabel("k")

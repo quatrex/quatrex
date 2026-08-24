@@ -910,26 +910,52 @@ class ContactConfig(BaseModel):
     name: str
     """A unique name for the contact."""
 
-    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    contact_finder_method: Literal["from_unit", "slice", "real_space"] | None = None
+    """The method to use to find the contact orbitals.
+
+    - `None`: The setting is determined automatically based on the other
+      contact parameters i.e. depending whether the [`origin`](#origin) and
+      [`lattice_vectors`](#lattice_vectors) parameters are set, or the
+      [`origin_slice`](#origin_slice) and [`coupling_slice`](#coupling_slice)
+      parameters are set.
+    - `"from_unit"`: Finds the contact orbitals based on their unit
+      cell. This option can only be used if the
+      [`construct_from_unit_cell`](device/#construct_from_unit_cell)
+      parameter is set to `True`. In this case, the contact orbitals are
+      automatically determined from the name [`name`](#name) and the
+      unit cell of the system.
+    - `"slice"`: Finds the contact orbitals based on their slice
+      indices. This uses the [`origin_slice`](#origin_slice) and
+      [`coupling_slice`](#coupling_slice) parameters to determine which
+      orbitals belong to the contact. This is useful for simple systems
+      where the contacts are just contiguous orbitals.
+    - `"real_space"`: Finds the contact orbitals based on their
+      real-space positions. This uses the [`origin`](#origin) and
+      [`lattice_vectors`](#lattice_vectors) parameters to determine
+      which orbitals belong to the contact.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        There will be a future `"external"` option that will allow the
+        user to specify the contact elements directly. This will allow
+        to further reduce the contact size in the system matrix.
+
+    """
+
+    origin: tuple[float, float, float] | None = None
     """The origin of the contact region in Å.
 
     This is used to automatically determine the orbitals that belong to
     this contact.
 
     !!! warning
-
         This parameter is currently only used in the `"wf"` formalism.
-
 
     """
 
-    lattice_vectors: list[list[float]] = Field(
-        default_factory=lambda: [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
+    lattice_vectors: list[list[float]] | None = None
     """The lattice vectors of the contact cell in Å.
 
     In `"wf"` simulations this is used to automatically determine the
@@ -938,6 +964,55 @@ class ContactConfig(BaseModel):
     The volume of the contact cell is also used to determine the Fermi
     level of the contact from its doping density and the density of
     states of its band structure.
+
+    """
+
+    origin_slice: tuple[PositiveInt, PositiveInt] | None = None
+    """The slice of the contact region in the system matrix.
+
+    This is used to find the contact orbitals in the system matrix when
+    [`contact_finder_method`](#contact_finder_method) is set to
+    `"slice"`.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
+    coupling_slice: tuple[PositiveInt, PositiveInt] | None = None
+    """The slice of the contact coupling region in the system matrix.
+
+    This is used to find the contact orbitals in the system matrix when
+    [`contact_finder_method`](#contact_finder_method) is set to
+    `"slice"`.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
+    sections: tuple[PositiveInt, PositiveInt, PositiveInt] | None = None
+    """The number of periodic sections of the contact in each direction.
+
+    This parameter is used to defined the periodicity of the contact in
+    both the transport and transverse directions. The parameter is only
+    used when [`contact_finder_method`](#contact_finder_method) is set
+    to either `"from_unit"` or `"slice"`.
+
+    !!! warning
+        This parameter assumes that the contact is periodic and already
+        correctly sorted. The assumed sorting is that the outer loop is
+        along the transport direction, and the inner loops along the
+        first and second transverse directions.
+
+    !!! warning
+        The `sections` in transport direction is ignored when
+        [`contact_finder_method`](#contact_finder_method) is set to
+        `"from_unit"` since the periodicity in transport direction can
+        be automatically inferred.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
 
     """
 
@@ -1004,10 +1079,68 @@ class ContactConfig(BaseModel):
     """
 
     @model_validator(mode="after")
+    def validate_method(self) -> Self:
+        """Validates that the required parameters are provided for the
+        specified contact finder method."""
+
+        if (self.origin is None) ^ (self.lattice_vectors is None):
+            raise ValueError(
+                "Either both `origin` and `lattice_vectors` must be provided, "
+                "or neither."
+            )
+        if (self.origin_slice is None) ^ (self.coupling_slice is None):
+            raise ValueError(
+                "Either both `origin_slice` and `coupling_slice` must be provided, "
+                "or neither."
+            )
+
+        if self.contact_finder_method is None:
+            if self.origin is not None:
+                self.contact_finder_method = "real_space"
+            elif self.origin_slice is not None:
+                self.contact_finder_method = "slice"
+            else:
+                self.contact_finder_method = "from_unit"
+
+        if self.contact_finder_method == "real_space":
+            if self.origin is None:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `real_space`, "
+                    "`origin` and `lattice_vectors` must be provided."
+                )
+            if self.sections is not None:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `real_space`, "
+                    "`sections` must not be provided."
+                )
+
+        elif self.contact_finder_method == "slice":
+            if self.origin_slice is None:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `slice`, "
+                    "`origin_slice` and `coupling_slice` must be provided."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sections(self) -> Self:
+        """Validates that the `sections` parameter is provided for the
+        specified contact finder method."""
+        if self.contact_finder_method != "real_space" and self.sections is None:
+            if mpi_comm_world.rank == 0:
+                print(
+                    "Contact `sections` is not provided. Assuming (1, 1, 1).",
+                    flush=True,
+                )
+            self.sections = (1, 1, 1)
+        return self
+
+    @model_validator(mode="after")
     def to_array(self) -> Self:
         """Transforms origin and size to arrays."""
-        self.origin = np.array(self.origin, dtype=float)
-        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
+        if self.origin is not None and self.lattice_vectors is not None:
+            self.origin = np.array(self.origin, dtype=float)
+            self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
         return self
 
 
@@ -1769,6 +1902,19 @@ class DeviceConfig(BaseModel):
                 f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_from_unit_cell(self) -> Self:
+        """Validates that the contact finder method is not 'from_unit'
+        when `construct_from_unit_cell` is False."""
+        if not self.construct_from_unit_cell:
+            for contact in self.contacts:
+                if contact.contact_finder_method == "from_unit":
+                    raise ValueError(
+                        "When `construct_from_unit_cell` is False, "
+                        "the contact finder method cannot be 'from_unit'."
+                    )
         return self
 
     @model_validator(mode="after")

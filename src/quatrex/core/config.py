@@ -914,10 +914,10 @@ class ContactConfig(BaseModel):
     """The method to use to find the contact orbitals.
 
     - `None`: The setting is determined automatically based on the other
-      contact parameters i.e. depending whether the [`origin`](#origin) and
-      [`lattice_vectors`](#lattice_vectors) parameters are set, or the
-      [`origin_slice`](#origin_slice) and [`coupling_slice`](#coupling_slice)
-      parameters are set.
+      contact parameters i.e. depending whether the [`origin`](#origin)
+      and [`lattice_vectors`](#lattice_vectors) parameters are set, or
+      the [`origin_slice`](#origin_slice) and
+      [`coupling_slice`](#coupling_slice) parameters are set.
     - `"from_unit"`: Finds the contact orbitals based on their unit
       cell. This option can only be used if the
       [`construct_from_unit_cell`](device/#construct_from_unit_cell)
@@ -928,7 +928,11 @@ class ContactConfig(BaseModel):
       indices. This uses the [`origin_slice`](#origin_slice) and
       [`coupling_slice`](#coupling_slice) parameters to determine which
       orbitals belong to the contact. This is useful for simple systems
-      where the contacts are just contiguous orbitals.
+      where the contacts are just contiguous orbitals. Currently,
+      [`name`](#name) is used to determine the order. Thus, only "left"
+      and "right" contacts are supported. `"slice"` is more flexible
+      than `"from_unit"` and can be used for systems that are not
+      constructed from a unit cell.
     - `"real_space"`: Finds the contact orbitals based on their
       real-space positions. This uses the [`origin`](#origin) and
       [`lattice_vectors`](#lattice_vectors) parameters to determine
@@ -1120,6 +1124,25 @@ class ContactConfig(BaseModel):
                     "When `contact_finder_method` is set to `slice`, "
                     "`origin_slice` and `coupling_slice` must be provided."
                 )
+        elif self.contact_finder_method == "from_unit":
+            if self.origin is not None:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `from_unit`, "
+                    "`origin` and `lattice_vectors` must not be provided."
+                )
+            if self.origin_slice is not None:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `from_unit`, "
+                    "`origin_slice` and `coupling_slice` must not be provided."
+                )
+
+        if self.contact_finder_method in ["slice", "from_unit"]:
+            if self.name not in ["left", "right"]:
+                raise ValueError(
+                    "When `contact_finder_method` is set to `from_unit`, "
+                    "`name` must be either `left` or `right`."
+                )
+
         return self
 
     @model_validator(mode="after")
@@ -1815,7 +1838,7 @@ class DeviceConfig(BaseModel):
 
     """
 
-    transport_direction: Literal["x", "y", "z"]
+    transport_direction: Literal["a", "b", "c"]
     """The direction along which the transport occurs.
 
     !!! note
@@ -1896,7 +1919,7 @@ class DeviceConfig(BaseModel):
     def check_kpoint_grid(self) -> Self:
         """Checks that the k-point grid is 1 along the transport direction."""
 
-        ind = "xyz".index(self.transport_direction)
+        ind = "abc".index(self.transport_direction)
         if self.kpoint_grid[ind] != 1:
             raise ValueError(
                 f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
@@ -1915,6 +1938,15 @@ class DeviceConfig(BaseModel):
                         "When `construct_from_unit_cell` is False, "
                         "the contact finder method cannot be 'from_unit'."
                     )
+        else:
+            for contact in self.contacts:
+                if contact.direction is None:
+                    contact.direction = self.transport_direction
+                elif contact.direction != self.transport_direction:
+                    raise ValueError(
+                        "When `construct_from_unit_cell` is True, "
+                        "the contact direction must be the same as the transport direction."
+                    )
         return self
 
     @model_validator(mode="after")
@@ -1924,7 +1956,7 @@ class DeviceConfig(BaseModel):
         if self.neighbor_cell_cutoff is None:
             return self
 
-        ind = "xyz".index(self.transport_direction)
+        ind = "abc".index(self.transport_direction)
         if not self.construct_from_unit_cell:
             if self.neighbor_cell_cutoff[ind] != 0:
                 raise ValueError(

@@ -75,7 +75,7 @@ a [`[scsp]`](../parameters/scsp.md) section in the config here.
 
 Next we need to define the contact regions of the device. The whole
 carbon nanotube is made up of 24 repeated unit cells along the transport
-direction `"x"`. From the DFT simulation, we know that each of these
+direction `a`. From the DFT simulation, we know that each of these
 cells has a length of 4.27615261 Å and from the structure file above, we
 can see that the orbital center with the smallest x-coordinate sits at
 (0.15518369, 22.76798050, 27.19112700). Together, this allows us to
@@ -128,7 +128,7 @@ since this is a very small system, we choose the `#!toml obc.nevp_solver
     formalism = "wf"
 
     [device]
-    transport_direction = "x"
+    transport_direction = "a"
 
         [[device.contacts]]
         name = "left"
@@ -209,7 +209,7 @@ is made up of 24 transport cells that contain 32 orbitals each. The
 
 ```toml
 [device]
-transport_direction = 'x'
+transport_direction = "a"
 block_size = 32
 ```
 
@@ -239,7 +239,7 @@ deformation_potential = 15e-3 # eV
     phonon = true
 
     [device]
-    transport_direction = 'x'
+    transport_direction = "a"
     block_size = 32
 
     [electron]

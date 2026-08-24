@@ -1,0 +1,30 @@
+simulation_dir = "."
+
+formalism = "wf" # "negf" or "wf"
+
+[device]
+transport_direction = "c"
+construct_from_unit_cell = true
+num_transport_cells = 12
+neighbor_cell_cutoff = [0, 0, 2]
+
+    [[device.contacts]]
+    name = "left"
+    fermi_level = -3.6
+
+    [[device.contacts]]
+    name = "right"
+    fermi_level = -3.8
+
+[qtbm] # ===============================================================
+max_batch_size = 1
+
+[electron] # ===========================================================
+
+# Energy grid.
+energy_window_min = -6.5
+energy_window_max = -1.0
+energy_window_num = 10
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"

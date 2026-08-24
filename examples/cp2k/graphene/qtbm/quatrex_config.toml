@@ -6,7 +6,7 @@ formalism = "wf"
 [qtbm]
 max_batch_size = 1
 [device]
-transport_direction = 'x'
+transport_direction = "a"
 num_orbitals_per_atom = {"C"=13}
 kpoint_grid = [1,2,1]
 kpoint_shift = [0.0,0.1,0]

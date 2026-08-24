@@ -250,22 +250,83 @@ class Contact:
                     contact_config=contact_config,
                 )
             )
-            self.num_transport_cells = repetition_grid[self.direction]
+            self.transport_repetitions = repetition_grid[self.direction]
             self.transverse_repetition_grid = (
                 repetition_grid[: self.direction]
                 + repetition_grid[self.direction + 1 :]
             )
             self.origin_key = origin_key
-            self.origin_num_orbitals = len(self.unit_cell_orbital_indices[origin_key])
-            self.origin_orbital_indices = self.unit_cell_orbital_indices[origin_key]
+
+        elif contact_config.contact_finder_method == "from_unit":
+            device_config = device.config.device
+
+            if not device_config.construct_from_unit_cell:
+                raise ValueError(
+                    "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
+                )
+
+            self.transport_repetitions = device_config.neighbor_cell_cutoff[
+                self.direction
+            ]
+            self.transverse_repetition_grid = (
+                contact_config.sections[: self.direction]
+                + contact_config.sections[self.direction + 1 :]
+            )
+
+            num_orbitals = device.orbital_coordinates.shape[0]
+            block_size = num_orbitals // device_config.num_transport_cells
+
+            block_size_hat = (block_size // self.transport_repetitions) // np.prod(
+                self.transverse_repetition_grid
+            )
+
+            if self.name == "left":
+                indices = np.arange(
+                    block_size + block_size // self.transport_repetitions
+                )
+            elif self.name == "right":
+                indices = np.arange(
+                    num_orbitals - 1,
+                    num_orbitals
+                    - 1
+                    - (block_size + block_size // self.transport_repetitions),
+                    -1,
+                )
+            else:
+                raise ValueError(
+                    f"Contact name '{self.name}' is not valid for 'from_unit' method. Must be 'left' or 'right'."
+                )
+            self.unit_cell_orbital_indices = {
+                (i, j, k): indices[
+                    block_size_hat
+                    * (
+                        j
+                        + k * self.transverse_repetition_grid[0]
+                        + i * np.prod(self.transverse_repetition_grid)
+                    ) : block_size_hat
+                    * (
+                        j
+                        + k * self.transverse_repetition_grid[0]
+                        + i * np.prod(self.transverse_repetition_grid)
+                        + 1
+                    )
+                ]
+                for i in range(self.transport_repetitions + 1)
+                for j in range(self.transverse_repetition_grid[0])
+                for k in range(self.transverse_repetition_grid[1])
+            }
+            self.origin_key = (0, 0, 0)
         else:
             raise NotImplementedError(
                 f"Contact finder method '{contact_config.contact_finder_method}' not implemented."
             )
 
+        self.origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
+        self.origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+
         if comm.rank == 0:
             print(
-                f"    Number of repetitions in transport direction: {self.num_transport_cells}",
+                f"    Number of repetitions in transport direction: {self.transport_repetitions}",
                 flush=True,
             )
 
@@ -276,7 +337,7 @@ class Contact:
         self.orbital_indices = np.concatenate(
             [
                 self.unit_cell_orbital_indices[i, j, k]
-                for j, k, i in np.ndindex(ny, nz, self.num_transport_cells)
+                for j, k, i in np.ndindex(ny, nz, self.transport_repetitions)
             ]
         )
         # When getting the coupling matrix (01) for spill over,
@@ -287,7 +348,7 @@ class Contact:
             np.concatenate(
                 [self.unit_cell_orbital_indices[i, j, k] for j, k in np.ndindex(ny, nz)]
             )
-            for i in range(self.num_transport_cells + 1)
+            for i in range(self.transport_repetitions + 1)
         ]
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
@@ -297,7 +358,7 @@ class Contact:
                 + i * self.origin_num_orbitals
                 + k * self.origin_num_orbitals * ny * nz
                 for i in range(ny * nz)
-                for k in range(self.num_transport_cells)
+                for k in range(self.transport_repetitions)
             ],
             dtype=int,
         )[None, :]
@@ -357,7 +418,7 @@ class Contact:
             nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=self.num_transport_cells,  # WARNING: overrides config
+                block_sections=self.transport_repetitions,  # WARNING: overrides config
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -474,7 +535,7 @@ class Contact:
         coupling_matrix = []
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
         # Assemble column by column
-        for shift in range(self.num_transport_cells):
+        for shift in range(self.transport_repetitions):
             layer = layers[shift:] + [zero] * shift
             coupling_matrix.append(sparse.vstack(layer, format="csr"))
 
@@ -498,7 +559,7 @@ class Contact:
         """
 
         n = UC_matrix[0].shape[0]
-        num_cells = self.num_transport_cells
+        num_cells = self.transport_repetitions
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
 
         uc_left = [h.conj().T for h in UC_matrix[1:][::-1]]
@@ -711,7 +772,7 @@ class Contact:
                 sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
             )
 
-        for j, k, i in np.ndindex(ny, nz, self.num_transport_cells + 1):
+        for j, k, i in np.ndindex(ny, nz, self.transport_repetitions + 1):
             M_slice[i, j, k] = M_origin[:, self.unit_cell_orbital_indices[i, j, k]]
 
         # Create the k-space list needed to upscale the self-energy and
@@ -737,7 +798,7 @@ class Contact:
 
             reduced_M = []
 
-            for i in range(self.num_transport_cells + 1):
+            for i in range(self.transport_repetitions + 1):
                 temp = sparse.csr_matrix(
                     (M_slice[i, 0, 0].shape[0], M_slice[i, 0, 0].shape[1]),
                     dtype=xp.complex128,

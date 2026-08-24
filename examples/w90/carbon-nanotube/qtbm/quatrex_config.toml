@@ -4,7 +4,7 @@ input_dir = "../inputs"
 formalism = "wf" # "negf" or "wf"
 
 [device]
-transport_direction = "x"
+transport_direction = "a"
 kpoint_grid = [1, 1, 1]
 num_orbitals_per_atom = { "X" = 1 }
 

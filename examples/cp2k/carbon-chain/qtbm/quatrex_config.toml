@@ -8,7 +8,7 @@ max_batch_size = 1 # Process one energy at a time.
 
 [device]
 # Transport is along the x-axis.
-transport_direction = 'x'
+transport_direction = "a"
 # Number of orbitals per atom type. DZVP-MOLOPT basis set has 13
 # orbitals for carbon atoms.
 num_orbitals_per_atom = { "C" = 13 }

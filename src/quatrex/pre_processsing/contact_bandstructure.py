@@ -94,10 +94,14 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 / 2
             )
             ny, nz = contact.transverse_repetition_grid
-            for j, k, i in np.ndindex(ny, nz, contact.num_transport_cells + 1):
-                h_xx[i, j, k] = hamiltonian_origin[
+
+            for j, k, i in np.ndindex(ny, nz, contact.transport_repetitions + 1):
+                # TODO: change to natural order a,b,c and not have transport as the first index
+                index = [j, k]
+                index.insert(contact.direction, i)
+                h_xx[tuple(index)] = hamiltonian_origin[
                     :, contact.unit_cell_orbital_indices[i, j, k]
-                ].todense()
+                ].toarray()
 
             s_xx = {}
             overlap_origin = overlap[contact.origin_orbital_indices, :]
@@ -109,12 +113,15 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 / 2
             )
             ny, nz = contact.transverse_repetition_grid
-            for j, k, i in np.ndindex(ny, nz, contact.num_transport_cells + 1):
-                s_xx[i, j, k] = overlap_origin[
+            for j, k, i in np.ndindex(ny, nz, contact.transport_repetitions + 1):
+                # TODO: change to natural order a,b,c and not have transport as the first index
+                index = [j, k]
+                index.insert(contact.direction, i)
+                s_xx[tuple(index)] = overlap_origin[
                     :, contact.unit_cell_orbital_indices[i, j, k]
-                ].todense()
+                ].toarray()
 
-            transport_ind = "xyz".index(config.device.transport_direction)
+            transport_ind = "abc".index(config.device.transport_direction)
 
             # upscale the blocks
             shifts = [
@@ -123,7 +130,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 [0, 0, 0],
             ]
             for i in range(3):
-                shifts[i][transport_ind] = contact.num_transport_cells * (i - 1)
+                shifts[i][transport_ind] = contact.transport_repetitions * (i - 1)
 
             phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
             phases = phases[:transport_ind] + phases[transport_ind + 1 :]
@@ -131,7 +138,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
             h_xx = tuple(
                 expand_circulant_cell(
                     h_xx,
-                    contact.num_transport_cells,
+                    contact.transport_repetitions,
                     transport_ind,
                     tuple(shift),
                     (ny, nz),
@@ -144,7 +151,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
             s_xx = tuple(
                 expand_circulant_cell(
                     s_xx,
-                    contact.num_transport_cells,
+                    contact.transport_repetitions,
                     transport_ind,
                     tuple(shift),
                     (ny, nz),

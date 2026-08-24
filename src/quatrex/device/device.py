@@ -76,7 +76,9 @@ class Device:
         self.config = config
 
         self._init_hamiltonian()
-        __, self.atom_coordinates, self.atomic_species = self.load_structure(config)
+        self.orbital_coordinates, self.atom_coordinates, self.atomic_species = (
+            self.load_structure(config)
+        )
         # TODO QTBM Device/Contact currently assumes that these quantities are on the host
         self.atom_coordinates = get_host(self.atom_coordinates)
 
@@ -188,7 +190,7 @@ class Device:
 
         if config.device.construct_from_unit_cell:
 
-            transport_ind = "xyz".index(config.device.transport_direction)
+            transport_ind = "abc".index(config.device.transport_direction)
 
             orbital_coordinates = create_coordinate_grid(
                 orbital_coordinates,

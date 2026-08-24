@@ -7,7 +7,7 @@ formalism = "negf" # "negf" or "wf"
 block_comm_size = 3
 
 [device]
-transport_direction = 'x'
+transport_direction = "a"
 block_size = 32
 
 [scba] # ===============================================================
@@ -37,11 +37,11 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-left_contact.name = "source"
+left_contact.name = "left"
 left_contact.fermi_level = -3.600012853 # eV
 left_contact.mid_gap_energy = -3.8      # eV
 
-right_contact.name = "drain"
+right_contact.name = "right"
 right_contact.fermi_level = -3.600012853 # eV
 right_contact.mid_gap_energy = -3.8      # eV
 

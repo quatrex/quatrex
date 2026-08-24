@@ -8,7 +8,7 @@ from qttools import NDArray, sparse, xp
 def compute_sparsity_pattern(
     positions: NDArray,
     cutoff_distance: float,
-    transport_direction: str = "x",
+    transport_direction: str = "a",
     strategy: str = "box",
     start_idx: int = 0,
     end_idx: int = None,
@@ -23,7 +23,7 @@ def compute_sparsity_pattern(
     cutoff_distance : float
         The interaction cutoff.
     transport_direction : str, optional
-        The transport direction, by default 'x'.
+        The transport direction, by default "a".
     strategy : str, optional
         The strategy to use, by default "box", where only the distance
         along the transport direction is considered. The other option is
@@ -52,7 +52,7 @@ def compute_sparsity_pattern(
 
     elif strategy == "box":
 
-        idx = {"x": 0, "y": 1, "z": 2}[transport_direction]
+        idx = {"a": 0, "b": 1, "c": 2}[transport_direction]
 
         def distance(x, y):
             """Distance along transport direction."""

@@ -3,7 +3,7 @@ simulation_dir = "."
 formalism = "negf" # "negf" or "wf"
 
 [device]
-transport_direction = 'z'
+transport_direction = "c"
 construct_from_unit_cell = true
 num_transport_cells = 12
 neighbor_cell_cutoff = [0, 0, 2]
@@ -35,11 +35,11 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-left_contact.name = "source"
+left_contact.name = "left"
 left_contact.fermi_level = -3.551573786 # eV
 left_contact.mid_gap_energy = -3.8      # eV
 
-right_contact.name = "drain"
+right_contact.name = "right"
 right_contact.fermi_level = -3.551573786 # eV
 right_contact.mid_gap_energy = -3.8      # eV
 

@@ -15,7 +15,7 @@ default_epsilon_r = 11.7
 density_model_dim = 1
 
 [device]
-transport_direction = "x"
+transport_direction = "a"
 kpoint_grid = [1, 1, 1]
 num_orbitals_per_atom = { "X" = 1 }
 
@@ -54,7 +54,7 @@ num_orbitals_per_atom = { "X" = 1 }
         shape.subtract.length = 20
 
         [[device.geometry.regions]]
-        name = "source"
+        name = "left"
 
         shape.type = "box"
         shape.bounds = [[0, 0, 0], [10, 50, 50]]
@@ -63,7 +63,7 @@ num_orbitals_per_atom = { "X" = 1 }
 
 
         [[device.geometry.regions]]
-        name = "drain"
+        name = "right"
 
         shape.type = "box"
         shape.bounds = [[92.694, 0, 0], [102.694, 50, 50]]
@@ -72,7 +72,7 @@ num_orbitals_per_atom = { "X" = 1 }
 
 
     [[device.contacts]]
-    name = "source"
+    name = "left"
     origin = [0.1551, 0.0, 0.0]
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"
@@ -82,7 +82,7 @@ num_orbitals_per_atom = { "X" = 1 }
     voltage = 0.0
 
     [[device.contacts]]
-    name = "drain"
+    name = "right"
     origin = [102.694, 0.0, 0.0]
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"

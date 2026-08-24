@@ -311,7 +311,7 @@ def _expand_tight_binding_matrix(
     """
 
     if isinstance(transport_ind, str):
-        transport_ind = "xyz".index(transport_ind)
+        transport_ind = "abc".index(transport_ind)
 
     transport_keys = np.array(list(matrix_dict.keys()))[:, transport_ind]
     transport_cell_size = np.max(np.abs(transport_keys))
@@ -543,7 +543,7 @@ def _create_matrix_from_unit_cells(
     # directions.
     out_matrix_dict = {}
 
-    transport_ind = "xyz".index(config.device.transport_direction)
+    transport_ind = "abc".index(config.device.transport_direction)
     for coord in matrix_dict:
 
         # Do not expand multiple time in
@@ -681,7 +681,7 @@ def load_matrices(
 
     # NOTE: for closed systems,
     # transport direction will be None
-    transport_ind = "xyz".index(config.device.transport_direction)
+    transport_ind = "abc".index(config.device.transport_direction)
 
     # drop keys which are bigger than zero in the transport direction
     matrix_dict = {

@@ -916,8 +916,7 @@ class ContactConfig(BaseModel):
     - `None`: The setting is determined automatically based on the other
       contact parameters i.e. depending whether the [`origin`](#origin)
       and [`lattice_vectors`](#lattice_vectors) parameters are set, or
-      the [`origin_slice`](#origin_slice) and
-      [`coupling_slice`](#coupling_slice) parameters are set.
+      the [`contact_slice`](#contact_slice) parameter.
     - `"from_unit"`: Finds the contact orbitals based on their unit
       cell. This option can only be used if the
       [`construct_from_unit_cell`](device/#construct_from_unit_cell)
@@ -925,14 +924,13 @@ class ContactConfig(BaseModel):
       automatically determined from the name [`name`](#name) and the
       unit cell of the system.
     - `"slice"`: Finds the contact orbitals based on their slice
-      indices. This uses the [`origin_slice`](#origin_slice) and
-      [`coupling_slice`](#coupling_slice) parameters to determine which
-      orbitals belong to the contact. This is useful for simple systems
-      where the contacts are just contiguous orbitals. Currently,
-      [`name`](#name) is used to determine the order. Thus, only "left"
-      and "right" contacts are supported. `"slice"` is more flexible
-      than `"from_unit"` and can be used for systems that are not
-      constructed from a unit cell.
+      indices. This uses the [`contact_slice`](#contact_slice) parameters
+      to determine which orbitals belong to the contact. This is useful
+      for simple systems where the contacts are just contiguous
+      orbitals. Currently, [`name`](#name) is used to determine the
+      order. Thus, only "left" and "right" contacts are supported.
+      `"slice"` is more flexible than `"from_unit"` and can be used for
+      systems that are not constructed from a unit cell.
     - `"real_space"`: Finds the contact orbitals based on their
       real-space positions. This uses the [`origin`](#origin) and
       [`lattice_vectors`](#lattice_vectors) parameters to determine
@@ -971,24 +969,17 @@ class ContactConfig(BaseModel):
 
     """
 
-    origin_slice: tuple[PositiveInt, PositiveInt] | None = None
+    contact_slice: tuple[NonNegativeInt, NonNegativeInt] | None = None
     """The slice of the contact region in the system matrix.
 
     This is used to find the contact orbitals in the system matrix when
     [`contact_finder_method`](#contact_finder_method) is set to
     `"slice"`.
 
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
-    """
-
-    coupling_slice: tuple[PositiveInt, PositiveInt] | None = None
-    """The slice of the contact coupling region in the system matrix.
-
-    This is used to find the contact orbitals in the system matrix when
-    [`contact_finder_method`](#contact_finder_method) is set to
-    `"slice"`.
+    The slice is defined by the first and last indices of the contact
+    region in the system matrix. The slice is assumed to be contiguous
+    and correctly sorted. The slice spans both the origin of the contact
+    and its periodic images in the transport direction.
 
     !!! warning
         This parameter is currently only used in the `"wf"` formalism.
@@ -1092,16 +1083,11 @@ class ContactConfig(BaseModel):
                 "Either both `origin` and `lattice_vectors` must be provided, "
                 "or neither."
             )
-        if (self.origin_slice is None) ^ (self.coupling_slice is None):
-            raise ValueError(
-                "Either both `origin_slice` and `coupling_slice` must be provided, "
-                "or neither."
-            )
 
         if self.contact_finder_method is None:
             if self.origin is not None:
                 self.contact_finder_method = "real_space"
-            elif self.origin_slice is not None:
+            elif self.contact_slice is not None:
                 self.contact_finder_method = "slice"
             else:
                 self.contact_finder_method = "from_unit"
@@ -1119,10 +1105,10 @@ class ContactConfig(BaseModel):
                 )
 
         elif self.contact_finder_method == "slice":
-            if self.origin_slice is None:
+            if self.contact_slice is None:
                 raise ValueError(
                     "When `contact_finder_method` is set to `slice`, "
-                    "`origin_slice` and `coupling_slice` must be provided."
+                    "`contact_slice` must be provided."
                 )
         elif self.contact_finder_method == "from_unit":
             if self.origin is not None:
@@ -1130,10 +1116,10 @@ class ContactConfig(BaseModel):
                     "When `contact_finder_method` is set to `from_unit`, "
                     "`origin` and `lattice_vectors` must not be provided."
                 )
-            if self.origin_slice is not None:
+            if self.contact_slice is not None:
                 raise ValueError(
                     "When `contact_finder_method` is set to `from_unit`, "
-                    "`origin_slice` and `coupling_slice` must not be provided."
+                    "`contact_slice` must not be provided."
                 )
 
         if self.contact_finder_method in ["slice", "from_unit"]:
@@ -1156,6 +1142,21 @@ class ContactConfig(BaseModel):
                     flush=True,
                 )
             self.sections = (1, 1, 1)
+        return self
+
+    @model_validator(mode="after")
+    def validate_contact_slice(self) -> Self:
+        """Validates that the `contact_slice` parameter."""
+        if self.contact_slice is not None:
+            if self.contact_slice[0] > self.contact_slice[1]:
+                raise ValueError(
+                    "The first element of `contact_slice` must be less than or equal to the second element."
+                )
+            if (self.contact_slice[1] - self.contact_slice[0]) % 2 != 0:
+                raise ValueError(
+                    "A valid contact should span an even number of orbitals."
+                )
+
         return self
 
     @model_validator(mode="after")

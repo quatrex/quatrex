@@ -257,24 +257,30 @@ class Contact:
             )
             self.origin_key = origin_key
 
-        elif contact_config.contact_finder_method == "from_unit":
+        elif contact_config.contact_finder_method in ["from_unit", "slice"]:
             device_config = device.config.device
 
-            if not device_config.construct_from_unit_cell:
-                raise ValueError(
-                    "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
-                )
-
-            self.transport_repetitions = device_config.neighbor_cell_cutoff[
-                self.direction
-            ]
             self.transverse_repetition_grid = (
                 contact_config.sections[: self.direction]
                 + contact_config.sections[self.direction + 1 :]
             )
 
-            num_orbitals = device.orbital_coordinates.shape[0]
-            block_size = num_orbitals // device_config.num_transport_cells
+            if contact_config.contact_finder_method == "from_unit":
+                if not device_config.construct_from_unit_cell:
+                    raise ValueError(
+                        "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
+                    )
+                self.transport_repetitions = device_config.neighbor_cell_cutoff[
+                    self.direction
+                ]
+
+                num_orbitals = device.orbital_coordinates.shape[0]
+                block_size = num_orbitals // device_config.num_transport_cells
+            else:
+                self.transport_repetitions = contact_config.sections[self.direction]
+                block_size = (
+                    contact_config.contact_slice[1] - contact_config.contact_slice[0]
+                ) // 2
 
             block_size_hat = (block_size // self.transport_repetitions) // np.prod(
                 self.transverse_repetition_grid
@@ -284,18 +290,25 @@ class Contact:
                 indices = np.arange(
                     block_size + block_size // self.transport_repetitions
                 )
+                if contact_config.contact_finder_method == "slice":
+                    indices += contact_config.contact_slice[0]
             elif self.name == "right":
                 indices = np.arange(
-                    num_orbitals - 1,
-                    num_orbitals
-                    - 1
-                    - (block_size + block_size // self.transport_repetitions),
-                    -1,
+                    0,
+                    (block_size + block_size // self.transport_repetitions),
                 )
+                if contact_config.contact_finder_method == "slice":
+                    indices = contact_config.contact_slice[1] - indices - 1
+                else:
+                    num_orbitals = device.orbital_coordinates.shape[0]
+                    indices = num_orbitals - indices - 1
             else:
                 raise ValueError(
                     f"Contact name '{self.name}' is not valid for 'from_unit' method. Must be 'left' or 'right'."
                 )
+
+            print(indices)
+
             self.unit_cell_orbital_indices = {
                 (i, j, k): indices[
                     block_size_hat
@@ -316,6 +329,7 @@ class Contact:
                 for k in range(self.transverse_repetition_grid[1])
             }
             self.origin_key = (0, 0, 0)
+
         else:
             raise NotImplementedError(
                 f"Contact finder method '{contact_config.contact_finder_method}' not implemented."

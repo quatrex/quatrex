@@ -5,7 +5,7 @@
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels import linalg
 from quatrex.core.config import ContactConfig, DeviceConfig
@@ -214,8 +214,8 @@ def contact_fermi_level(
 
 
 def compute_contact_bandstructure(
-    hamiltonian: sparse.spmatrix,
-    overlap: sparse.spmatrix,
+    h_xx: dict,
+    s_xx: dict,
     kpoint: NDArray,
     contact: Contact,
     kpoints_transport: NDArray,
@@ -225,12 +225,12 @@ def compute_contact_bandstructure(
 
     Parameters
     ----------
-    hamiltonian : sparse.spmatrix
-        The Hamiltonian matrix of the device. It is expected to be the
-        full Hamiltonian for the specific k-point.
-    overlap : sparse.spmatrix
-        The overlap matrix of the device. It is expected to be the full
-        overlap matrix for the specific k-point.
+    h_xx : dict
+        The Hamiltonian matrix blocks of a single contact layer. Already
+        summed over k-points.
+    s_xx : dict
+        The overlap matrix blocks of a single contact layer. Already
+        summed over k-points.
     kpoint : NDArray
         The k-point at which to compute the band structure.
     contact : Contact
@@ -245,30 +245,18 @@ def compute_contact_bandstructure(
 
     """
     grid = (contact.transport_repetitions + 1,) + contact.transverse_repetition_grid
-    h_sliced = Contact.slice_matrix(
-        M=hamiltonian,
-        origin_orbital_indices=contact.origin_orbital_indices,
-        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
-        grid=grid,
-        upper=True,
-    )
-    s_sliced = Contact.slice_matrix(
-        M=overlap,
-        origin_orbital_indices=contact.origin_orbital_indices,
-        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
-        grid=grid,
-        upper=True,
-    )
 
-    h_xx = {}
-    s_xx = {}
+    h_xx_tmp = {}
+    s_xx_tmp = {}
     # shuffle keys to to have natural order a,b,c
     for i, j, k in np.ndindex(*grid):
         index = [j, k]
         index.insert(contact.transport_direction, i)
         index = tuple(index)
-        h_xx[index] = h_sliced[i, j, k].toarray()
-        s_xx[index] = s_sliced[i, j, k].toarray()
+        h_xx_tmp[index] = h_xx[i, j, k].toarray()
+        s_xx_tmp[index] = s_xx[i, j, k].toarray()
+    h_xx = h_xx_tmp
+    s_xx = s_xx_tmp
 
     phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
     phases = (
@@ -276,7 +264,7 @@ def compute_contact_bandstructure(
         + phases[contact.transport_direction + 1 :]
     )
 
-    h_xx = tuple(
+    H_XX = tuple(
         expand_circulant_cell(
             matrix_dict=h_xx,
             transport_cell_size=contact.transport_repetitions,
@@ -288,7 +276,7 @@ def compute_contact_bandstructure(
         )
         for index in [-1, 0, 1]
     )
-    s_xx = tuple(
+    S_XX = tuple(
         expand_circulant_cell(
             matrix_dict=s_xx,
             transport_cell_size=contact.transport_repetitions,
@@ -301,7 +289,7 @@ def compute_contact_bandstructure(
         for index in [-1, 0, 1]
     )
 
-    return contact_band_structure(kpoints_transport, h_xx, s_xx)
+    return contact_band_structure(kpoints_transport, H_XX, S_XX)
 
 
 def compute_contact_band_properties(
@@ -359,16 +347,20 @@ def compute_contact_band_properties(
     hamiltonians = device.hamiltonians
     overlaps = device.overlap_matrices
     for m, kpoint in enumerate(kpoints):
-        hamiltonian = sum(
-            np.exp(2j * np.pi * np.dot(kpoint, r)) * h for r, h in hamiltonians.items()
+        h_xx = contact.get_contact_blocks(
+            matrices=hamiltonians,
+            kpoint=kpoint,
+            upper=True,
         )
-        overlap = sum(
-            np.exp(2j * np.pi * np.dot(kpoint, r)) * s for r, s in overlaps.items()
+        s_xx = contact.get_contact_blocks(
+            matrices=overlaps,
+            kpoint=kpoint,
+            upper=True,
         )
 
         e_k[:, m, :] = compute_contact_bandstructure(
-            hamiltonian=hamiltonian,
-            overlap=overlap,
+            h_xx=h_xx,
+            s_xx=s_xx,
             kpoint=kpoint,
             contact=contact,
             kpoints_transport=kpoints_transport,

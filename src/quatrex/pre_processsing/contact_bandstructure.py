@@ -67,17 +67,24 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
     hamiltonians = device.hamiltonians
     overlaps = device.overlap_matrices
 
+    # NOTE: Not the most efficient code since we do naive loops. The
+    # code could be potentially batched, but this should not be a
+    # bottleneck since it is only pre-processing.
     for m, kpoint in enumerate(kpoints):
-        hamiltonian = sum(
-            np.exp(2j * np.pi * np.dot(kpoint, r)) * h for r, h in hamiltonians.items()
-        )
-        overlap = sum(
-            np.exp(2j * np.pi * np.dot(kpoint, r)) * s for r, s in overlaps.items()
-        )
-
         for n, (contact, contact_config) in enumerate(
             zip(device.contacts, config.device.contacts)
         ):
+            h_xx = contact.get_contact_blocks(
+                matrices=hamiltonians,
+                kpoint=kpoint,
+                upper=True,
+            )
+            s_xx = contact.get_contact_blocks(
+                matrices=overlaps,
+                kpoint=kpoint,
+                upper=True,
+            )
+
             kpoints_transport = np.linspace(
                 -np.pi,
                 np.pi,
@@ -86,8 +93,8 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
             )
 
             e_k = compute_contact_bandstructure(
-                hamiltonian=hamiltonian,
-                overlap=overlap,
+                h_xx=h_xx,
+                s_xx=s_xx,
                 kpoint=kpoint,
                 contact=contact,
                 kpoints_transport=kpoints_transport,
@@ -95,6 +102,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
 
             if contact_config.voltage is not None:
                 e_k += contact_config.voltage
+
             _plot(
                 ax=axes[m, n],
                 kpoints_transport=kpoints_transport,

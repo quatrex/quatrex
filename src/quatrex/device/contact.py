@@ -493,6 +493,7 @@ class Contact:
     def _construct_contact_matrix(self, UC_matrix: list):
         """Constructs the full contact matrix for the contact at given
         transverse k-points.
+
         Parameters
         ----------
         UC_matrix : list
@@ -666,12 +667,9 @@ class Contact:
 
         return modes
 
-    @staticmethod
     def slice_matrix(
+        self,
         M: sparse.spmatrix,
-        origin_orbital_indices: NDArray,
-        unit_cell_orbital_indices: dict,
-        grid: tuple[int, int, int],
         upper: bool = False,
     ):
         """Slices the given matrix into a dictionary of submatrices
@@ -681,14 +679,6 @@ class Contact:
         ----------
         M : sparse.spmatrix
             The matrix to slice.
-        origin_orbital_indices : NDArray
-            The indices of the orbitals in the origin unit cell.
-        unit_cell_orbital_indices : dict
-            A dictionary mapping (i, j, k) tuples to the indices of the
-            orbitals in the corresponding unit cell.
-        grid : tuple[int, int, int]
-            The shape of the grid over which to slice the matrix, in the
-            order (transport_repetitions + 1, ny, nz).
         upper : bool, optional
             Whether M is only upper triangular.
 
@@ -699,19 +689,83 @@ class Contact:
             submatrices corresponding to the unit cell orbital indices.
 
         """
+
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+
         M_slice = {}
-        M_origin = M[origin_orbital_indices, :]
+        M_origin = M[self.origin_orbital_indices, :]
 
         if upper:
-            M_origin += M[:, origin_orbital_indices].T.conj()
-            M_origin[:, origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
+            M_origin += M[:, self.origin_orbital_indices].T.conj()
+            M_origin[:, self.origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
             )
 
-        for i, j, k in np.ndindex(*grid):
-            M_slice[i, j, k] = M_origin[:, unit_cell_orbital_indices[i, j, k]]
+        for index in np.ndindex(*grid):
+            M_slice[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
 
         return M_slice
+
+    def get_contact_blocks(
+        self,
+        matrices: dict,
+        kpoint: NDArray,
+        upper: bool = False,
+    ) -> dict:
+        """Constructs the contact blocks for the given k-point.
+
+        Parameters
+        ----------
+        matrices : dict
+            A dictionary of matrices (Hamiltonian or overlap) indexed by
+            the spatial index.
+        kpoint : NDArray
+            The k-point for which to construct the contact blocks.
+        upper : bool, optional
+            Whether M is only upper triangular.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping (i, j, k) tuples to the contact blocks
+            corresponding to the unit cell orbital indices.
+
+        """
+        M_origin = None
+
+        # NOTE: Needs to slice and multiply the phase at once using
+        # `slice_matrix` would be wrong with `upper=True` since not each
+        # k-point hamiltonian is hermitian, but only the sum over all
+        # k-points is hermitian.
+
+        # Assemble the contact layer for the full summed k-point matrix
+        for r, matrix in matrices.items():
+            phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+            term = phase * matrix[self.origin_orbital_indices, :]
+            M_origin = term if M_origin is None else M_origin + term
+
+        if upper:
+            # NOTE: We could potentially optimize this by only slicing
+            # the origin orbital indices since the rest is zero due to
+            # being upper triangular.
+
+            M_col = None
+            for r, matrix in matrices.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                term = phase * matrix[:, self.origin_orbital_indices]
+                M_col = term if M_col is None else M_col + term
+
+            M_origin = M_origin + M_col.T.conj()
+            M_origin[:, self.origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
+            )
+
+        m_xx = {}
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+        for index in np.ndindex(*grid):
+            m_xx[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+
+        return m_xx
 
     @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
@@ -754,13 +808,8 @@ class Contact:
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
-        grid = (self.transport_repetitions + 1, ny, nz)
-
         M_slice = self.slice_matrix(
             M=M,
-            origin_orbital_indices=self.origin_orbital_indices,
-            unit_cell_orbital_indices=self.unit_cell_orbital_indices,
-            grid=grid,
             upper=upper_M,
         )
 

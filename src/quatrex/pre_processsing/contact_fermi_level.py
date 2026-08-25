@@ -36,6 +36,9 @@ def pre_process_fermi_level(
             "the pre-processing steps are completed before starting the parallel run."
         )
 
+    # NOTE: Not the most efficient code since we do naive loops. The
+    # code could be potentially batched, but this should not be a
+    # bottleneck since it is only pre-processing.
     if config.formalism == "wf":
         for contact_config, contact in zip(config.device.contacts, device.contacts):
             if comm.rank == 0:

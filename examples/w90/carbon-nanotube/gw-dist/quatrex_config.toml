@@ -47,9 +47,9 @@ right_contact.mid_gap_energy = -3.8      # eV
 band_edge_tracking = true
 
 # Energy grid.
-energy_window_min = -11.6
-energy_window_max = 0.9
-energy_window_num = 1000
+energy_window_min = -35
+energy_window_max = 25
+energy_window_num = 6000
 
 max_batch_size = 30
 solver.algorithm = "rgf"

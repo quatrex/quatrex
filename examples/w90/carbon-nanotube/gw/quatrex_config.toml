@@ -22,10 +22,10 @@ device_currents = true
 electron_density = false
 hole_density = false
 
-polarization_density = true
+polarization_density = false
 coulomb_screening_density = true
 
-self_energy_density = true
+self_energy_density = false
 
 # If enabled, the profiling stats will take a bit of time to crunch the
 # numbers.
@@ -44,9 +44,9 @@ right_contact.mid_gap_energy = -3.8      # eV
 band_edge_tracking = true
 
 # Energy grid.
-energy_window_min = -6.5
-energy_window_max = -1
-energy_window_num = 100
+energy_window_min = -35
+energy_window_max = 25
+energy_window_num = 6000
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000

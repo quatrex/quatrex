@@ -34,7 +34,7 @@ profiler = Profiler()
 def _spin_resolved_sparsity_pattern(
     config: QuatrexConfig
 ) -> DSDBSparse :
-    """Resolves the spin degeneracy of each atomic orbital
+    """Creates a sparsity pattern that resolves the spin degeneracy of each atomic orbital
 
     Parameters
     ----------
@@ -99,7 +99,7 @@ def _cast_to_spin_matrix(
     spin_matrix: DSDBSparse, A: DSDBSparse, B: DSDBSparse | None = None, 
 ) -> DSDBSparse:
 
-    """Casts A and B to a spin matrix of size 2Nx2N the following way. If A and B are both None, all values are set to zero:
+    """Casts A and B to a spin matrix of size 2Nx2N the following way
 
     |A_11 B_11|A_12 B_12| ...
     |B_11 A_11|B_12 A_12|
@@ -109,12 +109,6 @@ def _cast_to_spin_matrix(
 
     Parameters
     ----------
-    sparsity_pattern : sparse.coo_matrix
-        spin resolved sparsity pattern
-
-    config : QuatrexConfig
-        Device configuration
-
     spin_matrix : DSDBSparse
         output matrix of size 2N times 2N
 
@@ -122,7 +116,7 @@ def _cast_to_spin_matrix(
         The matrix to be cast to a bigger matrix
 
     B : DSDBSparse
-        optional
+        optional, elements set to zero if None
 
     Returns
     -------
@@ -132,13 +126,13 @@ def _cast_to_spin_matrix(
     """
 
     # check if A and B are of the same structure
-
-    block_sizes = A.block_sizes * 2
-    energy_points, _, _ = A.shape
+    block_sizes = spin_matrix.local_block_sizes
+    (energy_points,) = A.local_stack_shape
 
     # fill spin_matrix with data from A and B
     N_blocks = len(block_sizes)
     block_size = block_sizes[0]
+
     for i in range(N_blocks):
         for j in range(N_blocks):
             spin_matrix_ij = np.zeros(shape=(energy_points, block_size, block_size), dtype = xp.complex128)
@@ -1015,21 +1009,23 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
 
-        if self.max_batch_size is None:
-            max_batch_size = p_lesser.shape[0]
-        else:
-            max_batch_size = self.max_batch_size
-        batch_sizes, batch_offsets = get_batches(p_lesser.shape[0], max_batch_size)
-
         if self.spin:
             with profiler.profile_range(
-                label="CoulombScreeningSolver: Spin resolved polarization matrices",
+                label="CoulombScreeningSolver: Cast polarization matrices to 2N x 2N matrices",
                 level="default", 
                 comm=comm,
             ):
                 p_lesser = _cast_to_spin_matrix(self.spin_p_lesser, p_lesser)
                 p_greater = _cast_to_spin_matrix(self.spin_p_greater, p_greater)
                 p_retarded_hermitian = _cast_to_spin_matrix(self.spin_p_retarded_hermitian, p_retarded_hermitian)
+                self.spin_w_lesser.data = 0.0
+                self.spin_w_greater.data = 0.0
+
+        if self.max_batch_size is None:
+            max_batch_size = p_lesser.shape[0]
+        else:
+            max_batch_size = self.max_batch_size
+        batch_sizes, batch_offsets = get_batches(p_lesser.shape[0], max_batch_size)
 
         for i in range(len(batch_sizes)):
 
@@ -1125,11 +1121,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             ):
                 out_l, out_g = out
                 if self.spin:
-                    with profiler.profile_range(
-                        label = "CoulombScreeningSolver: Solve: Spin resolved screened coulomb matrix"
-                    ):
-                        out_l = _cast_to_spin_matrix(self.spin_w_lesser, out_l)
-                        out_g = _cast_to_spin_matrix(self.spin_w_greater, out_g)
+                    out_l = self.spin_w_lesser
+                    out_g = self.spin_w_greater
 
                 out_slice = (
                     out_l.stack[batch_slice],

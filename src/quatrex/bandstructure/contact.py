@@ -5,11 +5,16 @@
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.kernels import linalg
+from quatrex.core.config import ContactConfig, DeviceConfig
 from quatrex.core.statistics import fermi_dirac
+from quatrex.device import Contact, Device
+from quatrex.device.inputs import expand_circulant_cell
 from quatrex.electrostatics.geometry_config import Region, VolumeProperties
 from quatrex.electrostatics.meshing import inside_shape
+from quatrex.grid import monkhorst_pack
 
 
 def _real_to_kspace(
@@ -206,3 +211,199 @@ def contact_fermi_level(
     )
 
     return result.x
+
+
+def compute_contact_bandstructure(
+    hamiltonian: sparse.spmatrix,
+    overlap: sparse.spmatrix,
+    kpoint: NDArray,
+    contact: Contact,
+    kpoints_transport: NDArray,
+) -> NDArray:
+    """Slices and expands the inptut matrices, and computes the contact
+    band structure for a given contact at a specific k-point.
+
+    Parameters
+    ----------
+    hamiltonian : sparse.spmatrix
+        The Hamiltonian matrix of the device. It is expected to be the
+        full Hamiltonian for the specific k-point.
+    overlap : sparse.spmatrix
+        The overlap matrix of the device. It is expected to be the full
+        overlap matrix for the specific k-point.
+    kpoint : NDArray
+        The k-point at which to compute the band structure.
+    contact : Contact
+        The contact object containing information about the contact.
+    kpoints_transport : NDArray
+        The k-points along the transport direction.
+
+    Returns
+    -------
+    e_k : np.ndarray
+        The eigenvalues for the contact band structure.
+
+    """
+    grid = (contact.transport_repetitions + 1,) + contact.transverse_repetition_grid
+    h_sliced = Contact.slice_matrix(
+        M=hamiltonian,
+        origin_orbital_indices=contact.origin_orbital_indices,
+        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
+        grid=grid,
+        upper=True,
+    )
+    s_sliced = Contact.slice_matrix(
+        M=overlap,
+        origin_orbital_indices=contact.origin_orbital_indices,
+        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
+        grid=grid,
+        upper=True,
+    )
+
+    h_xx = {}
+    s_xx = {}
+    # shuffle keys to to have natural order a,b,c
+    for i, j, k in np.ndindex(*grid):
+        index = [j, k]
+        index.insert(contact.direction, i)
+        index = tuple(index)
+        h_xx[index] = h_sliced[i, j, k].toarray()
+        s_xx[index] = s_sliced[i, j, k].toarray()
+
+    phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+    phases = phases[: contact.direction] + phases[contact.direction + 1 :]
+
+    h_xx = tuple(
+        expand_circulant_cell(
+            matrix_dict=h_xx,
+            transport_cell_size=contact.transport_repetitions,
+            transport_ind=contact.direction,
+            index=index,
+            sections=contact.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
+        for index in [-1, 0, 1]
+    )
+    s_xx = tuple(
+        expand_circulant_cell(
+            matrix_dict=s_xx,
+            transport_cell_size=contact.transport_repetitions,
+            transport_ind=contact.direction,
+            index=index,
+            sections=contact.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
+        for index in [-1, 0, 1]
+    )
+
+    return contact_band_structure(kpoints_transport, h_xx, s_xx)
+
+
+def compute_contact_band_properties(
+    contact: Contact,
+    contact_config: ContactConfig,
+    device: Device,
+    device_config: DeviceConfig,
+) -> tuple[float, float, float]:
+    """Computes the Fermi level for the contact from the Hamiltonian and
+    overlap matrices.
+
+    Parameters
+    ----------
+    contact : Contact
+        The contact object.
+    contact_config : ContactConfig
+        The contact configuration object.
+    device : Device
+        The device object.
+    device_config : DeviceConfig
+        The device configuration object.
+
+    Returns
+    -------
+    fermi_level : float
+        The computed Fermi level in eV.
+    mid_gap_energy : float
+        The recomputed mid-gap energy based on the band structure.
+    delta_fermi_level_conduction_band : float
+        The energy difference between the Fermi level and the conduction
+        band edge.
+
+    """
+    kpoints_transport = np.linspace(
+        -np.pi,
+        np.pi,
+        contact_config.num_kpoints_transport,
+        endpoint=False,
+    )
+
+    transverse_axes = [0, 1, 2]
+    transverse_axes.remove(contact.direction)
+
+    kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
+
+    e_k = xp.zeros(
+        (
+            len(kpoints_transport),
+            kpoints.shape[0],
+            len(contact.origin_orbital_indices) * contact.transport_repetitions,
+        ),
+        dtype=float,
+    )
+
+    hamiltonians = device.hamiltonians
+    overlaps = device.overlap_matrices
+    for m, kpoint in enumerate(kpoints):
+        hamiltonian = sum(
+            np.exp(2j * np.pi * np.dot(kpoint, r)) * h for r, h in hamiltonians.items()
+        )
+        overlap = sum(
+            np.exp(2j * np.pi * np.dot(kpoint, r)) * s for r, s in overlaps.items()
+        )
+
+        e_k[:, m, :] = compute_contact_bandstructure(
+            hamiltonian=hamiltonian,
+            overlap=overlap,
+            kpoint=kpoint,
+            contact=contact,
+            kpoints_transport=kpoints_transport,
+        )
+
+    # Average over transverse k-points.
+    e_k = xp.mean(e_k, axis=1)
+
+    doping_density = contact_doping_density(
+        coordinates=device.orbital_coordinates[contact.origin_orbital_indices],
+        geometry_regions=device_config.geometry.regions,
+    )
+
+    fermi_level = contact_fermi_level(
+        e_k=e_k,
+        kpoints=kpoints_transport,
+        mid_gap_energy=contact.mid_gap_energy,
+        cell_volume=contact_config.cell_volume,
+        doping_density=doping_density,
+        temperature=contact.temperature,
+    )
+
+    # Recompute the actual mid-gap energy from the band structure.
+    valence_band_edge, conduction_band_edge = contact_band_edges(
+        e_k, contact.mid_gap_energy
+    )
+    mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+    delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
+
+    if comm.rank == 0:
+        print(f"Doping density: {doping_density} Å^-3", flush=True)
+        print(f"Fermi level: {fermi_level} eV", flush=True)
+        print(f"Conduction band minimum: {conduction_band_edge} eV", flush=True)
+        print(f"Valence band maximum: {valence_band_edge} eV", flush=True)
+        print(f"Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
+        print(
+            f"Delta Fermi level conduction band: {delta_fermi_level_conduction_band} eV",
+            flush=True,
+        )
+
+    return fermi_level, mid_gap_energy, delta_fermi_level_conduction_band

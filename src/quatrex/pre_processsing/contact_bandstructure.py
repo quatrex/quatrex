@@ -7,11 +7,13 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 
-from qttools import NDArray, sparse
-from quatrex.bandstructure.contact import contact_band_structure
+from quatrex.bandstructure.contact import (
+    compute_contact_bandstructure,
+    contact_band_structure,
+)
 from quatrex.core.config import QuatrexConfig
-from quatrex.device import Contact, Device
-from quatrex.device.inputs import assemble_matrix, expand_circulant_cell
+from quatrex.device import Device
+from quatrex.device.inputs import assemble_matrix
 from quatrex.grid import monkhorst_pack
 
 
@@ -35,94 +37,6 @@ def _plot(
     e_k = e_k.squeeze()
     k_repeated = np.repeat(kpoints_transport, e_k.shape[1])
     ax.scatter(k_repeated, e_k, color="blue", s=10)
-
-
-def slice_expand_bandstructure(
-    hamiltonian: sparse.spmatrix,
-    overlap: sparse.spmatrix,
-    kpoint: NDArray,
-    contact: Contact,
-    kpoints_transport: NDArray,
-) -> NDArray:
-    """Slices and expands the inptut matrices, and computes the contact
-    band structure for a given contact.
-
-    Parameters
-    ----------
-    hamiltonian : sparse.spmatrix
-        The Hamiltonian matrix of the device. It is expected to be the
-        full Hamiltonian for the specific k-point.
-    overlap : sparse.spmatrix
-        The overlap matrix of the device. It is expected to be the full
-        overlap matrix for the specific k-point.
-    kpoint : NDArray
-        The k-point at which to compute the band structure.
-    contact : Contact
-        The contact object containing information about the contact.
-    kpoints_transport : NDArray
-        The k-points along the transport direction.
-
-    Returns
-    -------
-    e_k : np.ndarray
-        The eigenvalues for the contact band structure.
-
-    """
-    grid = (contact.transport_repetitions + 1,) + contact.transverse_repetition_grid
-    h_sliced = Contact.slice_matrix(
-        M=hamiltonian,
-        origin_orbital_indices=contact.origin_orbital_indices,
-        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
-        grid=grid,
-        upper=True,
-    )
-    s_sliced = Contact.slice_matrix(
-        M=overlap,
-        origin_orbital_indices=contact.origin_orbital_indices,
-        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
-        grid=grid,
-        upper=True,
-    )
-
-    h_xx = {}
-    s_xx = {}
-    # shuffle keys to to have natural order a,b,c
-    for i, j, k in np.ndindex(*grid):
-        index = [j, k]
-        index.insert(contact.direction, i)
-        index = tuple(index)
-        h_xx[index] = h_sliced[i, j, k].toarray()
-        s_xx[index] = s_sliced[i, j, k].toarray()
-
-    phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-    phases = phases[: contact.direction] + phases[contact.direction + 1 :]
-
-    h_xx = tuple(
-        expand_circulant_cell(
-            matrix_dict=h_xx,
-            transport_cell_size=contact.transport_repetitions,
-            transport_ind=contact.direction,
-            index=index,
-            sections=contact.transverse_repetition_grid,
-            phases=phases,
-            key_assumption="half",
-        )
-        for index in [-1, 0, 1]
-    )
-    s_xx = tuple(
-        expand_circulant_cell(
-            matrix_dict=s_xx,
-            transport_cell_size=contact.transport_repetitions,
-            transport_ind=contact.direction,
-            index=index,
-            sections=contact.transverse_repetition_grid,
-            phases=phases,
-            key_assumption="half",
-        )
-        for index in [-1, 0, 1]
-    )
-
-    return contact_band_structure(kpoints_transport, h_xx, s_xx)
 
 
 def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
@@ -169,7 +83,7 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 endpoint=False,
             )
 
-            e_k = slice_expand_bandstructure(
+            e_k = compute_contact_bandstructure(
                 hamiltonian=hamiltonian,
                 overlap=overlap,
                 kpoint=kpoint,

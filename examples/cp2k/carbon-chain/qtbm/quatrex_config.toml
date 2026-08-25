@@ -18,7 +18,7 @@ num_orbitals_per_atom = { "C" = 13 }
     origin = [0.65, 0, 0]
     lattice_vectors = [[2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
     # Electrons enter the device along the first lattice vector.
-    direction = "a"
+    transport_direction = "a"
     fermi_level = -4.5
     mid_gap_energy = -4.5
 
@@ -27,7 +27,7 @@ num_orbitals_per_atom = { "C" = 13 }
     origin = [256.4, -0.001, -0.001]
     lattice_vectors = [[-2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
     # Electrons enter the device along the first lattice vector.
-    direction = "a"
+    transport_direction = "a"
     fermi_level = -4.501
     mid_gap_energy = -4.5
 

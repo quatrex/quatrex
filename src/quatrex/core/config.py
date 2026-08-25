@@ -1030,8 +1030,8 @@ class ContactConfig(BaseModel):
 
     """
 
-    direction: Literal["a", "b", "c"] | None = None
-    """The direction from contact to the device.
+    transport_direction: Literal["a", "b", "c"] | None = None
+    """The transport direction from contact to the device.
 
     This is used to find periodic images of the contact in transport
     direction.
@@ -1980,9 +1980,9 @@ class DeviceConfig(BaseModel):
                     )
         else:
             for contact in self.contacts:
-                if contact.direction is None:
-                    contact.direction = self.transport_direction
-                elif contact.direction != self.transport_direction:
+                if contact.transport_direction is None:
+                    contact.transport_direction = self.transport_direction
+                elif contact.transport_direction != self.transport_direction:
                     raise ValueError(
                         "When `construct_from_unit_cell` is True, "
                         "the contact direction must be the same as the transport direction."
@@ -2567,7 +2567,7 @@ class QuatrexConfig(BaseModel):
             return self
 
         for contact in self.device.contacts:
-            if contact.direction is None:
+            if contact.transport_direction is None:
                 raise ValueError(
                     "The `direction` parameter of each contact must be "
                     "set in the 'wf' formalism."

@@ -210,7 +210,7 @@ class Contact:
         Contact unit cell lattice vectors.
     origin : NDArray
         Contact origin coordinates.
-    direction : int
+    transport_direction : int
         Transport direction index (0, 1, or 2).
     transverse_axes : list[int]
         Indices of the two transverse directions.
@@ -233,12 +233,12 @@ class Contact:
     def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
-        if contact_config.direction not in ["a", "b", "c"]:
+        if contact_config.transport_direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
         self.device = device
         self.name = contact_config.name
-        self.direction = "abc".index(contact_config.direction)
+        self.transport_direction = "abc".index(contact_config.transport_direction)
 
         if contact_config.contact_finder_method == "real_space":
             self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
@@ -264,9 +264,10 @@ class Contact:
                 f"Contact finder method '{contact_config.contact_finder_method}' not implemented."
             )
 
-        self.transport_repetitions = repetition_grid[self.direction]
+        self.transport_repetitions = repetition_grid[self.transport_direction]
         self.transverse_repetition_grid = (
-            repetition_grid[: self.direction] + repetition_grid[self.direction + 1 :]
+            repetition_grid[: self.transport_direction]
+            + repetition_grid[self.transport_direction + 1 :]
         )
         self.origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
         self.origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
@@ -742,13 +743,13 @@ class Contact:
             injection modes, self-energy, and Bloch modes as applicable.
 
         """
-        if k_outer[self.direction] != 0:
+        if k_outer[self.transport_direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
-                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.direction}). "
+                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.transport_direction}). "
             )
         # Remove the k-point in the transport direction
-        k_outer.pop(self.direction)
+        k_outer.pop(self.transport_direction)
 
         num_energies = 1
 

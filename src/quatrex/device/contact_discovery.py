@@ -657,7 +657,7 @@ def real_space_discovery(
 
     # Check how many periodic repetitions are in the transverse
     # directions
-    transport_direction = "abc".index(contact_config.direction)
+    transport_direction = "abc".index(contact_config.transport_direction)
     transverse_repetition_grid, origin_cell_offset = (
         _init_periodic_transverse_repetitions(
             atom_coordinates=atom_coordinates,
@@ -744,7 +744,7 @@ def simplified_discovery(
             f"Contact finder method '{contact_config.contact_finder_method}' is not valid. Must be 'from_unit' or 'slice'."
         )
 
-    transport_direction = "abc".index(contact_config.direction)
+    transport_direction = "abc".index(contact_config.transport_direction)
     transverse_repetition_grid = (
         contact_config.sections[:transport_direction]
         + contact_config.sections[transport_direction + 1 :]

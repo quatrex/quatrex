@@ -26,6 +26,16 @@ def pre_process_fermi_level(
 
     """
 
+    if comm.rank != 0:
+        return
+
+    if comm.size > 1:
+        warnings.warn(
+            "Pre-processing is only performed on rank 0. "
+            "If you are running a parallel simulation, please ensure that "
+            "the pre-processing steps are completed before starting the parallel run."
+        )
+
     if config.formalism == "wf":
         for contact_config, contact in zip(config.device.contacts, device.contacts):
             if comm.rank == 0:

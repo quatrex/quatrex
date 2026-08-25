@@ -265,19 +265,22 @@ def compute_contact_bandstructure(
     # shuffle keys to to have natural order a,b,c
     for i, j, k in np.ndindex(*grid):
         index = [j, k]
-        index.insert(contact.direction, i)
+        index.insert(contact.transport_direction, i)
         index = tuple(index)
         h_xx[index] = h_sliced[i, j, k].toarray()
         s_xx[index] = s_sliced[i, j, k].toarray()
 
     phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-    phases = phases[: contact.direction] + phases[contact.direction + 1 :]
+    phases = (
+        phases[: contact.transport_direction]
+        + phases[contact.transport_direction + 1 :]
+    )
 
     h_xx = tuple(
         expand_circulant_cell(
             matrix_dict=h_xx,
             transport_cell_size=contact.transport_repetitions,
-            transport_ind=contact.direction,
+            transport_ind=contact.transport_direction,
             index=index,
             sections=contact.transverse_repetition_grid,
             phases=phases,
@@ -289,7 +292,7 @@ def compute_contact_bandstructure(
         expand_circulant_cell(
             matrix_dict=s_xx,
             transport_cell_size=contact.transport_repetitions,
-            transport_ind=contact.direction,
+            transport_ind=contact.transport_direction,
             index=index,
             sections=contact.transverse_repetition_grid,
             phases=phases,
@@ -340,7 +343,7 @@ def compute_contact_band_properties(
     )
 
     transverse_axes = [0, 1, 2]
-    transverse_axes.remove(contact.direction)
+    transverse_axes.remove(contact.transport_direction)
 
     kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
 

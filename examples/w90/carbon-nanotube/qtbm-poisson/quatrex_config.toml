@@ -75,7 +75,7 @@ num_orbitals_per_atom = { "X" = 1 }
     name = "left"
     origin = [0.1551, 0.0, 0.0]
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
+    transport_direction = "a"
 
     fermi_level = -3.031918678231487
     delta_fermi_level_conduction_band = -0.534476297767077
@@ -87,7 +87,7 @@ num_orbitals_per_atom = { "X" = 1 }
     name = "right"
     origin = [102.694, 0.0, 0.0]
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
+    transport_direction = "a"
 
     fermi_level = -3.031918678031486
     delta_fermi_level_conduction_band = -0.53447629776708

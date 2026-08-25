@@ -77,7 +77,9 @@ num_orbitals_per_atom = { "X" = 1 }
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"
 
-    mid_gap_energy = -3.8
+    fermi_level = -3.031918678231487
+    delta_fermi_level_conduction_band = -0.534476297767077
+    mid_gap_energy = -3.8702486163060907
 
     voltage = 0.0
 
@@ -87,7 +89,9 @@ num_orbitals_per_atom = { "X" = 1 }
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"
 
-    mid_gap_energy = -3.8
+    fermi_level = -3.031918678031486
+    delta_fermi_level_conduction_band = -0.53447629776708
+    mid_gap_energy = -3.870248616106092
 
     voltage = -0.2
 

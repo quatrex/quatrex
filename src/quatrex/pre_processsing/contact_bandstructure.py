@@ -7,10 +7,10 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 
-from qttools import sparse
+from qttools import NDArray, sparse
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.config import QuatrexConfig
-from quatrex.device import Device
+from quatrex.device import Contact, Device
 from quatrex.device.inputs import assemble_matrix, expand_circulant_cell
 from quatrex.grid import monkhorst_pack
 
@@ -35,6 +35,94 @@ def _plot(
     e_k = e_k.squeeze()
     k_repeated = np.repeat(kpoints_transport, e_k.shape[1])
     ax.scatter(k_repeated, e_k, color="blue", s=10)
+
+
+def slice_expand_bandstructure(
+    hamiltonian: sparse.spmatrix,
+    overlap: sparse.spmatrix,
+    kpoint: NDArray,
+    contact: Contact,
+    kpoints_transport: NDArray,
+) -> NDArray:
+    """Slices and expands the inptut matrices, and computes the contact
+    band structure for a given contact.
+
+    Parameters
+    ----------
+    hamiltonian : sparse.spmatrix
+        The Hamiltonian matrix of the device. It is expected to be the
+        full Hamiltonian for the specific k-point.
+    overlap : sparse.spmatrix
+        The overlap matrix of the device. It is expected to be the full
+        overlap matrix for the specific k-point.
+    kpoint : NDArray
+        The k-point at which to compute the band structure.
+    contact : Contact
+        The contact object containing information about the contact.
+    kpoints_transport : NDArray
+        The k-points along the transport direction.
+
+    Returns
+    -------
+    e_k : np.ndarray
+        The eigenvalues for the contact band structure.
+
+    """
+    grid = (contact.transport_repetitions + 1,) + contact.transverse_repetition_grid
+    h_sliced = Contact.slice_matrix(
+        M=hamiltonian,
+        origin_orbital_indices=contact.origin_orbital_indices,
+        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
+        grid=grid,
+        upper=True,
+    )
+    s_sliced = Contact.slice_matrix(
+        M=overlap,
+        origin_orbital_indices=contact.origin_orbital_indices,
+        unit_cell_orbital_indices=contact.unit_cell_orbital_indices,
+        grid=grid,
+        upper=True,
+    )
+
+    h_xx = {}
+    s_xx = {}
+    # shuffle keys to to have natural order a,b,c
+    for i, j, k in np.ndindex(*grid):
+        index = [j, k]
+        index.insert(contact.direction, i)
+        index = tuple(index)
+        h_xx[index] = h_sliced[i, j, k].toarray()
+        s_xx[index] = s_sliced[i, j, k].toarray()
+
+    phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+    phases = phases[: contact.direction] + phases[contact.direction + 1 :]
+
+    h_xx = tuple(
+        expand_circulant_cell(
+            matrix_dict=h_xx,
+            transport_cell_size=contact.transport_repetitions,
+            transport_ind=contact.direction,
+            index=index,
+            sections=contact.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
+        for index in [-1, 0, 1]
+    )
+    s_xx = tuple(
+        expand_circulant_cell(
+            matrix_dict=s_xx,
+            transport_cell_size=contact.transport_repetitions,
+            transport_ind=contact.direction,
+            index=index,
+            sections=contact.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
+        for index in [-1, 0, 1]
+    )
+
+    return contact_band_structure(kpoints_transport, h_xx, s_xx)
 
 
 def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
@@ -81,94 +169,14 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 endpoint=False,
             )
 
-            h_xx = {}
-            # slice the layer that corresponds to the contact unit cell
-            hamiltonian_origin = hamiltonian[contact.origin_orbital_indices, :]
-            hamiltonian_origin += hamiltonian[
-                :, contact.origin_orbital_indices
-            ].T.conj()
-            hamiltonian_origin[:, contact.origin_orbital_indices] -= (
-                sparse.diags(
-                    hamiltonian_origin[:, contact.origin_orbital_indices].diagonal()
-                )
-                / 2
-            )
-            ny, nz = contact.transverse_repetition_grid
-
-            for j, k, i in np.ndindex(ny, nz, contact.transport_repetitions + 1):
-                # TODO: change to natural order a,b,c and not have transport as the first index
-                index = [j, k]
-                index.insert(contact.direction, i)
-                h_xx[tuple(index)] = hamiltonian_origin[
-                    :, contact.unit_cell_orbital_indices[i, j, k]
-                ].toarray()
-
-            s_xx = {}
-            overlap_origin = overlap[contact.origin_orbital_indices, :]
-            overlap_origin += overlap[:, contact.origin_orbital_indices].T.conj()
-            overlap_origin[:, contact.origin_orbital_indices] -= (
-                sparse.diags(
-                    overlap_origin[:, contact.origin_orbital_indices].diagonal()
-                )
-                / 2
-            )
-            ny, nz = contact.transverse_repetition_grid
-            for j, k, i in np.ndindex(ny, nz, contact.transport_repetitions + 1):
-                # TODO: change to natural order a,b,c and not have transport as the first index
-                index = [j, k]
-                index.insert(contact.direction, i)
-                s_xx[tuple(index)] = overlap_origin[
-                    :, contact.unit_cell_orbital_indices[i, j, k]
-                ].toarray()
-
-            transport_ind = "abc".index(config.device.transport_direction)
-
-            # upscale the blocks
-            shifts = [
-                [0, 0, 0],
-                [0, 0, 0],
-                [0, 0, 0],
-            ]
-            for i in range(3):
-                shifts[i][transport_ind] = contact.transport_repetitions * (i - 1)
-
-            phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-            phases = phases[:transport_ind] + phases[transport_ind + 1 :]
-
-            h_xx = tuple(
-                expand_circulant_cell(
-                    h_xx,
-                    contact.transport_repetitions,
-                    transport_ind,
-                    tuple(shift),
-                    (ny, nz),
-                    phases=phases,
-                    key_assumption="half",
-                )
-                for shift in shifts
+            e_k = slice_expand_bandstructure(
+                hamiltonian=hamiltonian,
+                overlap=overlap,
+                kpoint=kpoint,
+                contact=contact,
+                kpoints_transport=kpoints_transport,
             )
 
-            s_xx = tuple(
-                expand_circulant_cell(
-                    s_xx,
-                    contact.transport_repetitions,
-                    transport_ind,
-                    tuple(shift),
-                    (ny, nz),
-                    phases=phases,
-                    key_assumption="half",
-                )
-                for shift in shifts
-            )
-
-            kpoints_transport = np.linspace(
-                -np.pi,
-                np.pi,
-                contact_config.num_kpoints_transport,
-                endpoint=False,
-            )
-
-            e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
             if contact_config.voltage is not None:
                 e_k += contact_config.voltage
             _plot(
@@ -253,13 +261,18 @@ def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
             )
 
 
-def plot_contact_band_structure(config: QuatrexConfig) -> None:
+def plot_contact_band_structure(
+    config: QuatrexConfig,
+    device: Device | None = None,
+) -> None:
     """Plots the contact band structure for a given quatrex configuration.
 
     Parameters
     ----------
     config : QuatrexConfig
         The quatrex simulation configuration.
+    device : Device | None
+        The device object. It is `None` for NEGF simulations.
 
     """
 
@@ -270,7 +283,6 @@ def plot_contact_band_structure(config: QuatrexConfig) -> None:
     kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
 
     if config.formalism == "wf":
-        device = Device(config)
         contacts = device.contacts
     elif config.formalism == "negf":
         contacts = [config.electron.left_contact, config.electron.right_contact]

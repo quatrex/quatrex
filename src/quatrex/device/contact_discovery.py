@@ -8,7 +8,7 @@ import numpy as np
 
 from qttools import NDArray, sparse
 from qttools.comm import comm
-from quatrex.core.config import ContactConfig
+from quatrex.core.config import ContactConfig, DeviceConfig
 
 
 def _get_atom_indices_in_cell(
@@ -694,5 +694,119 @@ def real_space_discovery(
     repetition_grid.insert(transport_direction, num_transport_cells)
 
     origin_key = (0, *origin_cell_offset)
+
+    return unit_cell_orbital_indices, tuple(repetition_grid), origin_key
+
+
+def simplified_discovery(
+    contact_name: str,
+    num_orbitals: int,
+    device_config: DeviceConfig,
+    contact_config: ContactConfig,
+) -> tuple[dict, tuple[int, int, int], tuple[int, int, int]]:
+    """Discovers the contact unit cell in a simplified manner.
+
+    Parameters
+    ----------
+    method : str
+        The method to use for contact discovery. Can be either
+        'from_unit' or 'slice'.
+    contact_name : str
+        The name of the contact. Can be either 'left' or 'right'.
+    num_orbitals : int
+        The total number of orbitals in the device.
+    device_config : DeviceConfig
+        The configuration of the device, including its construction
+        method and neighbor cell cutoff.
+    contact_config : ContactConfig
+        The configuration of the contact, including its direction,
+        sections, and contact slice.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the orbital indices for each periodic
+        repetition in both transport and transverse directions. The keys
+        are tuples of the form (transport_index, idy, idz), where
+        transport_index is the index of the periodic repetition in the
+        transport direction, and idy, idz are the indices of the
+        periodic repetitions in the transverse directions.
+    tuple[int, int, int]
+        The number of periodic repetitions in the transport and
+        transverse directions.
+    tuple[int, int, int]
+        The offset of the origin cell in the transport and transverse
+        directions.
+
+    """
+    if contact_config.contact_finder_method not in ["from_unit", "slice"]:
+        raise ValueError(
+            f"Contact finder method '{contact_config.contact_finder_method}' is not valid. Must be 'from_unit' or 'slice'."
+        )
+
+    transport_direction = "abc".index(contact_config.direction)
+    transverse_repetition_grid = (
+        contact_config.sections[:transport_direction]
+        + contact_config.sections[transport_direction + 1 :]
+    )
+
+    if contact_config.contact_finder_method == "from_unit":
+        if not device_config.construct_from_unit_cell:
+            raise ValueError(
+                "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
+            )
+        transport_repetitions = device_config.neighbor_cell_cutoff[transport_direction]
+
+        block_size = num_orbitals // device_config.num_transport_cells
+    else:
+        transport_repetitions = contact_config.sections[transport_direction]
+        block_size = (
+            contact_config.contact_slice[1] - contact_config.contact_slice[0]
+        ) // 2
+
+    block_size_hat = (block_size // transport_repetitions) // np.prod(
+        transverse_repetition_grid
+    )
+
+    if contact_name == "left":
+        indices = np.arange(block_size + block_size // transport_repetitions)
+        if contact_config.contact_finder_method == "slice":
+            indices += contact_config.contact_slice[0]
+    elif contact_name == "right":
+        indices = np.arange(
+            0,
+            (block_size + block_size // transport_repetitions),
+        )
+        if contact_config.contact_finder_method == "slice":
+            indices = contact_config.contact_slice[1] - indices - 1
+        else:
+            indices = num_orbitals - indices - 1
+    else:
+        raise ValueError(
+            f"Contact name '{contact_name}' is not valid for 'from_unit' method. Must be 'left' or 'right'."
+        )
+
+    unit_cell_orbital_indices = {
+        (i, j, k): indices[
+            block_size_hat
+            * (
+                j
+                + k * transverse_repetition_grid[0]
+                + i * np.prod(transverse_repetition_grid)
+            ) : block_size_hat
+            * (
+                j
+                + k * transverse_repetition_grid[0]
+                + i * np.prod(transverse_repetition_grid)
+                + 1
+            )
+        ]
+        for i in range(transport_repetitions + 1)
+        for j in range(transverse_repetition_grid[0])
+        for k in range(transverse_repetition_grid[1])
+    }
+    origin_key = (0, 0, 0)
+    repetition_grid = list(contact_config.sections)
+    repetition_grid[transport_direction] = transport_repetitions
 
     return unit_cell_orbital_indices, tuple(repetition_grid), origin_key

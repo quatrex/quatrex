@@ -195,7 +195,7 @@ def expand_circulant_cell(
     matrix_dict: dict,
     transport_cell_size: int,
     transport_ind: int,
-    shift: tuple,
+    index: int,
     sections: tuple[int, int],
     phases: tuple[complex, complex] = (1.0, 1.0),
     key_assumption: str | None = None,
@@ -217,8 +217,10 @@ def expand_circulant_cell(
         Size of the transport cell.
     transport_ind : int
         Direction of transport. Can be 0, 1, 2.
-    shift : tuple
-        Shift in the transport cell system.
+    index : int
+        The index of the block to expand. Can be either -1, 0, 1
+        representing either the lower, diagonal, or upper block in the
+        transport direction.
     sections : tuple[int, int]
         The number of sections in the transverse directions.
     phases : tuple[complex, complex], optional
@@ -232,6 +234,12 @@ def expand_circulant_cell(
         The expanded block matrix.
 
     """
+    if index not in [-1, 0, 1]:
+        raise ValueError(f"Index must be -1, 0, or 1. Got {index}.")
+
+    shift = [0, 0, 0]
+    shift[transport_ind] = transport_cell_size * index
+    shift = tuple(shift)
 
     # upscale first in transverse directions
     matrix_dict = expand_transverse(

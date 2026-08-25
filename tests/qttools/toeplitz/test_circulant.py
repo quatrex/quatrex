@@ -79,15 +79,13 @@ def test_full_upscale(
         * (grid_shape[transport_ind] // 2)
     )
 
-    for k in range(-1, 2):
-        shift = [0, 0, 0]
-        shift[transport_ind] = k * (grid_shape[transport_ind] // 2)
+    for index in [-1, 0, 1]:
         test_matrix = expand_circulant_cell(
-            matrix_dict,
-            grid_shape[transport_ind] // 2,
-            transport_ind,
-            tuple(shift),
-            sections,
+            matrix_dict=matrix_dict,
+            transport_cell_size=grid_shape[transport_ind] // 2,
+            transport_ind=transport_ind,
+            index=index,
+            sections=sections,
             phases=phases,
         )
         assert test_matrix.shape == (reference_shape, reference_shape)

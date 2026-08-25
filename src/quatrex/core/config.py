@@ -969,6 +969,25 @@ class ContactConfig(BaseModel):
 
     """
 
+    cell_volume: PositiveFloat | None = None
+    """The volume of the contact cell in Å³.
+    If the [`lattice_vectors`](#lattice_vectors) parameter is set, this
+    is automatically computed from the lattice vectors. Otherwise, it
+    can be set manually.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
+    delta_fermi_level_conduction_band: float | None = None
+    """The distance from the conduction band edge to the Fermi level in eV.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
     contact_slice: tuple[NonNegativeInt, NonNegativeInt] | None = None
     """The slice of the contact region in the system matrix.
 
@@ -1156,6 +1175,26 @@ class ContactConfig(BaseModel):
                 raise ValueError(
                     "A valid contact should span an even number of orbitals."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cell_volume(self) -> Self:
+        """Validates that the `cell_volume` parameter is consistent with the
+        `lattice_vectors` parameter."""
+        if self.lattice_vectors is not None:
+            if self.cell_volume is None:
+                self.cell_volume = np.abs(np.linalg.det(self.lattice_vectors))
+            else:
+                volume_from_lattice = np.abs(np.linalg.det(self.lattice_vectors))
+                if (
+                    not np.isclose(self.cell_volume, volume_from_lattice)
+                    and comm.rank == 0
+                ):
+                    warnings.warn(
+                        f"The provided `cell_volume` ({self.cell_volume})/n"
+                        f"does not match the volume computed from `lattice_vectors` ({volume_from_lattice})."
+                    )
 
         return self
 
@@ -2307,6 +2346,18 @@ class PreProcessConfig(BaseModel):
     """The energy window to plot the contact band structure.
     If set to `None`, the energy window is automatically determined by
     using the mid-gap energy or the fermi level +- 1eV.
+    """
+
+    compute_fermi_level: bool = False
+    """Whether to compute the Fermi level of the contacts.
+
+    This will compute the Fermi level of the contacts based on the
+    doping and the mid-gap energy.
+
+    !!! Note
+        This will override the `fermi_level` parameter in the contact
+        configuration.
+
     """
 
 

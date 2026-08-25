@@ -14,7 +14,7 @@ from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
 from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
-from quatrex.device.contact_discovery import real_space_discovery
+from quatrex.device.contact_discovery import real_space_discovery, simplified_discovery
 
 profiler = Profiler()
 
@@ -241,7 +241,7 @@ class Contact:
         self.direction = "abc".index(contact_config.direction)
 
         if contact_config.contact_finder_method == "real_space":
-            self.unit_cell_orbital_indices, repetition_grid, origin_key = (
+            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
                 real_space_discovery(
                     hamiltonian=device.hamiltonians[0, 0, 0],
                     atomic_species=device.atomic_species,
@@ -250,91 +250,24 @@ class Contact:
                     contact_config=contact_config,
                 )
             )
-            self.transport_repetitions = repetition_grid[self.direction]
-            self.transverse_repetition_grid = (
-                repetition_grid[: self.direction]
-                + repetition_grid[self.direction + 1 :]
-            )
-            self.origin_key = origin_key
-
         elif contact_config.contact_finder_method in ["from_unit", "slice"]:
-            device_config = device.config.device
-
-            self.transverse_repetition_grid = (
-                contact_config.sections[: self.direction]
-                + contact_config.sections[self.direction + 1 :]
+            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
+                simplified_discovery(
+                    contact_name=contact_config.name,
+                    num_orbitals=len(device.orbital_coordinates),
+                    device_config=device.config.device,
+                    contact_config=contact_config,
+                )
             )
-
-            if contact_config.contact_finder_method == "from_unit":
-                if not device_config.construct_from_unit_cell:
-                    raise ValueError(
-                        "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
-                    )
-                self.transport_repetitions = device_config.neighbor_cell_cutoff[
-                    self.direction
-                ]
-
-                num_orbitals = device.orbital_coordinates.shape[0]
-                block_size = num_orbitals // device_config.num_transport_cells
-            else:
-                self.transport_repetitions = contact_config.sections[self.direction]
-                block_size = (
-                    contact_config.contact_slice[1] - contact_config.contact_slice[0]
-                ) // 2
-
-            block_size_hat = (block_size // self.transport_repetitions) // np.prod(
-                self.transverse_repetition_grid
-            )
-
-            if self.name == "left":
-                indices = np.arange(
-                    block_size + block_size // self.transport_repetitions
-                )
-                if contact_config.contact_finder_method == "slice":
-                    indices += contact_config.contact_slice[0]
-            elif self.name == "right":
-                indices = np.arange(
-                    0,
-                    (block_size + block_size // self.transport_repetitions),
-                )
-                if contact_config.contact_finder_method == "slice":
-                    indices = contact_config.contact_slice[1] - indices - 1
-                else:
-                    num_orbitals = device.orbital_coordinates.shape[0]
-                    indices = num_orbitals - indices - 1
-            else:
-                raise ValueError(
-                    f"Contact name '{self.name}' is not valid for 'from_unit' method. Must be 'left' or 'right'."
-                )
-
-            print(indices)
-
-            self.unit_cell_orbital_indices = {
-                (i, j, k): indices[
-                    block_size_hat
-                    * (
-                        j
-                        + k * self.transverse_repetition_grid[0]
-                        + i * np.prod(self.transverse_repetition_grid)
-                    ) : block_size_hat
-                    * (
-                        j
-                        + k * self.transverse_repetition_grid[0]
-                        + i * np.prod(self.transverse_repetition_grid)
-                        + 1
-                    )
-                ]
-                for i in range(self.transport_repetitions + 1)
-                for j in range(self.transverse_repetition_grid[0])
-                for k in range(self.transverse_repetition_grid[1])
-            }
-            self.origin_key = (0, 0, 0)
-
         else:
             raise NotImplementedError(
                 f"Contact finder method '{contact_config.contact_finder_method}' not implemented."
             )
 
+        self.transport_repetitions = repetition_grid[self.direction]
+        self.transverse_repetition_grid = (
+            repetition_grid[: self.direction] + repetition_grid[self.direction + 1 :]
+        )
         self.origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
         self.origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
@@ -381,23 +314,21 @@ class Contact:
             device.config.electron.obc, device.config.compute.nevp
         )
 
-        # NOTE: We can either explicitly set the Fermi level in the
-        # contact config, or compute it from the doping density and a
-        # mid-gap energy.
-        if contact_config.fermi_level is not None and device.config.scsp is None:
-            self.fermi_level = contact_config.fermi_level
-            self.mid_gap_energy = contact_config.mid_gap_energy
-        else:
-            raise NotImplementedError(
-                "Automatic Fermi level computation is not implemented yet."
-            )
-
+        self.fermi_level = contact_config.fermi_level
+        self.mid_gap_energy = contact_config.mid_gap_energy
+        self.delta_fermi_level_conduction_band = (
+            contact_config.delta_fermi_level_conduction_band
+        )
         self.voltage = contact_config.voltage
         self.temperature = contact_config.temperature
 
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
+            print(
+                f"    Delta Fermi level to conduction band: {self.delta_fermi_level_conduction_band} eV",
+                flush=True,
+            )
             print(f"    Voltage: {self.voltage} V", flush=True)
             print(f"    Temperature: {self.temperature} K", flush=True)
 
@@ -734,6 +665,53 @@ class Contact:
 
         return modes
 
+    @staticmethod
+    def slice_matrix(
+        M: sparse.spmatrix,
+        origin_orbital_indices: NDArray,
+        unit_cell_orbital_indices: dict,
+        grid: tuple[int, int, int],
+        upper: bool = False,
+    ):
+        """Slices the given matrix into a dictionary of submatrices
+        corresponding to the unit cell orbital indices.
+
+        Parameters
+        ----------
+        M : sparse.spmatrix
+            The matrix to slice.
+        origin_orbital_indices : NDArray
+            The indices of the orbitals in the origin unit cell.
+        unit_cell_orbital_indices : dict
+            A dictionary mapping (i, j, k) tuples to the indices of the
+            orbitals in the corresponding unit cell.
+        grid : tuple[int, int, int]
+            The shape of the grid over which to slice the matrix, in the
+            order (transport_repetitions + 1, ny, nz).
+        upper : bool, optional
+            Whether M is only upper triangular.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping (i, j, k) tuples to the sliced
+            submatrices corresponding to the unit cell orbital indices.
+
+        """
+        M_slice = {}
+        M_origin = M[origin_orbital_indices, :]
+
+        if upper:
+            M_origin += M[:, origin_orbital_indices].T.conj()
+            M_origin[:, origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
+            )
+
+        for i, j, k in np.ndindex(*grid):
+            M_slice[i, j, k] = M_origin[:, unit_cell_orbital_indices[i, j, k]]
+
+        return M_slice
+
     @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
         self,
@@ -775,19 +753,15 @@ class Contact:
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
+        grid = (self.transport_repetitions + 1, ny, nz)
 
-        M_slice = {}
-        M_origin = M[self.origin_orbital_indices, :]
-
-        if upper_M:
-            M_origin += M[:, self.origin_orbital_indices].T.conj()
-            # HACK
-            M_origin[:, self.origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
-            )
-
-        for j, k, i in np.ndindex(ny, nz, self.transport_repetitions + 1):
-            M_slice[i, j, k] = M_origin[:, self.unit_cell_orbital_indices[i, j, k]]
+        M_slice = self.slice_matrix(
+            M=M,
+            origin_orbital_indices=self.origin_orbital_indices,
+            unit_cell_orbital_indices=self.unit_cell_orbital_indices,
+            grid=grid,
+            upper=upper_M,
+        )
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions

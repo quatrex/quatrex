@@ -421,7 +421,7 @@ class SystemMatrixBlockIndexer(_BlockIndexer):
                 -1, *((1,) * (num_dims + 1))
             ) * overlap.reshape(1, *self._stack_shape[1:], *out.shape[-2:])
         elif row == col:
-            out = out + self._energies.reshape(-1, *((1,) * (num_dims + 1))) * np.eye(
+            out = out + self._energies.reshape(-1, *((1,) * (num_dims + 1))) * xp.eye(
                 out.shape[-1], dtype=out.dtype
             ).reshape(*((1,) * num_dims + out.shape[-2:]))
 
@@ -474,7 +474,7 @@ class SystemMatrixBlockIndexer(_BlockIndexer):
             else:
                 if row == col:
                     out -= (
-                        np.eye(out.shape[-1], dtype=out.dtype)
+                        xp.eye(out.shape[-1], dtype=out.dtype)
                         * self._potential[
                             self._hamiltonian.local_block_offsets[
                                 row

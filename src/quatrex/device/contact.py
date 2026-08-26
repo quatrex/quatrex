@@ -204,29 +204,44 @@ class Contact:
     ----------
     name : str
         The contact identifier.
-    device : Device
-        Reference to the parent device.
-    lattice_vectors : NDArray
-        Contact unit cell lattice vectors.
-    origin : NDArray
-        Contact origin coordinates.
     transport_direction : int
         Transport direction index (0, 1, or 2).
-    transverse_axes : list[int]
-        Indices of the two transverse directions.
-    obc : obc.Spectral
+    obc_solver : obc.Spectral
         Configured open boundary condition solver.
-    unit_cell_hamiltonian : dict
-        Unit cell Hamiltonian matrices indexed by (i, j, k) tuples.
-    unit_cell_overlap : dict
-        Unit cell overlap matrices indexed by (i, j, k) tuples.
     unit_cell_orbital_indices : dict
-        Dict of orbital indices for each contact cell indexed by (i, j, k) tuples.
+        Dict of orbital indices for each contact cell indexed by (i, j,
+        k) tuples.
+    origin_key : tuple[int, int, int]
+        The key corresponding to the origin cell in the
+        unit_cell_orbital_indices.
+    origin_orbital_indices : NDArray
+        The orbital indices corresponding to the origin cell.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
-    num_transport_cells : int
+    transport_repetitions : int
         Number of repetitions needed in transport direction for
         convergence.
+    orbital_indices : NDArray
+        Flattened array of orbital indices for the contact, sorted first
+        in transport direction, then in transverse directions.
+    orbital_indices_per_layer : list[NDArray]
+        List of orbital indices for each layer in the transport
+        direction, sorted first in transverse directions, then in
+        transport direction.
+    transverse_to_transport_indices : NDArray
+        Indices to reorder the coupling matrix from transverse-first to
+        transport-first ordering.
+    fermi_level : float
+        Fermi level of the contact in eV.
+    mid_gap_energy : float
+        Mid-gap energy of the contact in eV.
+    delta_fermi_level_conduction_band : float
+        Energy difference between the Fermi level and the conduction
+        band in eV.
+    voltage : float
+        Voltage applied to the contact in V.
+    temperature : float
+        Temperature of the contact in K.
 
     """
 
@@ -236,7 +251,6 @@ class Contact:
         if contact_config.transport_direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
-        self.device = device
         self.name = contact_config.name
         self.transport_direction = "abc".index(contact_config.transport_direction)
 
@@ -269,8 +283,6 @@ class Contact:
             repetition_grid[: self.transport_direction]
             + repetition_grid[self.transport_direction + 1 :]
         )
-        self.origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
-        self.origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
         if comm.rank == 0:
             print(
@@ -300,17 +312,21 @@ class Contact:
         ]
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
+        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
         self.transverse_to_transport_indices = np.concatenate(
             [
-                np.arange(self.origin_num_orbitals)
-                + i * self.origin_num_orbitals
-                + k * self.origin_num_orbitals * ny * nz
+                np.arange(origin_num_orbitals)
+                + i * origin_num_orbitals
+                + k * origin_num_orbitals * ny * nz
                 for i in range(ny * nz)
                 for k in range(self.transport_repetitions)
             ],
             dtype=int,
         )[None, :]
 
+        # TODO: The obc and nevp config should be directly associated with the contact
+        # with either a config per contact or a config per contact.
+        # This will be simpler when unifying QTBM and SCBA.
         self.obc_solver = self._configure_obc(
             device.config.electron.obc, device.config.compute.nevp
         )
@@ -691,14 +707,15 @@ class Contact:
         """
 
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
         M_slice = {}
-        M_origin = M[self.origin_orbital_indices, :]
+        M_origin = M[origin_orbital_indices, :]
 
         if upper:
-            M_origin += M[:, self.origin_orbital_indices].T.conj()
-            M_origin[:, self.origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
+            M_origin += M[:, origin_orbital_indices].T.conj()
+            M_origin[:, origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
             )
 
         for index in np.ndindex(*grid):
@@ -732,6 +749,7 @@ class Contact:
 
         """
         M_origin = None
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
         # NOTE: Needs to slice and multiply the phase at once using
         # `slice_matrix` would be wrong with `upper=True` since not each
@@ -741,7 +759,7 @@ class Contact:
         # Assemble the contact layer for the full summed k-point matrix
         for r, matrix in matrices.items():
             phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-            term = phase * matrix[self.origin_orbital_indices, :]
+            term = phase * matrix[origin_orbital_indices, :]
             M_origin = term if M_origin is None else M_origin + term
 
         if upper:
@@ -752,12 +770,12 @@ class Contact:
             M_col = None
             for r, matrix in matrices.items():
                 phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-                term = phase * matrix[:, self.origin_orbital_indices]
+                term = phase * matrix[:, origin_orbital_indices]
                 M_col = term if M_col is None else M_col + term
 
             M_origin = M_origin + M_col.T.conj()
-            M_origin[:, self.origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, self.origin_orbital_indices].diagonal()) / 2
+            M_origin[:, origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
             )
 
         m_xx = {}

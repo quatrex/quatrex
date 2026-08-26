@@ -364,3 +364,61 @@ class Device:
             contacts.append(Contact(device=self, contact_config=contact_config))
 
         self.contacts = contacts
+
+    def validate_contacts(self):
+        """Validates that all required contact parameters are set.
+
+        Raises warnings if any required parameters are missing. If the
+        Fermi level or other contact parameters are not set, they will
+        be computed automatically. It is recommended to run the
+        pre-processing step to compute these parameters beforehand.
+
+        Note
+        ----
+        This method assumes that the potential is not backed in the
+        Hamiltonian.
+
+        """
+
+        # NOTE: This is a temporary solution to avoid circular imports.
+        from quatrex.bandstructure.contact import compute_contact_band_properties
+
+        # The Fermi level is always required while midgap energy and
+        # delta_fermi_level_conduction_band are only required if SCSP is
+        # used.
+        for contact_config, contact in zip(self.config.device.contacts, self.contacts):
+            if (
+                (contact_config.fermi_level is None)
+                or (
+                    contact_config.delta_fermi_level_conduction_band is None
+                    and self.config.scsp is not None
+                )
+                or (
+                    contact_config.mid_gap_energy is None
+                    and self.config.scsp is not None
+                )
+            ):
+                if comm.rank == 0:
+                    print(
+                        f"Computing Fermi level for contact {contact_config.name}",
+                        flush=True,
+                    )
+                if comm.rank == 0:
+                    warnings.warn(
+                        "Recomputing the Fermi level and other contact parameters.\n"
+                        "Please call `quatrex pre-process` beforehand to avoid this\n"
+                        "or manually set the parameters in the contact configuration file.",
+                    )
+                # NOTE: `compute_contact_band_properties` will access the
+                # set properties of the contact. and thus it is called at
+                # the end.
+                (
+                    contact.fermi_level,
+                    contact.mid_gap_energy,
+                    contact.delta_fermi_level_conduction_band,
+                ) = compute_contact_band_properties(
+                    contact=contact,
+                    contact_config=contact_config,
+                    device=self,
+                    device_config=self.config.device,
+                )

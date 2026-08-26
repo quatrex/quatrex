@@ -59,6 +59,7 @@ def _run_wf(config):
     from quatrex.device import Device
 
     device = Device(config)
+    device.validate_contacts()
     qtbm = QTBM(device, config)
 
     tic = time.perf_counter()

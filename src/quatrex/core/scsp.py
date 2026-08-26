@@ -70,7 +70,7 @@ class SCSP:
             from quatrex.device import Device
 
             device = Device(config)
-
+            device.validate_contacts()
             return QTBM(device, config)
 
         if config.formalism == "negf":

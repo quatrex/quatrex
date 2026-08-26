@@ -391,13 +391,13 @@ def compute_contact_band_properties(
     delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
 
     if comm.rank == 0:
-        print(f"Doping density: {doping_density} Å^-3", flush=True)
-        print(f"Fermi level: {fermi_level} eV", flush=True)
-        print(f"Conduction band minimum: {conduction_band_edge} eV", flush=True)
-        print(f"Valence band maximum: {valence_band_edge} eV", flush=True)
-        print(f"Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
+        print(f"    Doping density: {doping_density} Å^-3", flush=True)
+        print(f"    Fermi level: {fermi_level} eV", flush=True)
+        print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
+        print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
+        print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
         print(
-            f"Delta Fermi level conduction band: {delta_fermi_level_conduction_band} eV",
+            f"    Delta Fermi level conduction band: {delta_fermi_level_conduction_band} eV",
             flush=True,
         )
 

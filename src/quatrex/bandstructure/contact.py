@@ -339,7 +339,8 @@ def compute_contact_band_properties(
         (
             len(kpoints_transport),
             kpoints.shape[0],
-            len(contact.origin_orbital_indices) * contact.transport_repetitions,
+            len(contact.unit_cell_orbital_indices[contact.origin_key])
+            * contact.transport_repetitions,
         ),
         dtype=float,
     )
@@ -370,7 +371,9 @@ def compute_contact_band_properties(
     e_k = xp.mean(e_k, axis=1)
 
     doping_density = contact_doping_density(
-        coordinates=device.orbital_coordinates[contact.origin_orbital_indices],
+        coordinates=device.orbital_coordinates[
+            contact.unit_cell_orbital_indices[contact.origin_key]
+        ],
         geometry_regions=device_config.geometry.regions,
     )
 

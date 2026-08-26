@@ -214,8 +214,6 @@ class Contact:
     origin_key : tuple[int, int, int]
         The key corresponding to the origin cell in the
         unit_cell_orbital_indices.
-    origin_orbital_indices : NDArray
-        The orbital indices corresponding to the origin cell.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
     transport_repetitions : int

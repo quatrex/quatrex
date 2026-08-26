@@ -2408,6 +2408,16 @@ class QuatrexConfig(BaseModel):
 
     # --- Directory paths ----------------------------------------------
     config_dir: Path
+    """The directory where the configuration file is located."""
+
+    config_file: Path | None = None
+    """The path to the configuration file.
+
+    This is expected to be `None` and will be set automatically when
+    loading the configuration from a file. This is only used when the
+    configuration should be modified in `quatrex pre-process`.
+
+    """
     simulation_dir: Path = Path(".")
     """The directory where the simulation is run."""
     input_dir: Path | None = None
@@ -2589,6 +2599,27 @@ class QuatrexConfig(BaseModel):
         return self
 
 
+def _parse_config(
+    config_file: Path,
+    config: dict,
+) -> dict:
+    """Resolve the paths in the configuration dictionary
+    and parse the geometry configuration."""
+    if "simulation_dir" in config:
+        simulation_dir = config["simulation_dir"]
+        if not os.path.isabs(simulation_dir):
+            parent_dir = os.path.dirname(os.path.abspath(config_file))
+            simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
+            config["simulation_dir"] = simulation_dir
+
+    config["config_dir"] = config_file.parent
+    config["config_file"] = config_file
+    # Resolve the geometry config.
+    config["device"]["geometry"] = parse_geometry_config(config["device"])
+
+    return config
+
+
 def parse_config(config_file: Path) -> QuatrexConfig:
     """Reads the TOML config file.
 
@@ -2613,20 +2644,9 @@ def parse_config(config_file: Path) -> QuatrexConfig:
 
         with open(config_file, "rb") as f:
             config = tomllib.load(f)
-
-        if "simulation_dir" in config:
-            simulation_dir = config["simulation_dir"]
-            if not os.path.isabs(simulation_dir):
-                parent_dir = os.path.dirname(os.path.abspath(config_file))
-                simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
-                config["simulation_dir"] = simulation_dir
-
-        config["config_dir"] = config_file.parent
+        config = _parse_config(config_file, config)
 
     config = mpi_comm_world.bcast(config, root=0)
-
-    # Resolve the geometry config.
-    config["device"]["geometry"] = parse_geometry_config(config["device"])
 
     return QuatrexConfig(**config)
 

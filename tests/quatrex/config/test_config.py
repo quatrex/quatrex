@@ -1,4 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Tests for the Quatrex configuration parsing and context setup."""
+
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable

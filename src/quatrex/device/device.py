@@ -63,11 +63,6 @@ class Device:
         List of Contact objects representing the semi-infinite leads
         connected to this device.
 
-    Methods
-    -------
-    apply_potential()
-        Apply the electrostatic potential to the Hamiltonian matrices.
-
     """
 
     def __init__(self, config: QuatrexConfig) -> None:
@@ -89,7 +84,6 @@ class Device:
             self.atomic_species,
             self.config.device.num_orbitals_per_atom,
         )
-        self.apply_potential()
         self._add_contacts()
 
         if comm.rank == 0:
@@ -336,18 +330,6 @@ class Device:
         )
         # Create a vector with the starting orbital for each atom
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
-
-    # TODO: THis should probably not happen directly in the Hamiltonian,
-    # but rather during the construction of the system matrix.
-    def apply_potential(self) -> None:
-        """Applies electrostatic potential to device Hamiltonian."""
-
-        potential = self.potential + 1e-10
-
-        for r, s_r in self.overlap_matrices.items():
-            self.hamiltonians[r] += (
-                s_r.multiply(potential[:, xp.newaxis]) + s_r.multiply(potential)
-            ) / 2
 
     def _add_contacts(self):
         """Initializes and attaches contacts to the device.

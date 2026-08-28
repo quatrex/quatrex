@@ -1069,6 +1069,7 @@ class _DStackView(_StackView):
         "num_local_blocks",
         "local_block_sizes",
         "local_block_offsets",
+        "block_section_offsets",
     )
 
     def __init__(
@@ -1105,11 +1106,6 @@ class _DStackView(_StackView):
         return _DSDBlockIndexer(
             dsdbsparse=self._dsdbsparse, stack_index=self._stack_index
         )
-
-    @property
-    def block_section_offsets(self) -> list[int]:
-        """Returns the block section offsets."""
-        return self._dsdbsparse.block_section_offsets
 
 
 class _BlockIndexer(ABC):

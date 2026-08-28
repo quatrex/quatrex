@@ -3,6 +3,7 @@
 """Includes functions for block phi circulant matrices."""
 
 from qttools import NDArray, xp
+from qttools.toeplitz.toeplitz import construct_transport_cell
 
 
 def check_phi_circulant(
@@ -241,3 +242,66 @@ def expand_transverse(
         phase_shift=phases[1],
     )
     return upscaled
+
+
+def construct_circulant_cell(
+    matrix_dict: dict,
+    transport_cell_size: int,
+    transport_ind: int,
+    block_index: int,
+    sections: tuple[int, int],
+    phases: tuple[complex, complex] = (1.0, 1.0),
+    key_assumption: str | None = None,
+) -> NDArray:
+    """Expands a unit cell matrix into a block matrix.
+    This function first expands in transverse directions, and then
+    constructs the transport cell block. To expand in transverse
+    direction, a block circulant structure is assumed
+
+    The function assumes that all necessary keys are present in the
+    `matrix_dict`.
+
+    Parameters
+    ----------
+    matrix_dict : dict
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    transport_cell_size : int
+        Size of the transport cell.
+    transport_ind : int
+        Direction of transport. Can be 0, 1, 2.
+    block_index : int
+        The index of the block to expand. Can be either -1, 0, 1
+        representing either the lower, diagonal, or upper block in the
+        transport direction.
+    sections : tuple[int, int]
+        The number of sections in the transverse directions.
+    phases : tuple[complex, complex], optional
+        The phase shifts to apply in the transverse directions.
+    key_assumption : str | None, optional
+        Assumption on the keys in the matrix_dict.
+
+    Returns
+    -------
+    NDArray
+        The expanded block matrix.
+
+    """
+    if block_index not in [-1, 0, 1]:
+        raise ValueError(f"Index must be -1, 0, or 1. Got {block_index}.")
+
+    # upscale first in transverse directions
+    matrix_dict = expand_transverse(
+        matrix_dict=matrix_dict,
+        transport_ind=transport_ind,
+        sections=sections,
+        phases=phases,
+    )
+
+    return construct_transport_cell(
+        matrix_dict=matrix_dict,
+        transport_cell_size=transport_cell_size,
+        transport_ind=transport_ind,
+        block_index=block_index,
+        key_assumption=key_assumption,
+    )

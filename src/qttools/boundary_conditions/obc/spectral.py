@@ -4,14 +4,11 @@
 
 import warnings
 
-import numpy as np
-
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc.obc import OBCSolver
-from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
-from qttools.utils.gpu_utils import get_host
+from qttools.toeplitz.toeplitz import extract_subblocks, upscale_subblocks
 
 
 class Spectral(OBCSolver):
@@ -96,123 +93,6 @@ class Spectral(OBCSolver):
 
         if self.num_ref_iterations < 1:
             raise ValueError("Number of refinement iterations must be at least 1.")
-
-    @staticmethod
-    def _extract_subblocks(
-        a_xx: tuple[NDArray, ...],
-        block_sections: int,
-    ) -> tuple[NDArray, ...]:
-        """Extracts the coefficient blocks from the periodic matrix.
-
-        Parameters
-        ----------
-        a_xx : tuple[NDArray, ...]
-            The blocks of the periodic matrix.
-        block_sections : int
-            The number of sections to split the periodic matrix layer into.
-
-        Returns
-        -------
-        blocks : tuple[NDArray, ...]
-            The non-zero blocks making up the matrix layer.
-
-        """
-        # Construct layer of periodic matrix in semi-infinite lead.
-        if block_sections == 1:
-            return a_xx
-
-        # Get a nested block view of the layer.
-        view = _block_view(xp.concatenate(a_xx, axis=-1), -1, 3 * block_sections)
-        view = _block_view(view, -2, block_sections)
-
-        # Make sure that the reduction leads to periodic sublayers.
-        relative_errors = xp.zeros(block_sections - 1)
-        first_block_norm = xp.linalg.norm(view[0, :])
-        for i in range(1, block_sections):
-            relative_errors[i - 1] = (
-                xp.linalg.norm(view[0, :] - xp.roll(view[i, :], -i, axis=0))
-                / first_block_norm
-            )
-
-        if xp.max(relative_errors) > 1e-3:
-            warnings.warn(
-                f"Requested block sectioning is not periodic. ({xp.max(relative_errors):.2e})",
-                RuntimeWarning,
-            )
-
-        # Select relevant blocks and remove empty ones.
-        blocks = view[0, : -block_sections + 1]
-        indices = np.where([get_host(xp.any(b)) for b in blocks])[0]
-
-        if indices.size == 0 or len(blocks) <= 3:
-            return tuple(blocks)
-
-        n_data = min(indices[0], len(blocks) - 1 - indices[-1])
-
-        # keep at least 3 central blocks
-        n_limit = (len(blocks) - 3) // 2
-
-        n = min(n_data, n_limit)
-
-        return tuple(blocks[n:-n]) if n > 0 else tuple(blocks)
-
-    @staticmethod
-    def _upscale_subblocks(
-        blocks: tuple[NDArray, ...],
-        block_sections: int,
-    ) -> tuple[NDArray, ...]:
-        """Upscales the full blocks from the periodic layer.
-
-        Parameters
-        ----------
-        blocks : tuple[NDArray, ...]
-            The blocks of the periodic matrix.
-        block_sections : int
-            The number of sections to split the periodic matrix layer into.
-
-        Returns
-        -------
-        blocks : tuple[NDArray, ...]
-            The non-zero blocks making up the matrix layer.
-
-        """
-        if block_sections == 1:
-            return blocks
-
-        n_blocks = len(blocks)
-        if n_blocks % 2 == 0:
-            raise ValueError("Expected an odd number of coefficient blocks.")
-
-        max_len = 2 * block_sections + 1
-        if n_blocks > max_len:
-            raise ValueError(
-                f"Too many coefficient blocks ({n_blocks}) for the requested "
-                f"block_sections ({block_sections}); expected at most {max_len}."
-            )
-
-        zero_block = xp.zeros_like(blocks[0])
-
-        # Undo the symmetric trimming
-        n_pad = (max_len - n_blocks) // 2
-        band = (zero_block,) * n_pad + tuple(blocks) + (zero_block,) * n_pad
-
-        # Undo the truncation
-        row0 = band + (zero_block,) * (block_sections - 1)
-
-        # Rebuild all `block_sections` periodic rows via cyclic shifts of row 0.
-        row0_stack = xp.stack(row0, axis=0)
-        rows = [xp.roll(row0_stack, i, axis=0) for i in range(block_sections)]
-
-        # Re-tile the nested block grid back into a flat (N, 3N) matrix.
-        row_arrays = [
-            xp.concatenate([row[j] for j in range(3 * block_sections)], axis=-1)
-            for row in rows
-        ]
-        matrix = xp.concatenate(row_arrays, axis=-2)
-
-        # Split back into the 3 macro blocks.
-        n = matrix.shape[-1] // 3
-        return tuple(matrix[..., k * n : (k + 1) * n] for k in range(3))
 
     def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.
@@ -567,7 +447,7 @@ class Spectral(OBCSolver):
         if self.block_sections is None:
             blocks = a_xx
             block_sections = (len(a_xx) - 1) // 2
-            a_xx = self._upscale_subblocks(blocks, block_sections)
+            a_xx = upscale_subblocks(blocks, block_sections)
 
         else:
             if len(a_xx) != 3:
@@ -576,7 +456,7 @@ class Spectral(OBCSolver):
                     f"if block_sections is not None, but {len(a_xx)} were provided."
                 )
             block_sections = self.block_sections
-            blocks = self._extract_subblocks(a_xx, block_sections)
+            blocks = extract_subblocks(a_xx, block_sections)
 
         a_ji, a_ii, a_ij = a_xx
 

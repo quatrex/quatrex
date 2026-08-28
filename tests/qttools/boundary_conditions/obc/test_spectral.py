@@ -4,6 +4,7 @@
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc import OBCSystem, Spectral
 from qttools.nevp import NEVP
+from qttools.toeplitz.toeplitz import extract_subblocks
 
 
 def _make_periodic(
@@ -129,7 +130,7 @@ def test_correctness_inferred_sections(
         max_decay=20,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
-    a_xx = Spectral._extract_subblocks((a_ji, a_ii, a_ij), block_sections)
+    a_xx = extract_subblocks((a_ji, a_ii, a_ij), block_sections)
 
     # pad if blocks were trimmed
     if len(a_xx) < 2 * block_sections + 1:

@@ -5,8 +5,11 @@
 import pytest
 
 from qttools import xp
-from qttools.toeplitz.circulant import check_nested_phi_circulant, expand_transverse
-from quatrex.device.inputs import expand_circulant_cell
+from qttools.toeplitz.circulant import (
+    check_nested_phi_circulant,
+    construct_circulant_cell,
+    expand_transverse,
+)
 
 
 def _generate_dict(
@@ -79,12 +82,12 @@ def test_full_upscale(
         * (grid_shape[transport_ind] // 2)
     )
 
-    for index in [-1, 0, 1]:
-        test_matrix = expand_circulant_cell(
+    for block_index in [-1, 0, 1]:
+        test_matrix = construct_circulant_cell(
             matrix_dict=matrix_dict,
             transport_cell_size=grid_shape[transport_ind] // 2,
             transport_ind=transport_ind,
-            index=index,
+            block_index=block_index,
             sections=sections,
             phases=phases,
         )

@@ -12,7 +12,7 @@ from mpi4py.MPI import COMM_WORLD as comm_world
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.toeplitz.circulant import expand_transverse
+from qttools.toeplitz.toeplitz import construct_transport_cell
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.grid.kpoints import monkhorst_pack
@@ -107,164 +107,13 @@ def create_coordinate_grid(
     return grid
 
 
-def construct_transport_cell(
-    matrix_dict: dict,
-    transport_cell_size: int,
-    transport_ind: int,
-    shift: tuple,
-    key_assumption: str | None = None,
-) -> NDArray:
-    """Constructs a transport block from the unit cell.
-    This expand the unit cell matrix into a block matrix for the transport cell,
-    which is repeated in the transport direction.
-
-    Parameters
-    ----------
-    matrix_dict : dict
-        The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper parts are present.
-    transport_cell_size : int
-        Size of the transport cell.
-    transport_ind : int
-        Direction of transport. Can be 0, 1, 2.
-    shift : tuple
-        Shift in the transport cell system. It is expected to be 0 /
-        transport_cell_size / -transport_cell_size in the transport direction
-        and arbitrary in the other directions. Shift of (0,0,0) constructs the
-        diagonal transport cell. Shift of (2,2,2) constructs the second
-        off-diagonal transport cell for the connection (2,2) between the center
-        matrix and the periodic image.
-    key_assumption : str or None
-        Assumption on the keys in the matrix_dict. If it is None, it is assumed
-        that all keys are present. If it is "upper", it is assumed that only the
-        upper triangular part of the matrices are present, and the lower
-        triangular part can be obtained by conjugate transpose. If it is "half",
-        it is assumed that the full matrix is present for half the keys.
-
-    Returns
-    -------
-    NDArray
-        The transport cell hamiltonian block.
-
-    """
-
-    if shift[transport_ind] not in [0, transport_cell_size, -transport_cell_size]:
-        raise ValueError(
-            f"Shift in the transport direction must be 0, transport_cell_size, or -transport_cell_size. "
-            f"Got shift={shift} and transport_cell_size={transport_cell_size}."
-        )
-    if key_assumption not in [None, "upper", "half"]:
-        raise ValueError(
-            f"key_assumption must be None, 'upper', or 'half'. Got {key_assumption}."
-        )
-
-    unit_cell_shape = next(iter(matrix_dict.values())).shape
-    unit_cell_dtype = next(iter(matrix_dict.values())).dtype
-    zero_block = xp.zeros(unit_cell_shape, unit_cell_dtype)
-
-    rows = []
-    for r_i in range(transport_cell_size):
-        row = []
-        for r_j in range(transport_cell_size):
-
-            coord = list(shift)
-            coord[transport_ind] += r_j - r_i
-
-            coord = tuple(int(i) for i in coord)
-            coord_flipped = tuple(-int(i) for i in coord)
-
-            block = matrix_dict.get(coord)
-            block_flipped = matrix_dict.get(coord_flipped)
-
-            if block is not None:
-                if key_assumption == "upper" and block_flipped is not None:
-                    block = block + xp.triu(block_flipped, k=1).conj().swapaxes(-2, -1)
-            elif key_assumption == "half" and block_flipped is not None:
-                block = block_flipped.conj().swapaxes(-2, -1)
-            else:
-                block = zero_block
-
-            row.append(block)
-
-        rows.append(xp.concatenate(row, axis=-1))
-
-    return xp.concatenate(rows, axis=-2)
-
-
-def expand_circulant_cell(
-    matrix_dict: dict,
-    transport_cell_size: int,
-    transport_ind: int,
-    index: int,
-    sections: tuple[int, int],
-    phases: tuple[complex, complex] = (1.0, 1.0),
-    key_assumption: str | None = None,
-) -> NDArray:
-    """Expands a unit cell matrix into a block matrix.
-    This function first expands in transverse directions, and then
-    constructs the transport cell block. To expand in transverse
-    direction, a block circulant structure is assumed
-
-    The function assumes that all necessary keys are present in the
-    `matrix_dict`.
-
-    Parameters
-    ----------
-    matrix_dict : dict
-        The dictionary of matrices corresponding to different periodic
-        repetitions.
-    transport_cell_size : int
-        Size of the transport cell.
-    transport_ind : int
-        Direction of transport. Can be 0, 1, 2.
-    index : int
-        The index of the block to expand. Can be either -1, 0, 1
-        representing either the lower, diagonal, or upper block in the
-        transport direction.
-    sections : tuple[int, int]
-        The number of sections in the transverse directions.
-    phases : tuple[complex, complex], optional
-        The phase shifts to apply in the transverse directions.
-    key_assumption : str | None, optional
-        Assumption on the keys in the matrix_dict.
-
-    Returns
-    -------
-    NDArray
-        The expanded block matrix.
-
-    """
-    if index not in [-1, 0, 1]:
-        raise ValueError(f"Index must be -1, 0, or 1. Got {index}.")
-
-    shift = [0, 0, 0]
-    shift[transport_ind] = transport_cell_size * index
-    shift = tuple(shift)
-
-    # upscale first in transverse directions
-    matrix_dict = expand_transverse(
-        matrix_dict=matrix_dict,
-        transport_ind=transport_ind,
-        sections=sections,
-        phases=phases,
-    )
-
-    return construct_transport_cell(
-        matrix_dict,
-        transport_cell_size,
-        transport_ind,
-        shift,
-        key_assumption,
-    )
-
-
 def _expand_tight_binding_matrix(
     matrix_dict: dict,
     num_transport_cells: int,
     transport_ind: int,
     block_start: int | None = None,
     block_end: int | None = None,
-    periodic_shift: tuple = (0, 0, 0),
+    transverse_shift: tuple = (0, 0),
 ) -> sparse.csr_matrix:
     """Creates a full block-tridiagonal matrix from tight-binding matrix / Wannier Centers.
 
@@ -333,19 +182,8 @@ def _expand_tight_binding_matrix(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    if len(periodic_shift) != 3:
-        raise ValueError("periodic_shift must have length 3.")
-
-    block_inds = []
-    for b in [0, 1]:
-        temp_list = list(periodic_shift)
-        temp_list[transport_ind] = b * transport_cell_size
-        block_inds.append(tuple(int(i) for i in temp_list))
-
-    if block_inds[-1] not in matrix_dict.keys():
-        warnings.warn(
-            "Periodic shift is outside the available range. Interaction will be zero."
-        )
+    if len(transverse_shift) != 2:
+        raise ValueError("transverse_shift must have length 3.")
 
     # Expand and convert to sparse matrices.
     # TODO: assumes matrices are dense for now
@@ -354,14 +192,15 @@ def _expand_tight_binding_matrix(
             matrix_dict=matrix_dict,
             transport_cell_size=transport_cell_size,
             transport_ind=transport_ind,
-            shift=shift,
+            block_index=block_index,
+            transverse_shift=transverse_shift,
             key_assumption="upper",
         )
-        for shift in block_inds
+        for block_index in [0, 1]
     ]
     blocks = [
-        xp.triu(block) if shift[transport_ind] == 0 else block
-        for block, shift in zip(blocks, block_inds)
+        xp.triu(blocks[block_index]) if block_index == 0 else blocks[block_index]
+        for block_index in [0, 1]
     ]
     blocks = [sparse.coo_matrix(block) for block in blocks]
 
@@ -559,13 +398,15 @@ def _create_matrix_from_unit_cells(
         if coord[transport_ind] != 0:
             continue
 
+        transverse_shift = coord[:transport_ind] + coord[transport_ind + 1 :]
+
         matrix_sparray = _expand_tight_binding_matrix(
             matrix_dict=matrix_dict,
             num_transport_cells=config.device.num_transport_cells,
             transport_ind=transport_ind,
             block_start=start_block,
             block_end=end_block,
-            periodic_shift=coord,
+            transverse_shift=transverse_shift,
         )
         out_matrix_dict[coord] = matrix_sparray.astype(xp.complex128)
 

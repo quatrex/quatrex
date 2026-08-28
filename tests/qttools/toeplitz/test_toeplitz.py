@@ -2,10 +2,7 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.toeplitz.toeplitz import (
-    expand_periodic_superblocks,
-    get_periodic_superblocks,
-)
+from qttools.toeplitz.toeplitz import periodize_layer, periodize_repeat_layer
 
 
 def _test_periodicity(
@@ -18,10 +15,8 @@ def _test_periodicity(
 
     block_size = a_ii.shape[-1]
 
-    m_ji, m_ii, m_ij = get_periodic_superblocks(
-        a_ji=a_ji,
-        a_ii=a_ii,
-        a_ij=a_ij,
+    m_ji, m_ii, m_ij = periodize_layer(
+        (a_ji, a_ii, a_ij),
         block_sections=block_sections,
     )
 
@@ -168,10 +163,8 @@ def test_get_periodic_superblocks_ref(
         a_ij = rng.random((block_size, block_size))
         a_ji = rng.random((block_size, block_size))
 
-    m_ji_test, m_ii_test, m_ij_test = expand_periodic_superblocks(
-        a_ji=a_ji,
-        a_ii=a_ii,
-        a_ij=a_ij,
+    m_ji_test, m_ii_test, m_ij_test = periodize_repeat_layer(
+        (a_ji, a_ii, a_ij),
         block_sections=block_sections,
         repetitions=repetitions,
     )

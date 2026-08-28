@@ -12,9 +12,9 @@ from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import (
-    expand_periodic_superblocks,
-    get_periodic_superblocks,
     homogenize,
+    periodize_layer,
+    periodize_repeat_layer,
 )
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.solvers_utils import get_batches
@@ -249,17 +249,21 @@ class CoulombScreeningSolver(SubsystemSolver):
             comm=comm.stack,
         ):
 
-            p_retarded_10, p_retarded_00, p_retarded_01 = expand_periodic_superblocks(
-                a_ji=order_block(p_retarded.blocks[*upper_inds[::-1]], order),
-                a_ii=order_block(p_retarded.blocks[*diagonal_inds], order),
-                a_ij=order_block(p_retarded.blocks[*upper_inds], order),
+            p_retarded_10, p_retarded_00, p_retarded_01 = periodize_repeat_layer(
+                (
+                    order_block(p_retarded.blocks[*upper_inds[::-1]], order),
+                    order_block(p_retarded.blocks[*diagonal_inds], order),
+                    order_block(p_retarded.blocks[*upper_inds], order),
+                ),
                 block_sections=self.small_block_sections,
                 repetitions=self.num_connected_blocks,
             )
-            v_10, v_00, v_01 = expand_periodic_superblocks(
-                a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-                a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-                a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            v_10, v_00, v_01 = periodize_repeat_layer(
+                (
+                    order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+                    order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+                    order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+                ),
                 block_sections=self.small_block_sections,
                 repetitions=self.num_connected_blocks,
             )
@@ -294,10 +298,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         ):
 
             def _get_l_superblocks(p_):
-                p_10, p_00, p_01 = expand_periodic_superblocks(
-                    a_ji=order_block(p_.blocks[*upper_inds[::-1]], order),
-                    a_ii=order_block(p_.blocks[*diagonal_inds], order),
-                    a_ij=order_block(p_.blocks[*upper_inds], order),
+                p_10, p_00, p_01 = periodize_repeat_layer(
+                    (
+                        order_block(p_.blocks[*upper_inds[::-1]], order),
+                        order_block(p_.blocks[*diagonal_inds], order),
+                        order_block(p_.blocks[*upper_inds], order),
+                    ),
                     block_sections=self.small_block_sections,
                     repetitions=self.num_connected_blocks,
                 )
@@ -509,16 +515,20 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         inverse_order = get_inverse_order(order)
 
-        v_10, __, __ = get_periodic_superblocks(
-            a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-            a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+        v_10, __, __ = periodize_layer(
+            (
+                order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+                order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            ),
             block_sections=self.small_block_sections,
         )
-        __, __, p_01 = get_periodic_superblocks(
-            a_ji=order_block(self.p_retarded.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(self.p_retarded.blocks[*diagonal_inds], order),
-            a_ij=order_block(self.p_retarded.blocks[*upper_inds], order),
+        __, __, p_01 = periodize_layer(
+            (
+                order_block(self.p_retarded.blocks[*upper_inds[::-1]], order),
+                order_block(self.p_retarded.blocks[*diagonal_inds], order),
+                order_block(self.p_retarded.blocks[*upper_inds], order),
+            ),
             block_sections=self.small_block_sections,
         )
         self.system_matrix.blocks[*diagonal_inds] += order_block(
@@ -601,17 +611,21 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         inverse_order = get_inverse_order(order)
 
-        v_10, v_00, v_01 = get_periodic_superblocks(
-            a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-            a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+        v_10, v_00, v_01 = periodize_layer(
+            (
+                order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+                order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            ),
             block_sections=self.small_block_sections,
         )
 
-        p_10, p_00, p_01 = get_periodic_superblocks(
-            a_ji=order_block(p_.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(p_.blocks[*diagonal_inds], order),
-            a_ij=order_block(p_.blocks[*upper_inds], order),
+        p_10, p_00, p_01 = periodize_layer(
+            (
+                order_block(p_.blocks[*upper_inds[::-1]], order),
+                order_block(p_.blocks[*diagonal_inds], order),
+                order_block(p_.blocks[*upper_inds], order),
+            ),
             block_sections=self.small_block_sections,
         )
 

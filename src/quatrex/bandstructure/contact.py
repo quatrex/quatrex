@@ -8,9 +8,9 @@ from scipy.optimize import minimize_scalar
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels import linalg
+from qttools.toeplitz.circulant import construct_circulant_cell
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Contact, Device
-from quatrex.device.inputs import expand_circulant_cell
 from quatrex.electrostatics.geometry_config import Region, VolumeProperties
 from quatrex.electrostatics.meshing import inside_shape
 from quatrex.grid import monkhorst_pack
@@ -264,28 +264,28 @@ def compute_contact_bandstructure(
     )
 
     H_XX = tuple(
-        expand_circulant_cell(
+        construct_circulant_cell(
             matrix_dict=h_xx,
             transport_cell_size=contact.transport_repetitions,
             transport_ind=contact.transport_direction,
-            index=index,
+            block_index=block_index,
             sections=contact.transverse_repetition_grid,
             phases=phases,
             key_assumption="half",
         )
-        for index in [-1, 0, 1]
+        for block_index in [-1, 0, 1]
     )
     S_XX = tuple(
-        expand_circulant_cell(
+        construct_circulant_cell(
             matrix_dict=s_xx,
             transport_cell_size=contact.transport_repetitions,
             transport_ind=contact.transport_direction,
-            index=index,
+            block_index=block_index,
             sections=contact.transverse_repetition_grid,
             phases=phases,
             key_assumption="half",
         )
-        for index in [-1, 0, 1]
+        for block_index in [-1, 0, 1]
     )
 
     return contact_band_structure(kpoints_transport, H_XX, S_XX)

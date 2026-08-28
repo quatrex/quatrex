@@ -13,7 +13,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _BlockIndexer, _DStackView, _StackView
 from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.profiling import Profiler
-from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
+from qttools.toeplitz.toeplitz import homogenize, periodize_layer
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
@@ -983,10 +983,12 @@ class ElectronSolver(SubsystemSolver):
 
         inverse_order = get_inverse_order(order)
 
-        m_10, m_00, m_01 = get_periodic_superblocks(
-            a_ji=order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(self.system_matrix.blocks[*diagonal_inds], order),
-            a_ij=order_block(self.system_matrix.blocks[*upper_inds], order),
+        m_10, m_00, m_01 = periodize_layer(
+            (
+                order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(self.system_matrix.blocks[*diagonal_inds], order),
+                order_block(self.system_matrix.blocks[*upper_inds], order),
+            ),
             block_sections=self.block_sections,
         )
 

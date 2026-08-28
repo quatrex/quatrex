@@ -4,31 +4,28 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, xp
-from quatrex.device.inputs import (
-    _expand_tight_binding_matrix,
-    construct_transport_cell,
-    create_coordinate_grid,
-)
+from qttools.toeplitz.toeplitz import construct_transport_cell
+from quatrex.device.inputs import _expand_tight_binding_matrix, create_coordinate_grid
 
 
 @pytest.mark.parametrize(
-    "transport_cell_size, shift",
+    "transport_cell_size, transverse_shift",
     [
         (
             2,
-            (0, 0, 0),
+            (0, 0),
         ),
         (
             2,
-            (1, 1, 0),
+            (1, 1),
         ),
         (
             3,
-            (0, 0, 0),
+            (0, 0),
         ),
         (
             3,
-            (1, 0, 0),
+            (1, 0),
         ),
     ],
 )
@@ -37,7 +34,7 @@ from quatrex.device.inputs import (
 def test_construct_transport_cell(
     matrix_dict: dict,
     transport_cell_size: int,
-    shift: tuple[int, int, int],
+    transverse_shift: tuple[int, int],
     key_assumption: str | None,
     batch_size: int,
 ):
@@ -65,15 +62,20 @@ def test_construct_transport_cell(
         }
 
     test_block = construct_transport_cell(
-        matrix_dict_copy, transport_cell_size, transport_ind, shift, key_assumption
+        matrix_dict=matrix_dict_copy,
+        transport_cell_size=transport_cell_size,
+        transport_ind=transport_ind,
+        block_index=0,
+        transverse_shift=transverse_shift,
+        key_assumption=key_assumption,
     )
 
     shape = matrix_dict[(0, 0, 0)].shape
     block_size = matrix_dict[(0, 0, 0)].shape[-1]
     for r_i in range(transport_cell_size):
         for r_j in range(transport_cell_size):
-            target_ind = list(shift)
-            target_ind[transport_ind] = r_j - r_i
+            target_ind = list(transverse_shift)
+            target_ind.insert(transport_ind, r_j - r_i)
             target_ind = tuple(target_ind)
 
             ref_block = matrix_dict.get(target_ind, xp.zeros(shape))
@@ -115,12 +117,12 @@ def test_create_coordinate_grid(
 
 
 @pytest.mark.parametrize(
-    "hopping_shape, num_transport_cells, transport_ind, block_start, block_end, periodic_shift",
+    "hopping_shape, num_transport_cells, transport_ind, block_start, block_end, transverse_shift",
     [
-        ((7, 5, 5), 10, 0, None, None, (0, 0, 0)),
-        ((7, 5, 5), 10, 0, 0, 2, (0, 0, 0)),
-        ((7, 5, 5), 10, 0, None, None, (0, 0, 2)),
-        ((7, 5, 5), 10, 0, 0, 2, (0, 0, 2)),
+        ((7, 5, 5), 10, 0, None, None, (0, 0)),
+        ((7, 5, 5), 10, 0, 0, 2, (0, 0)),
+        ((7, 5, 5), 10, 0, None, None, (0, 2)),
+        ((7, 5, 5), 10, 0, 0, 2, (0, 2)),
     ],
 )
 def test_expand_tight_binding_matrix(
@@ -129,7 +131,7 @@ def test_expand_tight_binding_matrix(
     transport_ind: int,
     block_start: int | None,
     block_end: int | None,
-    periodic_shift: tuple,
+    transverse_shift: tuple,
 ):
     """Tests the expansion of the tight-binding matrix into a block-tridiagonal Hamiltonian."""
     # NOTE: set to ones to make it easy to check the resulting matrix
@@ -153,7 +155,7 @@ def test_expand_tight_binding_matrix(
         transport_ind=transport_ind,
         block_start=block_start,
         block_end=block_end,
-        periodic_shift=periodic_shift,
+        transverse_shift=transverse_shift,
     )
     block_start = block_start or 0
     block_end = block_end or num_transport_cells

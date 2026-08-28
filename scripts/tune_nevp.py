@@ -9,6 +9,7 @@ from scipy import sparse
 
 from qttools.nevp import Beyn, Full
 from qttools.obc import Spectral
+from qttools.toeplitz.toeplitz import extract_subblocks
 from quatrex.core.config import QuatrexConfig, parse_config
 
 
@@ -108,7 +109,7 @@ class BeynTuner:
         self.max_num_quad_points = max_num_quad_points
 
         self.obc = Spectral(Full(), **self.obc_kwargs)
-        self.a_xx = self.obc._extract_subblocks(self.a_ji, self.a_ii, self.a_ij)
+        self.a_xx = extract_subblocks((self.a_ji, self.a_ii, self.a_ij))
 
     def _compute_subspace_dimension(self) -> int:
         """Determines the number of eigenvalues to target in the subspace.

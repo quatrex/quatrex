@@ -699,7 +699,6 @@ def real_space_discovery(
 
 
 def simplified_discovery(
-    contact_name: str,
     num_orbitals: int,
     device_config: DeviceConfig,
     contact_config: ContactConfig,
@@ -739,48 +738,47 @@ def simplified_discovery(
         directions.
 
     """
-    if contact_config.contact_finder_method not in ["from_unit", "slice"]:
+    contact_name = contact_config.name
+
+    if contact_config._contact_finder_method != "from_unit":
         raise ValueError(
-            f"Contact finder method '{contact_config.contact_finder_method}' is not valid. Must be 'from_unit' or 'slice'."
+            f"Contact finder method '{contact_config._contact_finder_method}' is not valid. Must be 'from_unit'."
+        )
+    if device_config.transport_direction != contact_config.transport_direction:
+        raise ValueError(
+            f"Contact transport direction '{contact_config.transport_direction}' does not match\n"
+            f"device transport direction '{device_config.transport_direction}'."
+        )
+    if (not device_config.construct_from_unit_cell) or (
+        device_config.neighbor_cell_cutoff is None
+    ):
+        raise ValueError(
+            "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
         )
 
-    transport_direction = "abc".index(contact_config.transport_direction)
-    transverse_repetition_grid = (
-        contact_config.sections[:transport_direction]
-        + contact_config.sections[transport_direction + 1 :]
-    )
-
-    if contact_config.contact_finder_method == "from_unit":
-        if not device_config.construct_from_unit_cell:
-            raise ValueError(
-                "Contact finder method 'from_unit' requires the device to be constructed from a unit cell."
-            )
-        transport_repetitions = device_config.neighbor_cell_cutoff[transport_direction]
-
-        block_size = num_orbitals // device_config.num_transport_cells
-    else:
-        transport_repetitions = contact_config.sections[transport_direction]
-        block_size = (
-            contact_config.contact_slice[1] - contact_config.contact_slice[0]
-        ) // 2
-
+    # In simplified discovery, the contact's transport direction is the
+    # same as the device's transport direction.
+    transport_direction = "abc".index(device_config.transport_direction)
+    # No transverse repetitions are considered in the simplified
+    # discovery method.
+    transverse_repetition_grid = (1, 1)
+    transport_repetitions = device_config.neighbor_cell_cutoff[transport_direction]
+    block_size = num_orbitals // device_config.num_transport_cells
     block_size_hat = (block_size // transport_repetitions) // np.prod(
         transverse_repetition_grid
     )
 
     if contact_name == "left":
         indices = np.arange(block_size + block_size // transport_repetitions)
-        if contact_config.contact_finder_method == "slice":
-            indices += contact_config.contact_slice[0]
     elif contact_name == "right":
-        indices = np.arange(
-            0,
-            (block_size + block_size // transport_repetitions),
+        indices = (
+            num_orbitals
+            - np.arange(
+                0,
+                (block_size + block_size // transport_repetitions),
+            )
+            - 1
         )
-        if contact_config.contact_finder_method == "slice":
-            indices = contact_config.contact_slice[1] - indices - 1
-        else:
-            indices = num_orbitals - indices - 1
     else:
         raise ValueError(
             f"Contact name '{contact_name}' is not valid for 'from_unit' method. Must be 'left' or 'right'."
@@ -806,7 +804,7 @@ def simplified_discovery(
         for k in range(transverse_repetition_grid[1])
     }
     origin_key = (0, 0, 0)
-    repetition_grid = list(contact_config.sections)
-    repetition_grid[transport_direction] = transport_repetitions
+    repetition_grid = list(transverse_repetition_grid)
+    repetition_grid.insert(transport_direction, transport_repetitions)
 
     return unit_cell_orbital_indices, tuple(repetition_grid), origin_key

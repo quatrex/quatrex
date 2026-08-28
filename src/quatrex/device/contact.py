@@ -253,7 +253,7 @@ class Contact:
         self.name = contact_config.name
         self.transport_direction = "abc".index(contact_config.transport_direction)
 
-        if contact_config.contact_finder_method == "real_space":
+        if contact_config._contact_finder_method == "real_space":
             self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
                 real_space_discovery(
                     hamiltonian=device.hamiltonians[0, 0, 0],
@@ -263,10 +263,9 @@ class Contact:
                     contact_config=contact_config,
                 )
             )
-        elif contact_config.contact_finder_method in ["from_unit", "slice"]:
+        elif contact_config._contact_finder_method == "from_unit":
             self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
                 simplified_discovery(
-                    contact_name=contact_config.name,
                     num_orbitals=len(device.orbital_coordinates),
                     device_config=device.config.device,
                     contact_config=contact_config,
@@ -274,7 +273,7 @@ class Contact:
             )
         else:
             raise NotImplementedError(
-                f"Contact finder method '{contact_config.contact_finder_method}' not implemented."
+                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
             )
 
         self.transport_repetitions = repetition_grid[self.transport_direction]

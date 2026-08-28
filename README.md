@@ -87,12 +87,12 @@
 | src/quatrex/\_\_about\_\_.py                                |        1 |        0 |    100% |           |
 | src/quatrex/\_\_init\_\_.py                                 |        2 |        0 |    100% |           |
 | src/quatrex/bandstructure/\_\_init\_\_.py                   |        0 |        0 |    100% |           |
-| src/quatrex/bandstructure/band\_edges.py                    |      182 |       47 |     74% |20-23, 42-43, 101, 150-151, 250, 253, 300-335, 345, 350, 433-435, 441-443, 502-504, 509-511, 610-618 |
+| src/quatrex/bandstructure/band\_edges.py                    |      147 |       41 |     72% |20-23, 42-43, 101, 150-151, 250, 253, 300-335, 345, 350, 445-447, 453-455, 552-560 |
 | src/quatrex/bandstructure/contact.py                        |       47 |        2 |     96% |  134, 179 |
 | src/quatrex/cli/\_\_init\_\_.py                             |        2 |        0 |    100% |           |
 | src/quatrex/cli/main.py                                     |      112 |       39 |     65% |44-46, 137-139, 146-148, 169-188, 240, 247-250, 280-295, 311, 316 |
 | src/quatrex/core/\_\_init\_\_.py                            |        0 |        0 |    100% |           |
-| src/quatrex/core/config.py                                  |      655 |       57 |     91% |550, 553, 1197, 1204, 1222, 1230, 1390, 1487, 1606-1623, 1778, 1793-1794, 1800, 1957-1961, 1966-1978, 2114-2116, 2197-2203, 2217-2221, 2233-2234, 2252, 2257, 2272, 2277, 2280, 2283, 2297, 2301, 2305, 2322 |
+| src/quatrex/core/config.py                                  |      657 |       57 |     91% |550, 553, 1197, 1204, 1222, 1230, 1390, 1487, 1606-1623, 1778, 1793-1794, 1800, 1966-1970, 1975-1987, 2123-2125, 2206-2212, 2226-2230, 2242-2243, 2261, 2266, 2281, 2286, 2289, 2292, 2306, 2310, 2314, 2331 |
 | src/quatrex/core/constants.py                               |        9 |        0 |    100% |           |
 | src/quatrex/core/observables.py                             |       46 |        1 |     98% |        41 |
 | src/quatrex/core/qtbm.py                                    |      459 |       39 |     92% |106, 153-158, 207, 211, 213, 215, 219, 321, 369, 462-464, 496, 501, 700-702, 930-938, 952-960, 1105, 1195 |
@@ -111,7 +111,7 @@
 | src/quatrex/device/device.py                                |      103 |       12 |     88% |147, 178, 234, 242, 249, 260-261, 273, 279, 287, 297-298 |
 | src/quatrex/device/inputs.py                                |      229 |       22 |     90% |55, 63, 144, 239, 247, 249, 251, 254, 263, 284, 397, 401, 517, 528, 536, 545, 562, 567, 625-626, 675, 745 |
 | src/quatrex/electron/\_\_init\_\_.py                        |        6 |        0 |    100% |           |
-| src/quatrex/electron/solver.py                              |      282 |       16 |     94% |90, 115, 132, 139, 270, 274, 311, 360-374, 552, 580, 794-799 |
+| src/quatrex/electron/solver.py                              |      298 |       16 |     95% |90, 115, 132, 139, 274, 278, 315, 364-378, 561, 589, 803-808 |
 | src/quatrex/electron/sse\_coulomb\_screening.py             |      119 |       18 |     85% |20, 330-351 |
 | src/quatrex/electron/sse\_fock.py                           |       26 |        0 |    100% |           |
 | src/quatrex/electron/sse\_phonon.py                         |       35 |        3 |     91% |32, 36, 51 |
@@ -137,7 +137,7 @@
 | src/quatrex/photon/solver.py                                |        7 |        1 |     86% |        18 |
 | src/quatrex/post\_processing/\_\_init\_\_.py                |        2 |        2 |      0% |       5-7 |
 | src/quatrex/post\_processing/plot\_ldos.py                  |       14 |       14 |      0% |      5-35 |
-| **TOTAL**                                                   | **9088** | **2381** | **74%** |           |
+| **TOTAL**                                                   | **9071** | **2375** | **74%** |           |
 
 
 ## Setup coverage badge

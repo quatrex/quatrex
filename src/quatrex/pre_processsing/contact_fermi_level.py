@@ -41,6 +41,9 @@ def pre_process_fermi_level(
         )
 
     if config.formalism == "wf":
+        if device is None:
+            raise ValueError("The device object must be provided.")
+
         # load config and save the original config
         config_file = config.config_file
         if config_file is None:
@@ -67,10 +70,10 @@ def pre_process_fermi_level(
         # NOTE: Not the most efficient code since we do naive loops. The
         # code could be potentially batched, but this should not be a
         # bottleneck since it is only pre-processing.
-        for contact_config, contact in zip(config.device.contacts, device.contacts):
+        for contact in device.contacts:
             if comm.rank == 0:
                 print(
-                    f"Computing Fermi level for contact {contact_config.name}",
+                    f"Computing Fermi level for contact {contact.name}",
                     flush=True,
                 )
 
@@ -80,14 +83,16 @@ def pre_process_fermi_level(
                 delta_fermi_level_conduction_band,
             ) = compute_contact_band_properties(
                 contact=contact,
-                contact_config=contact_config,
                 device=device,
-                device_config=config.device,
             )
             # Make sure that they are float and not numpy.float64
             fermi_level = float(fermi_level)
             mid_gap_energy = float(mid_gap_energy)
             delta_fermi_level_conduction_band = float(delta_fermi_level_conduction_band)
+
+            # NOTE: The contact is overwritten just in case further
+            # pre-processing steps are added in the future that require
+            # the updated contact object.
             contact.fermi_level = fermi_level
             contact.mid_gap_energy = mid_gap_energy
             contact.delta_fermi_level_conduction_band = (

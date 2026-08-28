@@ -69,6 +69,7 @@ class Device:
         """Initializes a Device object from configuration."""
 
         self.config = config
+        self.device_config = config.device
 
         self._init_hamiltonian()
         self.orbital_coordinates, self.atom_coordinates, self.atomic_species = (
@@ -82,7 +83,7 @@ class Device:
             self.config.input_dir,
             self.atom_coordinates,
             self.atomic_species,
-            self.config.device.num_orbitals_per_atom,
+            self.device_config.num_orbitals_per_atom,
         )
         self._add_contacts()
 
@@ -323,7 +324,7 @@ class Device:
         """
         orbitals_per_atom = np.fromiter(
             map(
-                defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
+                defaultdict(lambda: 1, self.device_config.num_orbitals_per_atom).get,
                 self.atomic_species,
             ),
             dtype=np.int32,
@@ -342,7 +343,7 @@ class Device:
         """
 
         contacts = []
-        for contact_config in self.config.device.contacts:
+        for contact_config in self.device_config.contacts:
             contacts.append(Contact(device=self, contact_config=contact_config))
 
         self.contacts = contacts
@@ -368,7 +369,7 @@ class Device:
         # The Fermi level is always required while midgap energy and
         # delta_fermi_level_conduction_band are only required if SCSP is
         # used.
-        for contact_config, contact in zip(self.config.device.contacts, self.contacts):
+        for contact_config, contact in zip(self.device_config.contacts, self.contacts):
             if (
                 (contact_config.fermi_level is None)
                 or (
@@ -400,7 +401,5 @@ class Device:
                     contact.delta_fermi_level_conduction_band,
                 ) = compute_contact_band_properties(
                     contact=contact,
-                    contact_config=contact_config,
                     device=self,
-                    device_config=self.config.device,
                 )

@@ -246,6 +246,7 @@ class Contact:
     def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
+        self.contact_config = contact_config
         if contact_config.transport_direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 

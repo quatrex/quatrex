@@ -8,7 +8,6 @@ from scipy.optimize import minimize_scalar
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels import linalg
-from quatrex.core.config import ContactConfig, DeviceConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Contact, Device
 from quatrex.device.inputs import expand_circulant_cell
@@ -294,9 +293,7 @@ def compute_contact_bandstructure(
 
 def compute_contact_band_properties(
     contact: Contact,
-    contact_config: ContactConfig,
     device: Device,
-    device_config: DeviceConfig,
 ) -> tuple[float, float, float]:
     """Computes the Fermi level for the contact from the Hamiltonian and
     overlap matrices.
@@ -305,12 +302,8 @@ def compute_contact_band_properties(
     ----------
     contact : Contact
         The contact object.
-    contact_config : ContactConfig
-        The contact configuration object.
     device : Device
         The device object.
-    device_config : DeviceConfig
-        The device configuration object.
 
     Returns
     -------
@@ -323,6 +316,9 @@ def compute_contact_band_properties(
         band edge.
 
     """
+    contact_config = contact.contact_config
+    device_config = device.device_config
+
     kpoints_transport = np.linspace(
         -np.pi,
         np.pi,

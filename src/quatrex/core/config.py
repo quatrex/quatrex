@@ -1217,7 +1217,6 @@ class ElectronConfig(BaseModel):
             or self.energy_window_num is not None
             or self.energy_window_num_per_rank is not None
         ):
-
             if (self.energy_window_min is None) and (self.energy_window_max is None):
                 raise ValueError(
                     "When the energy grid is not read from file, should set both `energy_window_min` and `energy_window_max`."
@@ -1564,6 +1563,11 @@ class OutputConfig(BaseModel):
         This is primarily a debugging option.
 
     """
+
+    save_scba_variables: bool = False
+    num_nnz_samples_scba_variables: PositiveInt | Literal["all"] = (
+        100  # used if save_scba_variables is True
+    )
 
     self_energy_density: bool = False
     """Whether to save the self-energy density.

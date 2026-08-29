@@ -13,7 +13,11 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.mpi_utils import (
+    distributed_load,
+    gather_array_stack,
+    get_section_sizes,
+)
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.transport import TransportSolver
@@ -371,6 +375,11 @@ class SCBA(TransportSolver):
             config, electron_energies=self.electron_energies
         )  # real data
 
+        # used for saving the SCBA variables for visualization
+        self.archive_file_prefix = None
+        self.iteration = 0
+        self.nnz_sample_indices = None
+
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
 
@@ -565,7 +574,6 @@ class SCBA(TransportSolver):
                 self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.config.electron.solver.compute_current:
-
                 local_current = self.electron_solver.meir_wingreen_current
                 meir_wingreen_current = comm.stack.all_gather_v(
                     local_current,
@@ -587,9 +595,39 @@ class SCBA(TransportSolver):
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
+        if self.config.outputs.save_scba_variables:
+            # all ranks load the random sample indices and perform gather
+            meta_data = np.load(
+                f"{self.archive_file_prefix}_meta_data.npz", allow_pickle=True
+            )
+            self.nnz_sample_indices = meta_data["sample_indices"]
+
+            g_lesser_concat = gather_array_stack(
+                self.data.g_lesser.data, global_comm, self.nnz_sample_indices
+            )
+            g_greater_concat = gather_array_stack(
+                self.data.g_greater.data, global_comm, self.nnz_sample_indices
+            )
+            g_retarded_concat = gather_array_stack(
+                self.data.g_retarded.data, global_comm, self.nnz_sample_indices
+            )
+            if comm.rank == 0:
+                xp.save(
+                    f"{self.archive_file_prefix}_g_lesser_iter{self.iteration:02}.npy",
+                    g_lesser_concat,
+                )
+                xp.save(
+                    f"{self.archive_file_prefix}_g_greater_iter{self.iteration:02}.npy",
+                    g_greater_concat,
+                )
+                xp.save(
+                    f"{self.archive_file_prefix}_g_retarded_iter{self.iteration:02}.npy",
+                    g_retarded_concat,
+                )
+                print(f"saved g files for iteration {self.iteration}", flush=True)
+
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)
     def _compute_coulomb_screening_observables(self) -> None:
-
         # NOTE: The overlap is maybe missing here (it is not used)
         if self.config.outputs.polarization_density:
             self.observables.p_lesser_density = density(self.data.p_lesser) / (
@@ -606,6 +644,58 @@ class SCBA(TransportSolver):
             self.observables.w_greater_density = -density(self.data.w_greater) / (
                 2 * xp.pi
             )
+
+        if self.config.outputs.save_scba_variables:
+            # all ranks load the random sample indices and perform gather
+            meta_data = np.load(
+                f"{self.archive_file_prefix}_meta_data.npz", allow_pickle=True
+            )
+            self.nnz_sample_indices = meta_data["sample_indices"]
+
+            p_lesser_concat = gather_array_stack(
+                self.data.p_lesser.data, global_comm, self.nnz_sample_indices
+            )
+            p_greater_concat = gather_array_stack(
+                self.data.p_greater.data, global_comm, self.nnz_sample_indices
+            )
+            p_retarded_hermitian_concat = gather_array_stack(
+                self.data.p_retarded_hermitian.data,
+                global_comm,
+                self.nnz_sample_indices,
+            )
+            if comm.rank == 0:
+                xp.save(
+                    f"{self.archive_file_prefix}_p_lesser_iter{self.iteration:02}.npy",
+                    p_lesser_concat,
+                )
+                xp.save(
+                    f"{self.archive_file_prefix}_p_greater_iter{self.iteration:02}.npy",
+                    p_greater_concat,
+                )
+                xp.save(
+                    f"{self.archive_file_prefix}_p_retarded_hermitian_iter{self.iteration:02}.npy",
+                    p_retarded_hermitian_concat,
+                )
+                print(f"saved p files for iteration {self.iteration}", flush=True)
+            comm.barrier()
+
+            w_lesser_concat = gather_array_stack(
+                self.data.w_lesser.data, global_comm, self.nnz_sample_indices
+            )
+            w_greater_concat = gather_array_stack(
+                self.data.w_greater.data, global_comm, self.nnz_sample_indices
+            )
+            if comm.rank == 0:
+                xp.save(
+                    f"{self.archive_file_prefix}_w_lesser_iter{self.iteration:02}.npy",
+                    w_lesser_concat,
+                )
+                xp.save(
+                    f"{self.archive_file_prefix}_w_greater_iter{self.iteration:02}.npy",
+                    w_greater_concat,
+                )
+                print(f"saved w files for iteration {self.iteration}", flush=True)
+            comm.barrier()
 
     @profiler.profile(label="SCBA: Write outputs", level="default", comm=comm)
     def _write_iteration_outputs(self, iteration: int):
@@ -755,8 +845,47 @@ class SCBA(TransportSolver):
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
+        if self.config.outputs.save_scba_variables:
+            self.archive_file_prefix = self.config.output_dir / "scba_variables"
+
+            # only rank 0 generate random indices and saves it, for the other ranks to use
+            if comm.rank == 0:
+                num_nnz = self.data.g_lesser.data.shape[-1]
+                if self.config.outputs.num_nnz_samples_scba_variables == "all":
+                    num_random_samples = num_nnz
+                    sample_indices = np.arange(num_random_samples)
+                else:
+                    # random samples must be less than the total number of non-zero elements
+                    num_random_samples = min(
+                        self.config.outputs.num_nnz_samples_scba_variables,
+                        num_nnz,
+                    )
+                    # generate unique random sample indices between 0-43824 (number of non-zero indices)
+                    rng = np.random.default_rng(42)
+                    sample_indices = rng.choice(
+                        num_nnz,
+                        size=num_random_samples,
+                        replace=False,
+                    )
+                    sample_indices = np.sort(sample_indices)
+                np.savez(
+                    f"{self.archive_file_prefix}_meta_data.npz",
+                    sample_indices=sample_indices,
+                    num_nnz=num_nnz,
+                    rows=self.data.g_lesser.rows[sample_indices],
+                    cols=self.data.g_lesser.cols[sample_indices],
+                    nrows=self.data.g_lesser.shape[1],
+                    ncols=self.data.g_lesser.shape[2],
+                )
+                print(
+                    f"Saving {num_random_samples} nnz samples for SCBA variable visualization.",
+                    flush=True,
+                )
+
+        comm.barrier()
         for i in range(self.config.scba.max_iterations):
-            print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
+            self.iteration = i
+            print(f"Iteration {self.iteration}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
@@ -819,6 +948,42 @@ class SCBA(TransportSolver):
 
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
+
+            if self.config.outputs.save_scba_variables:
+                # save Sigma after it's been transposed back to stack distribution
+                sigma_lesser_concat = gather_array_stack(
+                    self.data.sigma_lesser.data, global_comm, self.nnz_sample_indices
+                )
+                sigma_greater_concat = gather_array_stack(
+                    self.data.sigma_greater.data, global_comm, self.nnz_sample_indices
+                )
+                sigma_retarded_hermitian_concat = gather_array_stack(
+                    self.data.sigma_retarded_hermitian.data,
+                    global_comm,
+                    self.nnz_sample_indices,
+                )
+                if comm.rank == 0:
+                    xp.save(
+                        f"{self.archive_file_prefix}_sigma_lesser_iter{self.iteration:02}.npy",
+                        sigma_lesser_concat,
+                    )
+                    xp.save(
+                        f"{self.archive_file_prefix}_sigma_greater_iter{self.iteration:02}.npy",
+                        sigma_greater_concat,
+                    )
+                    xp.save(
+                        f"{self.archive_file_prefix}_sigma_retarded_hermitian_iter{self.iteration:02}.npy",
+                        sigma_retarded_hermitian_concat,
+                    )
+
+                (
+                    print(
+                        f"saved sigma files for iteration {self.iteration}", flush=True
+                    )
+                    if comm.rank == 0
+                    else None
+                )
+                comm.barrier()
 
             if self._has_converged():
                 if comm.rank == 0:

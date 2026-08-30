@@ -8,7 +8,7 @@ from qttools import NDArray, xp
 from qttools.boundary_conditions.obc.obc import OBCSolver
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
-from qttools.toeplitz.toeplitz import extract_subblocks, upscale_subblocks
+from qttools.toeplitz.toeplitz import extract_layer, upscale_layer
 
 
 class Spectral(OBCSolver):
@@ -447,7 +447,7 @@ class Spectral(OBCSolver):
         if self.block_sections is None:
             blocks = a_xx
             block_sections = (len(a_xx) - 1) // 2
-            a_xx = upscale_subblocks(blocks, block_sections)
+            a_xx = upscale_layer(blocks, block_sections)
 
         else:
             if len(a_xx) != 3:
@@ -456,7 +456,7 @@ class Spectral(OBCSolver):
                     f"if block_sections is not None, but {len(a_xx)} were provided."
                 )
             block_sections = self.block_sections
-            blocks = extract_subblocks(a_xx, block_sections)
+            blocks = extract_layer(a_xx, block_sections)
 
         a_ji, a_ii, a_ij = a_xx
 

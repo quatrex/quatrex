@@ -77,6 +77,12 @@ def pre_process_fermi_level(
                     flush=True,
                 )
 
+            if contact.mid_gap_energy is None:
+                raise ValueError(
+                    f"Contact {contact.name} does not have a mid-gap energy defined. "
+                    "Please define the mid-gap energy in the configuration file."
+                )
+
             (
                 fermi_level,
                 mid_gap_energy,

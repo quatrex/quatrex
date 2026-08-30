@@ -336,7 +336,8 @@ def compute_contact_band_properties(
             len(kpoints_transport),
             kpoints.shape[0],
             len(contact.unit_cell_orbital_indices[contact.origin_key])
-            * contact.transport_repetitions,
+            * contact.transport_repetitions
+            * np.prod(contact.transverse_repetition_grid),
         ),
         dtype=float,
     )

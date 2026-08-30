@@ -272,6 +272,13 @@ def pre_process(
     ] = True,
 ):
     """Run pre-processing tasks for the provided configuration."""
+
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError(
+            "The 'pre-process' command can only be run on a single process."
+        )
+
     try:
         config = _resolve_config_path(config)
 

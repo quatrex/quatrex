@@ -2,17 +2,13 @@
 
 """Functions for merging TOML configurations."""
 
-from typing import Union
-
 from tomlkit.container import Container
 from tomlkit.items import AoT, Table
 
-TomlTable = Union[Table, Container]
-
 
 def merge_toml(
-    base: TomlTable,
-    patch: TomlTable,
+    base: Table | Container,
+    patch: Table | Container,
     id_keys: dict[str, str] | None = None,
     allow_new_aot: bool = False,
 ) -> None:
@@ -20,9 +16,9 @@ def merge_toml(
 
     Parameters
     ----------
-    base : TomlTable
+    base : Table | Container
         The base TOML to be modified in place.
-    patch : TomlTable
+    patch : Table | Container
         The patch TOML to merge into the base.
     id_keys : dict[str, str], optional
         A mapping of array-of-tables keys to the field used to identify

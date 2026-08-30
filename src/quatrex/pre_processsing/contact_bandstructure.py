@@ -175,8 +175,6 @@ def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
         )
 
         e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
-        if contact_config.voltage is not None:
-            e_k += contact_config.voltage
         for j, kpoint in enumerate(np.ndindex(h_xx[0].shape[:-2])):
             _plot(
                 ax=axes[j, i],
@@ -250,6 +248,14 @@ def plot_contact_band_structure(
                 linestyle=":",
                 label="Mid-gap Energy",
             )
+        if (contact.voltage is not None) and (contact.fermi_level is not None):
+            ax.axhline(
+                contact.fermi_level - contact.voltage,
+                color="orange",
+                linestyle="-.",
+                label=r"Chemical Potential ($\mu$)",
+            )
+
         ax.legend(loc="upper left")
 
     for ax, contact in zip(axes[0], contacts):

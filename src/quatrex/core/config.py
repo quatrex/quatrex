@@ -2264,17 +2264,18 @@ class QuatrexConfig(BaseModel):
     """Parameters for the photon system."""
 
     # --- Directory paths ----------------------------------------------
-    config_dir: Path
-    """The directory where the configuration file is located."""
-
-    config_file: Path | None = None
+    config_file: Path
     """The path to the configuration file.
 
     This is expected to be `None` and will be set automatically when
-    loading the configuration from a file. This is only used when the
-    configuration should be modified in `quatrex pre-process`.
+    loading the configuration from a file. If set manually, a
+    `ValueError` will be raised.
 
     """
+
+    _config_dir: Path = PrivateAttr(default=Path("."))
+    """The directory where the configuration file is located."""
+
     simulation_dir: Path = Path(".")
     """The directory where the simulation is run."""
     input_dir: Path | None = None
@@ -2297,13 +2298,14 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:
         """Resolves the config directory path."""
-        self.config_dir = Path(self.config_dir).resolve()
+        self.config_file = self.config_file.resolve()
+        self._config_dir = self.config_file.parent.resolve()
         return self
 
     @model_validator(mode="after")
     def resolve_simulation_dir(self):
         """Resolves the simulation directory path."""
-        self.simulation_dir = (self.config_dir / self.simulation_dir).resolve()
+        self.simulation_dir = (self._config_dir / self.simulation_dir).resolve()
         return self
 
     @model_validator(mode="after")
@@ -2315,7 +2317,7 @@ class QuatrexConfig(BaseModel):
                 self.output_dir = self.output_dir.resolve()
                 return self
 
-            self.output_dir = (self.config_dir / self.output_dir).resolve()
+            self.output_dir = (self._config_dir / self.output_dir).resolve()
             return self
 
         self.output_dir = self.simulation_dir / "outputs/"
@@ -2330,7 +2332,7 @@ class QuatrexConfig(BaseModel):
                 self.input_dir = self.input_dir.resolve()
                 return self
 
-            self.input_dir = (self.config_dir / self.input_dir).resolve()
+            self.input_dir = (self._config_dir / self.input_dir).resolve()
             return self
 
         self.input_dir = self.simulation_dir / "inputs/"
@@ -2498,7 +2500,11 @@ def _parse_config(
             simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
             config["simulation_dir"] = simulation_dir
 
-    config["config_dir"] = config_file.parent
+    if "config_file" in config.keys():
+        raise ValueError(
+            "The 'config_file' parameter should not be set in the configuration file."
+        )
+
     config["config_file"] = config_file
     # Resolve the geometry config.
     config["device"]["geometry"] = parse_geometry_config(config["device"])
@@ -2534,7 +2540,8 @@ def parse_config(config_file: Path) -> QuatrexConfig:
 
     config = mpi_comm_world.bcast(config, root=0)
 
-    return QuatrexConfig(**config)
+    config = QuatrexConfig(**config)
+    return config
 
 
 def _setup_profiler(config: QuatrexConfig) -> None:
@@ -2549,7 +2556,7 @@ def _setup_profiler(config: QuatrexConfig) -> None:
 
     if not config.outputs.profiling_path.is_absolute():
         config.outputs.profiling_path = (
-            config.config_dir / config.outputs.profiling_path
+            config._config_dir / config.outputs.profiling_path
         ).resolve()
 
     # Saving will strip the extension

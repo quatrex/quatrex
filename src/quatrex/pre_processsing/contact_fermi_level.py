@@ -103,9 +103,9 @@ def pre_process_fermi_level(
                 f"""
                 [[device.contacts]]
                 name = "{contact.name}"
-                {fermi_level=}
-                {mid_gap_energy=}
-                {delta_fermi_level_conduction_band=}
+                {fermi_level=} # Set by `quatrex pre-process`
+                {mid_gap_energy=} # Set by `quatrex pre-process`
+                {delta_fermi_level_conduction_band=} # Set by `quatrex pre-process`
                 """
             )
             merge_toml(
@@ -117,6 +117,8 @@ def pre_process_fermi_level(
         # parse the new config to make sure that it is valid need to
         # unwrap due the tomlkit lib not being compatible with
         # posixpaths
+        # Pop the config_file key since it is inferred
+        new_config.pop("config_file", None)
         QuatrexConfig(**_parse_config(config_file, new_config.unwrap()))
         config_file.write_text(tomlkit.dumps(new_config))
 

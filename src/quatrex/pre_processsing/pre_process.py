@@ -2,8 +2,6 @@
 
 """Includes main pre-processing function."""
 
-import warnings
-
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import Device
@@ -25,22 +23,17 @@ def pre_process(config: QuatrexConfig):
 
     """
 
-    if comm.rank != 0:
-        return
-
     if comm.size > 1:
-        warnings.warn(
-            "Pre-processing is only performed on rank 0. "
-            "If you are running a parallel simulation, please ensure that "
-            "the pre-processing steps are completed before starting the parallel run."
+        raise RuntimeError(
+            "The 'pre-process' command can only be run on a single process."
         )
 
     device = None
     if config.formalism == "wf":
         device = Device(config)
 
-    if config.pre_process.plot_contact_band_structure:
-        plot_contact_band_structure(config, device)
-
     if config.pre_process.compute_fermi_level:
         pre_process_fermi_level(config, device)
+
+    if config.pre_process.plot_contact_band_structure:
+        plot_contact_band_structure(config, device)

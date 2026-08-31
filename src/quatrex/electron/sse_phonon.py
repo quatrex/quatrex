@@ -40,9 +40,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the self-energy."""
 
-        if config.phonon.model == "negf":
-            raise NotImplementedError
-
         if config.phonon.model == "pseudo-scattering":
             self._compute_fn = self._compute_pseudo_scattering
             if electron_energies is None:

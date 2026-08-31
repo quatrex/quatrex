@@ -11,10 +11,12 @@ neighbor_cell_cutoff = [0, 0, 2]
     [[device.contacts]]
     name = "left"
     fermi_level = -3.6
+    mid_gap_energy = -3.8
 
     [[device.contacts]]
     name = "right"
     fermi_level = -3.8
+    mid_gap_energy = -3.8
 
 [qtbm] # ===============================================================
 max_batch_size = 1

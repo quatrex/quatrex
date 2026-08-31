@@ -154,11 +154,10 @@ def _expand_tight_binding_matrix(
     block_end : int | None, optional
         Ending block index for arrow shape partition. Defaults to
         `None`.
-    periodic_shift : tuple, optional
-        Incase the system is periodic in non-transport directions, the
-        periodic shift can be used to get interactions between the
-        transport cell and the periodic cells. E.g. (0, 0, 1) for one of
-        the periodic shifts in the z-direction.
+    transverse_shift : tuple, optional
+        Shift in the transverse directions. The shift means for which
+        real space coordinate the block should be constructed. The
+        default is (0, 0).
 
     Returns
     -------

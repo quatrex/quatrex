@@ -1802,7 +1802,10 @@ class DeviceConfig(BaseModel):
         """Validates that the required parameters are provided for the
         contacts."""
 
+        names = []
+
         for contact in self.contacts:
+            names.append(contact.name)
             if contact._contact_finder_method is not None:
                 raise ValueError(
                     "The `_contact_finder_method` parameter is not user configurable."
@@ -1834,6 +1837,8 @@ class DeviceConfig(BaseModel):
                         "both `origin` and `lattice_vectors` must be provided."
                     )
 
+        if len(names) != len(set(names)):
+            raise ValueError("The contact names must be unique.")
         return self
 
     @model_validator(mode="after")

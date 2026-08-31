@@ -279,7 +279,10 @@ def construct_circulant_cell(
     phases : tuple[complex, complex], optional
         The phase shifts to apply in the transverse directions.
     key_assumption : str | None, optional
-        Assumption on the keys in the matrix_dict.
+        Assumption on the keys in the matrix_dict. It must be either
+        None, or "half". The assumption is only for the transport
+        direction while for the transverse directions, it is assumed all
+        keys are present.
 
     Returns
     -------
@@ -289,6 +292,11 @@ def construct_circulant_cell(
     """
     if block_index not in [-1, 0, 1]:
         raise ValueError(f"Index must be -1, 0, or 1. Got {block_index}.")
+
+    if key_assumption not in [None, "half"]:
+        raise ValueError(
+            f"key_assumption must be None, or 'half'. Got {key_assumption}."
+        )
 
     # upscale first in transverse directions
     matrix_dict = expand_transverse(

@@ -361,8 +361,7 @@ def construct_transport_cell(
     ----------
     matrix_dict : dict
         The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper parts are
-        present.
+        repetitions.
     transport_cell_size : int
         Size of the transport cell.
     transport_ind : int

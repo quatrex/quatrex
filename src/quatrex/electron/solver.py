@@ -2,15 +2,16 @@
 
 """Includes the electron solver."""
 
+from collections.abc import Callable
 from typing import Literal
 
 import numpy as np
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.dsdbsparse import _DStackView
-from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.datastructures.dsdbsparse import _BlockIndexer, _DStackView, _StackView
+from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
@@ -33,6 +34,531 @@ from quatrex.device.inputs import assemble_matrix
 profiler = Profiler()
 
 
+def meir_wingreen_current(
+    out: NDArray,
+) -> Callable[[BackSubstitutionContext], None]:
+    """Closure for computing the Meir-Wingreen current.
+
+    This function returns a callback that computes the Meir-Wingreen
+    current during the back substitution step of the selected solve. The
+    current is computed using the lesser and greater Green's functions
+    and the lesser and greater self-energies.
+
+    Parameters
+    ----------
+    out : NDArray
+        Preallocated output array for the current. The shape of the
+        array should be (num_batches, num_layers + 1), since this
+        includes current between each layer and from/to the leads.
+
+    """
+
+    def callback(ctx: BackSubstitutionContext):
+        """Computes the Meir-Wingreen current for the current layer."""
+        if (
+            comm.block.size == 1
+            and 0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
+            and 0 <= ctx.j <= len(ctx.obc_blocks.retarded) - 1
+        ):
+            a_ji_dagger = ctx.a_ji.conj().swapaxes(-2, -1)
+            a_ji_xr_ii = ctx.a_ji @ ctx.xr_hat_ii
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_lesser_ij
+            sigma_lesser_tilde = (
+                ctx.a_ji @ ctx.xl_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_greater_ij
+            sigma_greater_tilde = (
+                ctx.a_ji @ ctx.xg_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            out[ctx.stack_slice, ..., ctx.j] = xp.trace(
+                sigma_greater_tilde @ ctx.xl_jj - ctx.xg_jj @ sigma_lesser_tilde,
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+        # The contact (lead) currents from the boundary self-energies.
+        # NOTE: In distributed mode, only the boundary currents are
+        # computed. The remaining currents are set to xp.nan outside of
+        # this callback.
+        if comm.block.rank == 0 and ctx.j == 0:
+            out[ctx.stack_slice, ..., 0] = xp.trace(
+                ctx.obc_blocks.greater[0][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[0][ctx.stack_slice],
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+        if (
+            comm.block.rank == comm.block.size - 1
+            and ctx.j == len(ctx.obc_blocks.retarded) - 1
+        ):
+            # NOTE: Negative sign is needed to get the current flowing
+            # in the correct direction (positive from left to right).
+            out[ctx.stack_slice, ..., -1] = -xp.trace(
+                ctx.obc_blocks.greater[-1][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[-1][ctx.stack_slice],
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+    return callback
+
+
+def device_current(
+    out: NDArray,
+    a_hat: DSDBSparse,
+) -> Callable[[BackSubstitutionContext], None]:
+    """Closure for computing the device current.
+
+    This function returns a callback that computes the device current
+    during the back substitution step of the selected solve. The current
+    is computed using the lesser Green's function and the *bare* system
+    matrix.
+
+    Parameters
+    ----------
+    out : NDArray
+        Preallocated output array for the current. The shape of the
+        array should be (num_batches, num_layers - 1), since this only
+        includes current between each layer.
+    a_hat : DSDBSparse
+        Bare system matrix. This is the system matrix without any
+        self-energy contributions.
+
+    """
+
+    def callback(ctx: BackSubstitutionContext):
+        """Computes the device current for the current layer."""
+
+        if not (
+            0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
+            and 0 <= ctx.j <= len(ctx.obc_blocks.retarded)
+        ):
+            # NOTE: The j index indeed can go up to
+            # len(ctx.obc_blocks.retarded) in distributed mode.
+            return
+
+        a_hat_ = a_hat.stack[ctx.stack_slice]
+
+        # Coherent bond current across the interface between block i and
+        # j, using the *dense* off-diagonal G^< block (xl_ij) and the
+        # full effective coupling from the system matrix (E*S - H).
+        a_hat_ij = a_hat_.blocks[ctx.i, ctx.j]
+        a_hat_ji = a_hat_.blocks[ctx.j, ctx.i]
+
+        upward = ctx.i > ctx.j
+        layer_ind = ctx.j if upward else ctx.i
+        global_layer_ind = a_hat.block_section_offsets[comm.block.rank] + layer_ind
+        prefactor = -1 if upward else 1
+
+        xl_ji = -ctx.xl_ij.conj().swapaxes(-2, -1)
+        out[ctx.stack_slice, ..., global_layer_ind] = xp.trace(
+            prefactor * (ctx.xl_ij @ a_hat_ji - a_hat_ij @ xl_ji),
+            axis1=-2,
+            axis2=-1,
+        ).real
+
+    return callback
+
+
+class SystemMatrix(_StackView):
+    """Class representing the system matrix for the electron solver.
+
+    Parameters
+    ----------
+    stack_shape : tuple
+        The shape of the stack.
+    stack_index : tuple
+        The index of the stack.
+    energies : NDArray
+        The energies at which to solve.
+    hamiltonian : DSDBSparse | _DStackView
+        The Hamiltonian matrix.
+    overlap : DSDBSparse | _DStackView | None, optional
+        The overlap matrix.
+    sse_lesser : DSDBSparse | _DStackView | None, optional
+        The lesser self-energy matrix.
+    sse_greater : DSDBSparse | _DStackView | None, optional
+        The greater self-energy matrix.
+    sse_retarded_hermitian : DSDBSparse | _DStackView | None, optional
+        The retarded self-energy matrix.
+    potential : NDArray | None, optional
+        The potential energy matrix.
+
+    """
+
+    _DELEGATED = (
+        "distribution_state",
+        "num_blocks",
+        "block_sizes",
+        "num_local_blocks",
+        "block_section_offsets",
+    )
+
+    def __init__(
+        self,
+        stack_shape: tuple,
+        stack_index: tuple,
+        energies: NDArray,
+        hamiltonian: DSDBSparse | _DStackView,
+        overlap: DSDBSparse | _DStackView | None = None,
+        sse_lesser: DSDBSparse | _DStackView | None = None,
+        sse_greater: DSDBSparse | _DStackView | None = None,
+        sse_retarded_hermitian: DSDBSparse | _DStackView | None = None,
+        potential: NDArray | None = None,
+    ) -> None:
+        """Initializes the system matrix."""
+        super().__init__(stack_shape, stack_index)
+        self._energies = energies
+        self._hamiltonian = hamiltonian
+        self._overlap = overlap
+        self._sse_lesser = sse_lesser
+        self._sse_greater = sse_greater
+        self._sse_retarded_hermitian = sse_retarded_hermitian
+        self._potential = potential
+
+    def _reindexed(self, stack_index: tuple) -> "SystemMatrix":
+        """Returns a new system matrix with the given stack index."""
+        return SystemMatrix(
+            self._stack_shape,
+            stack_index,
+            self._energies[stack_index[0]],
+            self._hamiltonian.stack[*((0,) + stack_index[1:])],
+            (
+                self._overlap.stack[*((0,) + stack_index[1:])]
+                if self._overlap is not None
+                else None
+            ),
+            (
+                self._sse_lesser.stack[stack_index]
+                if self._sse_lesser is not None
+                else None
+            ),
+            (
+                self._sse_greater.stack[stack_index]
+                if self._sse_greater is not None
+                else None
+            ),
+            (
+                self._sse_retarded_hermitian.stack[stack_index]
+                if self._sse_retarded_hermitian is not None
+                else None
+            ),
+            self._potential,
+        )
+
+    def __getattr__(self, name: str):
+        """Delegates attribute access to the Hamiltonian if the
+        attribute is in the _DELEGATED list.
+
+        Raises AttributeError if the attribute is not found.
+
+        """
+        if name in self._DELEGATED:
+            return getattr(self._hamiltonian, name)
+        raise AttributeError(
+            f"{type(self).__name__!r} object has no attribute {name!r}"
+        )
+
+    @property
+    def dtype(self) -> xp.dtype:
+        """Returns the data type of the system matrix."""
+        # NOTE: The Hamiltonian could be potentially real
+        # but the system matrix is always complex
+        # TODO: Handling cases without self-energy
+        return xp.complex128
+
+    def _make_block_indexer(self) -> "SystemMatrixBlockIndexer":
+        """Constructs the block indexer for this view."""
+        return SystemMatrixBlockIndexer(
+            stack_shape=self._stack_shape,
+            energies=self._energies,
+            hamiltonian=self._hamiltonian,
+            overlap=self._overlap,
+            sse_lesser=self._sse_lesser,
+            sse_greater=self._sse_greater,
+            sse_retarded_hermitian=self._sse_retarded_hermitian,
+            potential=self._potential,
+            stack_index=self._stack_index,
+        )
+
+
+class SystemMatrixBlockIndexer(_BlockIndexer):
+    """Block indexer for the System Matrix.
+
+    Parameters
+    ----------
+    stack_shape : tuple
+        The shape of the stack.
+    energies : NDArray
+        The energies at which to solve.
+    hamiltonian : DSDBSparse | _DStackView
+        The Hamiltonian matrix.
+    overlap : DSDBSparse | _DStackView | None, optional
+        The overlap matrix.
+    sse_lesser : DSDBSparse | _DStackView | None, optional
+        The lesser self-energy matrix.
+    sse_greater : DSDBSparse | _DStackView | None, optional
+        The greater self-energy matrix.
+    sse_retarded_hermitian : DSDBSparse | _DStackView | None, optional
+        The retarded self-energy matrix.
+    potential : NDArray | None, optional
+        The potential energy matrix.
+    stack_index : tuple, optional
+        The index of the stack.
+
+    """
+
+    def __init__(
+        self,
+        stack_shape: tuple,
+        energies: NDArray,
+        hamiltonian: DSDBSparse | _DStackView,
+        overlap: DSDBSparse | _DStackView | None = None,
+        sse_lesser: DSDBSparse | _DStackView | None = None,
+        sse_greater: DSDBSparse | _DStackView | None = None,
+        sse_retarded_hermitian: DSDBSparse | _DStackView | None = None,
+        potential: NDArray | None = None,
+        stack_index: tuple = (Ellipsis,),
+    ) -> None:
+        """Initializes the System Matrix indexer."""
+        super().__init__(stack_index)
+        self._stack_shape = stack_shape
+        self._energies = energies
+        self._hamiltonian = hamiltonian
+        self._overlap = overlap
+        self._sse_lesser = sse_lesser
+        self._sse_greater = sse_greater
+        self._sse_retarded_hermitian = sse_retarded_hermitian
+        self._potential = potential
+
+    def _normalize_index(self, index: tuple) -> tuple:
+        """Normalizes the block index.
+
+        Parameters
+        ----------
+        index : tuple
+            The block index to normalize.
+
+        """
+        if self._hamiltonian.distribution_state != "stack":
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
+            )
+        if self._overlap is not None and self._overlap.distribution_state != "stack":
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
+            )
+        if (
+            self._sse_lesser is not None
+            and self._sse_lesser.distribution_state != "stack"
+        ):
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
+            )
+        if (
+            self._sse_greater is not None
+            and self._sse_greater.distribution_state != "stack"
+        ):
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
+            )
+        if (
+            self._sse_retarded_hermitian is not None
+            and self._sse_retarded_hermitian.distribution_state != "stack"
+        ):
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
+            )
+        if len(index) != 2:
+            raise IndexError("Exactly two block indices are required.")
+
+        row, col = index
+        if isinstance(row, slice) or isinstance(col, slice):
+            raise NotImplementedError("Slicing is not supported.")
+
+        if row < 0 or col < 0:
+            raise IndexError("Negative block indices are not supported.")
+
+        if row >= len(self._hamiltonian.local_block_sizes) or col >= len(
+            self._hamiltonian.local_block_sizes
+        ):
+            raise IndexError("Block index out of bounds.")
+
+        return row, col
+
+    def _apply_overlap(
+        self,
+        row: int,
+        col: int,
+        out: NDArray,
+    ) -> NDArray:
+        """Applies the overlap to the system matrix block.
+
+        Parameters
+        ----------
+        row : int
+            The row index of the block.
+        col : int
+            The column index of the block.
+        out : NDArray
+            The block to which the overlap is applied.
+
+        Returns
+        -------
+        NDArray
+            The block with the overlap applied.
+
+        """
+        num_dims = len(self._hamiltonian.local_stack_shape)
+        if self._overlap is not None:
+            overlap = self._overlap.blocks[row, col]
+            out = out + self._energies.reshape(
+                -1, *((1,) * (num_dims + 1))
+            ) * overlap.reshape(1, *self._stack_shape[1:], *out.shape[-2:])
+        elif row == col:
+            out = out + self._energies.reshape(-1, *((1,) * (num_dims + 1))) * xp.eye(
+                out.shape[-1], dtype=out.dtype
+            ).reshape(*((1,) * num_dims + out.shape[-2:]))
+
+        return out
+
+    def _apply_potential(
+        self,
+        row: int,
+        col: int,
+        out: NDArray,
+    ) -> NDArray:
+        """Applies the potential to the system matrix block.
+
+        Parameters
+        ----------
+        row : int
+            The row index of the block.
+        col : int
+            The column index of the block.
+        out : NDArray
+            The block to which the potential is applied.
+
+        Returns
+        -------
+        NDArray
+            The block with the potential applied.
+
+        """
+        if self._potential is not None:
+            if self._overlap is not None:
+                s_ij = self._overlap.blocks[row, col]
+                potential_i = self._potential[
+                    self._hamiltonian.local_block_offsets[
+                        row
+                    ] : self._hamiltonian.local_block_offsets[row + 1]
+                ]
+                if row == col:
+                    out -= (
+                        s_ij * potential_i[..., np.newaxis] + s_ij * potential_i
+                    ) / 2
+                else:
+                    potential_j = self._potential[
+                        self._hamiltonian.local_block_offsets[
+                            col
+                        ] : self._hamiltonian.local_block_offsets[col + 1]
+                    ]
+                    out -= (
+                        s_ij * potential_i[..., np.newaxis] + s_ij * potential_j
+                    ) / 2
+            else:
+                if row == col:
+                    out -= (
+                        xp.eye(out.shape[-1], dtype=out.dtype)
+                        * self._potential[
+                            self._hamiltonian.local_block_offsets[
+                                row
+                            ] : self._hamiltonian.local_block_offsets[row + 1]
+                        ]
+                    )
+
+        return out
+
+    def _apply_self_energy(
+        self,
+        row: int,
+        col: int,
+        out: NDArray,
+    ) -> NDArray:
+        r"""Substracts the self-energy from the system matrix block.
+
+        $$\mathbf{A}_{ij} \mathrel{{-}{=}} \mathbf{\Sigma}^R_{ij} +
+        \frac{1}{2} \left(\mathbf{\Sigma}^{>}_{ij} -
+        \mathbf{\Sigma}^{<}_{ij} \right)$$
+
+        Note
+        ----
+        Only substracts when the self-energy is provided. If the
+        self-energy is not provided, the block is returned unchanged.
+
+        Parameters
+        ----------
+        row : int
+            The row index of the block.
+        col : int
+            The column index of the block.
+        out : NDArray
+            The block to which the self-energy is subtracted.
+
+        Returns
+        -------
+        NDArray
+            The block with the self-energy subtracted.
+
+        """
+        if self._sse_retarded_hermitian is not None:
+            out = out - self._sse_retarded_hermitian.blocks[row, col]
+
+        if self._sse_lesser is not None:
+            out = out + 0.5 * self._sse_lesser.blocks[row, col]
+
+        if self._sse_greater is not None:
+            out = out - 0.5 * self._sse_greater.blocks[row, col]
+
+        return out
+
+    def __getitem__(self, index: tuple) -> NDArray:
+        """Gets the requested block from the system matrix.
+
+        Parameters
+        ----------
+        index : tuple
+            The block index to retrieve.
+
+        Returns
+        -------
+        NDArray
+            The requested block.
+
+        """
+        row, col = self._normalize_index(index)
+
+        out = -self._hamiltonian.blocks[row, col]
+        # add extra dimension for the energy
+        out = out.reshape(1, *self._stack_shape[1:], *out.shape[-2:])
+        out = self._apply_overlap(row, col, out)
+        out = self._apply_potential(row, col, out)
+        out = self._apply_self_energy(row, col, out)
+
+        return out
+
+    def __setitem__(self, index: tuple, block: NDArray) -> None:
+        """Sets the requested block in the data structure."""
+        raise NotImplementedError(
+            "Setting blocks is not supported in SystemMatrixBlockIndexer."
+        )
+
+
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 
@@ -51,7 +577,6 @@ class ElectronSolver(SubsystemSolver):
         self,
         config: QuatrexConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(config, energies)
@@ -59,32 +584,23 @@ class ElectronSolver(SubsystemSolver):
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
-        self.hamiltonian, hamiltonian_sparsity_pattern = assemble_matrix(
+        self.hamiltonian, __ = assemble_matrix(
             config=config,
             matrix_name="hamiltonian",
             sparsity_pattern=None,
             shift_kpoints=False,
         )
-
-        # Make sure that the the system matrix sparsity is a superset of
-        # self-energy and Hamiltonian sparsity.
-        sparsity_pattern += hamiltonian_sparsity_pattern
-
-        del hamiltonian_sparsity_pattern
         self.block_sizes = self.hamiltonian.block_sizes
 
         try:
             # Attempt to load the device overlap matrix.
-            self.overlap, overlap_sparsity_pattern = assemble_matrix(
+            self.overlap, __ = assemble_matrix(
                 config=config,
                 matrix_name="overlap",
                 sparsity_pattern=None,
                 shift_kpoints=False,
             )
 
-            # Make sure that the the system matrix sparsity is a superset of
-            # self-energy and overlap sparsity.
-            sparsity_pattern += overlap_sparsity_pattern
             # Check that the overlap matrix and Hamiltonian matrix match.
             if self.overlap.shape != self.hamiltonian.shape:
                 raise ValueError(
@@ -99,15 +615,9 @@ class ElectronSolver(SubsystemSolver):
             if comm.rank == 0:
                 print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
 
-        # Allocate memory for the system matrix.
-        self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
-            sparray=sparsity_pattern.astype(xp.complex128),
-            block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape
-            + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
-            allocate=False,
-        )
-        del sparsity_pattern
+        # Will be initialized in the `_assemble_system_matrix` method.
+        self.system_matrix = None
+        self.bare_system_matrix = None
 
         self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
@@ -138,7 +648,8 @@ class ElectronSolver(SubsystemSolver):
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
-        self.compute_meir_wingreen_current = config.electron.solver.compute_current
+        self.compute_meir_wingreen_current = config.outputs.meir_wingreen_currents
+        self.compute_device_current = config.outputs.device_currents
 
         self.dos_peak_limit = config.electron.dos_peak_limit
 
@@ -225,8 +736,11 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Prepare Buffers for OBC.
-        self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
+        self.obc_blocks = OBCBlocks(num_blocks=self.hamiltonian.num_local_blocks)
         self.block_sections = config.electron.obc.block_sections
+
+        self.meir_wingreen_current = None
+        self.device_current = None
 
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
@@ -528,7 +1042,7 @@ class ElectronSolver(SubsystemSolver):
             self.obc_blocks.greater[0] = obc_greater
 
         if comm.block.rank == comm.block.size - 1:
-            n = self.system_matrix.num_local_blocks - 1
+            n = self.hamiltonian.num_local_blocks - 1
             m = n - 1
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
                 contact="right-" + str(batch_slice),
@@ -540,141 +1054,6 @@ class ElectronSolver(SubsystemSolver):
             self.obc_blocks.retarded[-1] = obc_retarded
             self.obc_blocks.lesser[-1] = obc_lesser
             self.obc_blocks.greater[-1] = obc_greater
-
-    def _add_overlap(
-        self,
-    ) -> None:
-        """Adds the overlap matrix to the system matrix.
-
-        This modifies the system matrix in-place, i.e. the result is stored in
-        `self.system_matrix`.
-
-        Parameters
-        ----------
-        self.system_matrix : DSDBSparse
-            The matrix to add to.
-        b : DSDBSparse
-            The matrix to add.
-
-        """
-        if not isinstance(self.overlap, DSDBSparse):
-            raise ValueError("Overlap matrix must be a DSDBSparse.")
-
-        system_matrix_ = self.system_matrix.stack[...]
-        overlap_ = self.overlap.stack[...]
-        for i in range(self.system_matrix.num_local_blocks):
-            j = i + 1
-            system_matrix_.blocks[i, i] += overlap_.blocks[i, i]
-
-            if (
-                j >= self.system_matrix.num_local_blocks
-                and comm.block.rank == comm.block.size - 1
-            ):
-                # The last rank does not have these blocks.
-                continue
-
-            system_matrix_.blocks[i, j] += overlap_.blocks[i, j]
-            system_matrix_.blocks[j, i] += overlap_.blocks[j, i]
-
-    def _apply_potential(
-        self,
-    ) -> None:
-        """Applies the potential to the system matrix.
-
-        This modifies the system matrix in-place, i.e. the result is stored in
-        `self.system_matrix`.
-
-        """
-        if not isinstance(self.overlap, DSDBSparse):
-            raise ValueError("Overlap matrix must be a DSDBSparse.")
-
-        system_matrix_ = self.system_matrix.stack[...]
-        overlap_ = self.overlap.stack[...]
-        offset = 0
-        for i in range(self.system_matrix.num_local_blocks):
-            j = i + 1
-            s_ii = overlap_.blocks[i, i]
-            potential_i = self.potential[offset : offset + s_ii.shape[-1]]
-
-            system_matrix_.blocks[i, i] -= (
-                s_ii * potential_i[..., np.newaxis] + s_ii * potential_i
-            ) / 2
-
-            offset += s_ii.shape[-1]
-
-            if (
-                j >= self.system_matrix.num_local_blocks
-                and comm.block.rank == comm.block.size - 1
-            ):
-                # The last rank does not have these blocks.
-                continue
-
-            s_ij = overlap_.blocks[i, j]
-            s_ji = overlap_.blocks[j, i]
-            potential_j = self.potential[offset : offset + s_ij.shape[-1]]
-
-            system_matrix_.blocks[i, j] -= (
-                s_ij * potential_i[..., np.newaxis] + s_ij * potential_j
-            ) / 2
-            system_matrix_.blocks[j, i] -= (
-                s_ji * potential_j[..., np.newaxis] + s_ji * potential_i
-            ) / 2
-
-    def _subtract_hamiltonian_and_self_energy(
-        self,
-        sse_lesser: DSDBSparse | _DStackView,
-        sse_greater: DSDBSparse | _DStackView,
-        sse_retarded_hermitian: DSDBSparse | _DStackView,
-    ) -> None:
-        r"""Subtracts the Hamiltonian and the self-energy from the system matrix
-        on the block-tridiagonal.
-
-        $$\mathbf{M} \mathrel{{-}{=}} \mathbf{H} + \mathbf{\Sigma}^R +
-        \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right)$$
-
-        This modifies the system matrix in-place, i.e. the result is stored in
-        `self.system_matrix`.
-
-        Parameters
-        ----------
-        sse_lesser : DSDBSparse | _DStackView
-            The lesser self-energy to subtract.
-        sse_greater : DSDBSparse | _DStackView
-            The greater self-energy to subtract.
-        sse_retarded_hermitian : DSDBSparse | _DStackView
-            The retarded self-energy to subtract.
-
-        """
-        system_matrix_ = self.system_matrix.stack[...]
-        hamiltonian_ = self.hamiltonian.stack[...]
-        sse_retarded_hermitian_ = sse_retarded_hermitian.stack[...]
-        sse_lesser_ = sse_lesser.stack[...]
-        sse_greater_ = sse_greater.stack[...]
-        for i in range(self.system_matrix.num_local_blocks):
-            j = i + 1
-            system_matrix_.blocks[i, i] -= (
-                sse_retarded_hermitian_.blocks[i, i]
-                + 0.5 * (sse_greater_.blocks[i, i] - sse_lesser_.blocks[i, i])
-                + hamiltonian_.blocks[i, i]
-            )
-
-            if (
-                j >= self.system_matrix.num_local_blocks
-                and comm.block.rank == comm.block.size - 1
-            ):
-                # The last rank does not have these blocks.
-                continue
-
-            system_matrix_.blocks[i, j] -= (
-                sse_retarded_hermitian_.blocks[i, j]
-                + 0.5 * (sse_greater_.blocks[i, j] - sse_lesser_.blocks[i, j])
-                + hamiltonian_.blocks[i, j]
-            )
-            system_matrix_.blocks[j, i] -= (
-                sse_retarded_hermitian_.blocks[j, i]
-                + 0.5 * (sse_greater_.blocks[j, i] - sse_lesser_.blocks[j, i])
-                + hamiltonian_.blocks[j, i]
-            )
 
     @profiler.profile(label="ElectronSolver: Assemble", level="default", comm=comm)
     def _assemble_system_matrix(
@@ -698,39 +1077,24 @@ class ElectronSolver(SubsystemSolver):
             The slice of the energy stack corresponding to the current batch.
 
         """
-        self.system_matrix.data = 0.0
-
-        if self.overlap is None:
-            offset = self.system_matrix.global_block_offset
-            num_diag = self.system_matrix.num_local_diag
-
-            diagonal = (self.local_energies[batch_slice] + 1j * self.eta)[:, np.newaxis]
-            diagonal = (
-                diagonal - self.potential[offset : offset + num_diag][np.newaxis, :]
-            )
-
-            # Add singleton dimensions to match the system matrix shape.
-            num_kpoint_dims = len(self.system_matrix.global_stack_shape) - 1
-            if num_kpoint_dims > 0:
-                new_shape = (
-                    (diagonal.shape[0],) + (1,) * num_kpoint_dims + (diagonal.shape[1],)
-                )
-                diagonal = diagonal.reshape(new_shape)
-
-            self.system_matrix.fill_diagonal(diagonal)
-        else:
-            self._add_overlap()
-            scale_stack(
-                self.system_matrix.data,
-                self.local_energies[batch_slice] + 1j * self.eta,
-            )
-
-            self._apply_potential()
-
-        self._subtract_hamiltonian_and_self_energy(
-            sse_lesser,
-            sse_greater,
-            sse_retarded_hermitian,
+        self.system_matrix = SystemMatrix(
+            stack_shape=sse_lesser.local_stack_shape,
+            stack_index=(...,),
+            energies=self.local_energies[batch_slice] + 1j * self.eta,
+            hamiltonian=self.hamiltonian,
+            overlap=self.overlap,
+            potential=self.potential[self.hamiltonian.global_block_offset :],
+            sse_lesser=sse_lesser,
+            sse_greater=sse_greater,
+            sse_retarded_hermitian=sse_retarded_hermitian,
+        )
+        self.bare_system_matrix = SystemMatrix(
+            stack_shape=sse_lesser.local_stack_shape,
+            stack_index=(...,),
+            energies=self.local_energies[batch_slice] + 1j * self.eta,
+            hamiltonian=self.hamiltonian,
+            overlap=self.overlap,
+            potential=self.potential[self.hamiltonian.global_block_offset :],
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -858,19 +1222,25 @@ class ElectronSolver(SubsystemSolver):
 
         batch_sizes, batch_offsets = get_batches(sse_lesser.shape[0], max_batch_size)
 
-        self.meir_wingreen_current = []
+        if self.compute_meir_wingreen_current:
+            self.meir_wingreen_current = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks + 1),
+                dtype=xp.float64,
+            )
+        if self.compute_device_current:
+            self.device_current = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks - 1),
+                dtype=xp.float64,
+            )
+
+        domain_distributed = comm.block.size > 1
+        solver = self.solver_dist if domain_distributed else self.solver
 
         for i in range(len(batch_sizes)):
-
             batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
             sse_lesser_batch = sse_lesser.stack[batch_slice]
             sse_greater_batch = sse_greater.stack[batch_slice]
             sse_retarded_hermitian_batch = sse_retarded_hermitian.stack[batch_slice]
-
-            # Free data when the batch size changes
-            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
-                self.system_matrix.free_data()
-            self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
             self._assemble_system_matrix(
                 sse_lesser_batch,
@@ -890,42 +1260,54 @@ class ElectronSolver(SubsystemSolver):
                     out_g.stack[batch_slice],
                     out_r.stack[batch_slice],
                 )
-                if comm.block.size > 1:
-                    self.meir_wingreen_current.append(
-                        self.solver_dist.selected_solve(
-                            a=self.system_matrix,
-                            sigma_lesser=sse_lesser_batch,
-                            sigma_greater=sse_greater_batch,
-                            obc_blocks=self.obc_blocks,
-                            out=out_slice,
-                            return_retarded=True,
-                            return_current=self.compute_meir_wingreen_current,
+
+                callback_list = []
+                if self.compute_meir_wingreen_current:
+                    callback_list.append(
+                        meir_wingreen_current(self.meir_wingreen_current[batch_slice])
+                    )
+                if self.compute_device_current:
+                    callback_list.append(
+                        device_current(
+                            self.device_current[batch_slice], self.bare_system_matrix
                         )
                     )
 
-                else:
-                    self.meir_wingreen_current.append(
-                        self.solver.selected_solve(
-                            a=self.system_matrix,
-                            sigma_lesser=sse_lesser_batch,
-                            sigma_greater=sse_greater_batch,
-                            obc_blocks=self.obc_blocks,
-                            out=out_slice,
-                            return_retarded=True,
-                            return_current=self.compute_meir_wingreen_current,
-                        )
-                    )
+                solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser_batch,
+                    sigma_greater=sse_greater_batch,
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=True,
+                    callbacks=callback_list,
+                )
+
+        # In the domain-distributed case, we need to allreduce the
+        # current across the block communicator to get the total current
+        # for each layer. NOTE: We use allreduce instead of allgather
+        # since every rank allocates the full current.
+        if self.compute_meir_wingreen_current and domain_distributed:
+            # TODO: Only boundary currents are currently supported in
+            # distributed mode. Invalidate the remaining layers by
+            # setting them to xp.nan.
+            self.meir_wingreen_current[..., 1:-1] = xp.nan
+
+            total_meir_wingreen_current = xp.zeros_like(self.meir_wingreen_current)
+            comm.block.all_reduce(
+                self.meir_wingreen_current, total_meir_wingreen_current, op="sum"
+            )
+            self.meir_wingreen_current = total_meir_wingreen_current
+
+        if self.compute_device_current and domain_distributed:
+            total_device_current = xp.zeros_like(self.device_current)
+            comm.block.all_reduce(self.device_current, total_device_current, op="sum")
+            self.device_current = total_device_current
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
         ):
-            self.system_matrix.free_data()
             if self.call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
-
-        if self.compute_meir_wingreen_current:
-            self.meir_wingreen_current = xp.concatenate(
-                self.meir_wingreen_current, axis=0
-            )
 
         self.call_count += 1

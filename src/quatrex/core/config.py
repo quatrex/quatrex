@@ -492,25 +492,6 @@ class SolverConfig(BaseModel):
 
     """
 
-    compute_current: bool | None = None
-    """Whether to compute the current via the Meir-Wingreen formula.
-
-    This is only supported for the `"rgf"` algorithm. If not set, it is
-    automatically determined based on the [`algorithm`](#algorithm).
-    (i.e. `True` for `"rgf"` and `False` for `"inv"`)
-
-    If `True`, the current is computed between each layer and from/to
-    the leads. This way of computing the current is usually preferable
-    as it is independet of any interaction cutoffs, since it is computed
-    from the temporarily densified Green's functions and self-energies.
-
-    !!! note
-        This is parameter is only used in the electron solver. The
-        Coulomb screening solver does not compute currents, so this
-        parameter is ignored for the Coulomb screening solver.
-
-    """
-
     direct_solver: Literal[
         "superlu",
         "mumps",
@@ -539,22 +520,6 @@ class SolverConfig(BaseModel):
     block-tridiagonal structure.
 
     """
-
-    @model_validator(mode="after")
-    def set_compute_current(self) -> Self:
-        """Sets the `compute_current` parameter based on the algorithm."""
-        if self.compute_current is None:
-            if self.algorithm == "rgf":
-                self.compute_current = True
-            else:
-                self.compute_current = False
-
-        if self.compute_current and self.algorithm != "rgf":
-            raise ValueError(
-                "Current computation is only supported for the RGF algorithm."
-            )
-
-        return self
 
 
 class OBCConfig(BaseModel):
@@ -1503,11 +1468,36 @@ class OutputConfig(BaseModel):
 
     # Only the spectral currents are saved by default.
     device_currents: bool = True
-    """Whether to save the device currents.
+    """Whether to compute and save the device current.
 
-    This will output both the spectral device current between transport
-    cells computed from the lesser Green's function and, if configured,
-    the Meir-Wingreen device current.
+    If `True`, the current is computed between each layer and from/to
+    the leads. This way of computing the current is usually preferable
+    as it is independet of any interaction cutoffs, since it is computed
+    from the temporarily densified Green's functions and self-energies.
+
+    !!! Note
+        Independent of `meir_wingreen_currents`.
+
+    """
+
+    meir_wingreen_currents: bool = True
+    """Whether to compute and save the Meir-Wingreen current.
+    Whether to compute the current via the Meir-Wingreen formula.
+
+    This is only supported when `"rgf"` algorithm is used in the
+    electron solver.
+
+    If `True`, the current is computed between each layer and from/to
+    the leads. This way of computing the current is usually preferable
+    as it is independet of any interaction cutoffs, since it is computed
+    from the temporarily densified Green's functions and self-energies.
+
+    !!! Note
+        Independent of `device_currents`.
+
+    !!! Warning
+        The Meir-Wingreen current is not supported in the domain
+        distributed case.
 
     """
 
@@ -2332,6 +2322,19 @@ class QuatrexConfig(BaseModel):
                     "The `direction` parameter of each contact must be "
                     "set in the 'wf' formalism."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_current(self) -> Self:
+        """Validates current settings."""
+        if self.electron.solver.algorithm == "inv" and (
+            self.outputs.meir_wingreen_currents or self.outputs.device_currents
+        ):
+            raise ValueError(
+                "Current computation is not supported "
+                "when the `electron` solver `algorithm` is set to `inv`."
+            )
 
         return self
 

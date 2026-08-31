@@ -8,12 +8,12 @@ For more information see https://github.com/vincent-maillou/serinv
 """
 
 import itertools
-from typing import Optional
+from collections.abc import Callable
 
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
-from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.kernels import linalg
 from qttools.utils.gpu_utils import synchronize_device
 
@@ -113,13 +113,14 @@ class ReducedSystem:
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
         sigma_lesser: DSDBSparse | _DStackView = None,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
         sigma_greater: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        **kwargs,
     ):
         """Gathers the reduced system across all ranks.
 
@@ -217,13 +218,14 @@ class ReducedSystem:
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
         sigma_lesser: DSDBSparse | _DStackView = None,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
         sigma_greater: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        **kwargs,
     ):
         """Gathers the reduced system across all ranks.
 
@@ -607,14 +609,18 @@ class ReducedSystem:
         xr_buffer_lower: list[NDArray],
         xr_out: DSDBSparse | _DStackView,
         return_retarded: bool = True,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
         xl_out: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
         xg_out: DSDBSparse | _DStackView = None,
+        stack_slice: slice | None = None,
+        obc_blocks: OBCBlocks | None = None,
+        callbacks: list[Callable[[BackSubstitutionContext], None]] | None = None,
+        **kwargs,
     ):
         """Scatters the reduced system across all ranks.
 
@@ -693,6 +699,20 @@ class ReducedSystem:
                 is_retarded=False,
             )
 
+            # NOTE: This is done here because it is the last time we
+            # have access to the dense off-diagonal blocks connecting
+            # partitions, since they are sparsified during the mapback.
+            if callbacks is not None and comm.block.rank != comm.block.size - 1:
+                ctx = BackSubstitutionContext(
+                    i=xr_out.num_local_blocks - 1,
+                    j=xr_out.num_local_blocks,
+                    xl_ij=self.xl_upper_blocks[2 * comm.block.rank],
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
     def _mapback_reduced_system(
         self,
         x_diag_blocks: list[NDArray],
@@ -702,7 +722,7 @@ class ReducedSystem:
         write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
-        lower_block_reduced_system: Optional[list[NDArray]] = None,
+        lower_block_reduced_system: list[NDArray] | None = None,
         is_retarded: bool = True,
     ):
         """Maps the reduced system back to the local partition.
@@ -785,12 +805,13 @@ def downward_schur(
     xr_diag_blocks: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the downward Schur complement decomposition."""
     obc_r = obc_blocks.retarded[0]
@@ -887,12 +908,13 @@ def upward_schur(
     xr_diag_blocks: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the upward Schur complement decomposition."""
     n = a.num_local_blocks - 1
@@ -993,15 +1015,14 @@ def permuted_schur(
     xr_buffer_upper: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
-    xl_buffer_lower: list[NDArray] = None,
-    xl_buffer_upper: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
+    xl_buffer_upper: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
-    xg_buffer_lower: list[NDArray] = None,
-    xg_buffer_upper: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
+    xg_buffer_upper: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the permuted Schur complement decomposition."""
     xr_buffer_lower[0] = a.blocks[0, 1]
@@ -1154,13 +1175,17 @@ def downward_selinv(
     xr_diag_blocks: list[NDArray],
     xr_out: DSDBSparse | _DStackView,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     xl_out: DSDBSparse | _DStackView = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     xg_out: DSDBSparse | _DStackView = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the downward selected inversion."""
     for i in range(a.num_local_blocks - 2, -1, -1):
@@ -1231,6 +1256,19 @@ def downward_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=j,
+                    xl_ij=xl_ij,
+                    xl_jj=xl_jj,
+                    xg_jj=xg_jj,
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
         x_lower_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_upper_block = -xr_ii_a_ij @ xr_diag_blocks[j]
         xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
@@ -1242,19 +1280,35 @@ def downward_selinv(
         xr_out.blocks[i, j] = x_upper_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
 
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=-1,
+            j=0,
+            xl_jj=xl_diag_blocks[0],
+            xg_jj=xg_diag_blocks[0],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
+
 
 def upward_selinv(
     a: DSDBSparse,
     xr_diag_blocks: list[NDArray],
     xr_out: DSDBSparse,
     sigma_lesser: DSDBSparse = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     xl_out: DSDBSparse = None,
     sigma_greater: DSDBSparse = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     xg_out: DSDBSparse = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the upward selected inversion."""
     for i in range(1, a.num_local_blocks):
@@ -1337,6 +1391,19 @@ def upward_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=j,
+                    xl_ij=xl_ij,
+                    xl_jj=xl_jj,
+                    xg_jj=xg_jj,
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
         x_upper_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_lower_block = -xr_ii_a_ij @ xr_diag_blocks[j]
         xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
@@ -1348,6 +1415,18 @@ def upward_selinv(
         xr_out.blocks[i, j] = x_lower_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
 
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=a.num_local_blocks,
+            j=a.num_local_blocks - 1,
+            xl_jj=xl_diag_blocks[-1],
+            xg_jj=xg_diag_blocks[-1],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
+
 
 def permuted_selinv(
     a: DSDBSparse | _DStackView,
@@ -1356,17 +1435,19 @@ def permuted_selinv(
     xr_buffer_upper: list[NDArray],
     xr_out: DSDBSparse | _DStackView,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
-    xl_buffer_lower: list[NDArray] = None,
-    xl_buffer_upper: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
+    xl_buffer_upper: list[NDArray] | None = None,
     xl_out: DSDBSparse | _DStackView = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
-    xg_buffer_lower: list[NDArray] = None,
-    xg_buffer_upper: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
+    xg_buffer_upper: list[NDArray] | None = None,
     xg_out: DSDBSparse | _DStackView = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
@@ -1523,6 +1604,17 @@ def permuted_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=i + 1,
+                    xl_ij=bl_upper_block,
+                    stack_slice=stack_slice,
+                    obc_blocks=obc_blocks,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
         if return_retarded:
             xr_out.blocks[i, i + 1] = -xr_i @ B1
             xr_out.blocks[i + 1, i] = -C1 @ xr_i
@@ -1547,3 +1639,14 @@ def permuted_selinv(
         if xg_out.symmetry is None:
             xg_out.blocks[1, 0] = xg_buffer_upper[0]
         xg_out.blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
+
+        if callbacks is not None:
+            ctx = BackSubstitutionContext(
+                i=0,
+                j=1,
+                xl_ij=-xl_buffer_upper[0].conj().swapaxes(-2, -1),
+                stack_slice=stack_slice,
+                obc_blocks=obc_blocks,
+            )
+            for callback in callbacks:
+                callback(ctx)

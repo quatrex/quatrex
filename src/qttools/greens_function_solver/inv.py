@@ -2,6 +2,8 @@
 
 """Includes the selected inversion solver based on dense inversion."""
 
+from collections.abc import Callable
+
 from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
@@ -88,7 +90,7 @@ class Inv(GFSolver):
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
+        callbacks: list[Callable] | None = None,
     ) -> None | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -104,8 +106,8 @@ class Inv(GFSolver):
         a : DSDBSparse
             Matrix to invert.
         sigma_lesser : DSDBSparse
-            Lesser matrix. This matrix is expected to be
-            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+            Lesser matrix. This matrix is expected to be skew-hermitian,
+            i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
@@ -114,25 +116,18 @@ class Inv(GFSolver):
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
+        a_hat : DSDBSparse, optional
+            The bare system matrix without self-energy contributions.
+            This is used to compute the device current.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False. This option is
-            not implemented.
-
-        Returns
-        -------
-        None | NDArray
-            If `return_current` is True, returns the
-            current for each layer.
+        callbacks : list[Callable], optional
+            List of callback functions. Not supported in this solver.
 
         """
-        if return_current:
-            raise NotImplementedError(
-                "The computation of the current is not implemented."
-            )
+        if callbacks is not None:
+            raise NotImplementedError("The use of callbacks is not implemented.")
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)

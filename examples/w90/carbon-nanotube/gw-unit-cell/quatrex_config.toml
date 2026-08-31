@@ -20,6 +20,7 @@ symmetric = true
 [outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
+meir_wingreen_currents = true
 electron_density = true
 hole_density = true
 
@@ -52,7 +53,6 @@ energy_window_num = 100
 max_batch_size = 15
 solver.algorithm = "rgf"
 solver.max_batch_size = 8
-solver.compute_current = true # Compute Meir-Wingreen current.
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"

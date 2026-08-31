@@ -15,7 +15,7 @@ from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import current_conservation, density, device_current
+from quatrex.core.observables import current_conservation, density
 from quatrex.core.transport import TransportSolver
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
@@ -285,7 +285,6 @@ class SCBA(TransportSolver):
         self.electron_solver = ElectronSolver(
             self.config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -561,21 +560,21 @@ class SCBA(TransportSolver):
             self.observables.hole_density *= 2  # Spin
 
         if self.config.outputs.device_currents:
-            self.observables.electron_current["device"] = device_current(
-                self.data.g_lesser, self.electron_solver.hamiltonian
+            self.observables.electron_current["device"] = comm.stack.all_gather_v(
+                self.electron_solver.device_current,
+                axis=0,
+                mask=self.data.g_lesser._stack_padding_mask,
             )
-            if self.config.electron.solver.compute_current:
 
-                local_current = self.electron_solver.meir_wingreen_current
-                meir_wingreen_current = comm.stack.all_gather_v(
-                    local_current,
-                    axis=0,
-                    mask=self.data.g_lesser._stack_padding_mask,
-                )
+        if self.config.outputs.meir_wingreen_currents:
+            local_current = self.electron_solver.meir_wingreen_current
+            meir_wingreen_current = comm.stack.all_gather_v(
+                local_current,
+                axis=0,
+                mask=self.data.g_lesser._stack_padding_mask,
+            )
 
-                self.observables.electron_current["meir-wingreen"] = (
-                    meir_wingreen_current
-                )
+            self.observables.electron_current["meir-wingreen"] = meir_wingreen_current
 
         if self.config.outputs.self_energy_density:
             self.observables.sigma_lesser_density = density(
@@ -629,10 +628,10 @@ class SCBA(TransportSolver):
             outputs[f"device_current_{iteration}.npy"] = (
                 self.observables.electron_current["device"]
             )
-            if self.config.electron.solver.compute_current:
-                outputs[f"meir_wingreen_current_{iteration}.npy"] = (
-                    self.observables.electron_current["meir-wingreen"]
-                )
+        if self.config.outputs.meir_wingreen_currents:
+            outputs[f"meir_wingreen_current_{iteration}.npy"] = (
+                self.observables.electron_current["meir-wingreen"]
+            )
 
         if self.config.scba.coulomb_screening:
             if self.config.outputs.polarization_density:

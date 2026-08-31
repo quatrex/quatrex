@@ -2,9 +2,11 @@
 
 """Includes the distributed selected inversion solver."""
 
+from collections.abc import Callable
+
 import numpy as np
 
-from qttools import NDArray, xp
+from qttools import NDArray
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
 from qttools.greens_function_solver import _serinv
@@ -132,8 +134,8 @@ class RGFDist(GFSolver):
         out: tuple[DSDBSparse, ...] | tuple[_DStackView, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
-    ) -> None | NDArray:
+        callbacks: list[Callable] | None = None,
+    ) -> None:
         r"""Performs selected inversion of a block-tridiagonal matrix.
 
         Can optionally solve the quadratic system associated with the
@@ -144,8 +146,8 @@ class RGFDist(GFSolver):
         a : DSDBSparse
             Matrix to invert.
         sigma_lesser : DSDBSparse
-            Lesser matrix. This matrix is expected to be
-            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+            Lesser matrix. This matrix is expected to be skew-hermitian,
+            i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
@@ -156,18 +158,12 @@ class RGFDist(GFSolver):
             functions, by default None.
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
-            along with lesser and greater, by default False
-        return_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False. Note that this
-            is currently only partially supported, and only the boundary
-            currents are computed correctly.
-
-        Returns
-        -------
-        None | NDArray
-            If `return_current` is True, returns the
-            current for each layer.
+            along with lesser and greater, by default False.
+        callbacks : list[Callable], optional
+            List of callback functions to be called during the back
+            substitution step. Each callback function should accept a
+            single argument of type `BackwardSubstitutionContext`, by
+            default None.
 
         """
 
@@ -177,19 +173,6 @@ class RGFDist(GFSolver):
 
             if obc_blocks is None:
                 obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
-
-            if return_current:
-                # Allocate a buffer for the current. This includes current
-                # between each layer and from/to the leads (in total
-                # num_blocks + 1).
-                current = xp.zeros(
-                    (*sigma_lesser.local_stack_shape, sigma_lesser.num_blocks + 1),
-                    dtype=sigma_lesser.dtype,
-                )
-                # TODO: Only boundary currents are currently supported.
-                # Invalidate the remaining layers by setting them to
-                # xp.nan.
-                current[..., 1:-1] = xp.nan
 
             xl_out, xg_out, *xr_out = out
             if return_retarded:
@@ -217,129 +200,57 @@ class RGFDist(GFSolver):
             # Initialize temporary buffers.
             reduced_system = _serinv.ReducedSystem(selected_solve=True)
 
-            xr_diag_blocks: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-            xr_buffer_lower: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-            xr_buffer_upper: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-
-            xl_diag_blocks: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-            xl_buffer_lower = None
-            xl_buffer_upper: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-
-            xg_diag_blocks: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-            xg_buffer_lower = None
-            xg_buffer_upper: list[NDArray | None] = [
-                None
-            ] * sigma_lesser.num_local_blocks
-
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
 
-            a_ = a.stack[stack_slice]
-            sigma_lesser_ = sigma_lesser.stack[stack_slice]
-            sigma_greater_ = sigma_greater.stack[stack_slice]
-
-            xl_out_ = xl_out.stack[stack_slice]
-            xg_out_ = xg_out.stack[stack_slice]
-            xr_out_ = xr_out.stack[stack_slice] if return_retarded else None
+            serinv_context = {
+                # Input quantities.
+                "a": a.stack[stack_slice],
+                "sigma_lesser": sigma_lesser.stack[stack_slice],
+                "sigma_greater": sigma_greater.stack[stack_slice],
+                # Retarded buffers.
+                "xr_diag_blocks": [None] * sigma_lesser.num_local_blocks,
+                "xr_buffer_lower": [None] * sigma_lesser.num_local_blocks,
+                "xr_buffer_upper": [None] * sigma_lesser.num_local_blocks,
+                # Lesser buffers.
+                "xl_diag_blocks": [None] * sigma_lesser.num_local_blocks,
+                "xl_buffer_lower": None,
+                "xl_buffer_upper": [None] * sigma_lesser.num_local_blocks,
+                # Greater buffers.
+                "xg_diag_blocks": [None] * sigma_lesser.num_local_blocks,
+                "xg_buffer_lower": None,
+                "xg_buffer_upper": [None] * sigma_lesser.num_local_blocks,
+                # Output quantities.
+                "xr_out": xr_out.stack[stack_slice] if return_retarded else None,
+                "xl_out": xl_out.stack[stack_slice],
+                "xg_out": xg_out.stack[stack_slice],
+                # OBC, settings and callbacks.
+                "obc_blocks": obc_blocks,
+                "stack_slice": stack_slice,
+                "invert_last_block": False,
+                "selected_solve": True,
+                "return_retarded": return_retarded,
+                "callbacks": callbacks,
+            }
 
             with profiler.profile_range(
                 label="RGF dist: Schur", level="default", comm=comm.block
             ):
-
                 if comm.block.rank == 0:
-                    # Direction: downward Schur-complement
-                    _serinv.downward_schur(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        # OBC and settings.
-                        obc_blocks=obc_blocks,
-                        stack_slice=stack_slice,
-                        invert_last_block=False,
-                        selected_solve=True,
-                    )
+                    _serinv.downward_schur(**serinv_context)
                 elif comm.block.rank == comm.block.size - 1:
-                    # Direction: upward Schur-complement
-                    _serinv.upward_schur(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        # OBC and settings.
-                        obc_blocks=obc_blocks,
-                        stack_slice=stack_slice,
-                        invert_last_block=False,
-                        selected_solve=True,
-                    )
+                    _serinv.upward_schur(**serinv_context)
                 else:
-                    # Permuted Schur-complement
-                    _serinv.permuted_schur(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        xr_buffer_lower=xr_buffer_lower,
-                        xr_buffer_upper=xr_buffer_upper,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        xl_buffer_lower=xl_buffer_lower,
-                        xl_buffer_upper=xl_buffer_upper,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        xg_buffer_lower=xg_buffer_lower,
-                        xg_buffer_upper=xg_buffer_upper,
-                        # OBC and settings.
-                        obc_blocks=obc_blocks,
-                        stack_slice=stack_slice,
-                        selected_solve=True,
-                    )
+                    _serinv.permuted_schur(**serinv_context)
 
             with profiler.profile_range(
                 label="RGF dist: Reduce gather", level="default", comm=comm.block
             ):
                 # Construct the reduced system.
                 if np.all(a.block_sizes == a.block_sizes[0]):
-                    gather_reduced_system = reduced_system.gather_constant_block_size
+                    reduced_system.gather_constant_block_size(**serinv_context)
                 else:
                     # If the block sizes are not the same, we need to use pickle.
-                    gather_reduced_system = reduced_system.gather
-
-                gather_reduced_system(
-                    a=a_,
-                    xr_diag_blocks=xr_diag_blocks,
-                    xr_buffer_lower=xr_buffer_lower,
-                    xr_buffer_upper=xr_buffer_upper,
-                    # Lesser quantities.
-                    sigma_lesser=sigma_lesser_,
-                    xl_diag_blocks=xl_diag_blocks,
-                    xl_buffer_lower=xl_buffer_lower,
-                    xl_buffer_upper=xl_buffer_upper,
-                    # Greater quantities.
-                    sigma_greater=sigma_greater_,
-                    xg_diag_blocks=xg_diag_blocks,
-                    xg_buffer_lower=xg_buffer_lower,
-                    xg_buffer_upper=xg_buffer_upper,
-                )
+                    reduced_system.gather(**serinv_context)
 
             # Perform selected-inversion on the reduced system.
             with profiler.profile_range(
@@ -351,110 +262,15 @@ class RGFDist(GFSolver):
                 label="RGF dist: Reduce scatter", level="default", comm=comm.block
             ):
                 # Scatter the result to the output matrix.
-                reduced_system.scatter(
-                    xr_diag_blocks=xr_diag_blocks,
-                    xr_buffer_lower=xr_buffer_lower,
-                    xr_buffer_upper=xr_buffer_upper,
-                    xr_out=xr_out_,
-                    return_retarded=return_retarded,
-                    # Lesser quantities.
-                    xl_diag_blocks=xl_diag_blocks,
-                    xl_buffer_lower=xl_buffer_lower,
-                    xl_buffer_upper=xl_buffer_upper,
-                    xl_out=xl_out_,
-                    # Greater quantities.
-                    xg_diag_blocks=xg_diag_blocks,
-                    xg_buffer_lower=xg_buffer_lower,
-                    xg_buffer_upper=xg_buffer_upper,
-                    xg_out=xg_out_,
-                )
+                reduced_system.scatter(**serinv_context)
 
             with profiler.profile_range(
                 label="RGF dist: Selinv", level="default", comm=comm.block
             ):
 
                 if comm.block.rank == 0:
-                    # Direction: upward sell-inv
-                    _serinv.downward_selinv(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        xr_out=xr_out_,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        xl_out=xl_out_,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        xg_out=xg_out_,
-                        selected_solve=True,
-                        return_retarded=return_retarded,
-                    )
+                    _serinv.downward_selinv(**serinv_context)
                 elif comm.block.rank == comm.block.size - 1:
-                    # Direction: downward sell-inv
-                    _serinv.upward_selinv(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        xr_out=xr_out_,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        xl_out=xl_out_,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        xg_out=xg_out_,
-                        selected_solve=True,
-                        return_retarded=return_retarded,
-                    )
+                    _serinv.upward_selinv(**serinv_context)
                 else:
-                    # Permuted Sell-inv
-                    _serinv.permuted_selinv(
-                        a=a_,
-                        xr_diag_blocks=xr_diag_blocks,
-                        xr_buffer_lower=xr_buffer_lower,
-                        xr_buffer_upper=xr_buffer_upper,
-                        xr_out=xr_out_,
-                        # Lesser quantities.
-                        sigma_lesser=sigma_lesser_,
-                        xl_diag_blocks=xl_diag_blocks,
-                        # xl_buffer_lower=xl_buffer_lower,
-                        xl_buffer_upper=xl_buffer_upper,
-                        xl_out=xl_out_,
-                        # Greater quantities.
-                        sigma_greater=sigma_greater_,
-                        xg_diag_blocks=xg_diag_blocks,
-                        # xg_buffer_lower=xg_buffer_lower,
-                        xg_buffer_upper=xg_buffer_upper,
-                        xg_out=xg_out_,
-                        selected_solve=True,
-                        return_retarded=return_retarded,
-                    )
-
-            if return_current:
-                if comm.block.rank == 0:
-                    current[stack_slice, ..., 0] = xp.trace(
-                        obc_blocks.greater[0][stack_slice] @ xl_diag_blocks[0]
-                        - xg_diag_blocks[0] @ obc_blocks.lesser[0][stack_slice],
-                        axis1=-2,
-                        axis2=-1,
-                    )
-                if comm.block.rank == comm.block.size - 1:
-                    # NOTE: Negative sign is needed to get the current flowing
-                    # in the correct direction (positive from left to right).
-                    current[stack_slice, ..., -1] = -xp.trace(
-                        obc_blocks.greater[-1][stack_slice] @ xl_diag_blocks[-1]
-                        - xg_diag_blocks[-1] @ obc_blocks.lesser[-1][stack_slice],
-                        axis1=-2,
-                        axis2=-1,
-                    )
-
-        if return_current:
-            # Now we need to allreduce the current across the block
-            # communicator to get the total current for each layer.
-            # NOTE: We use allreduce instead of allgather since every
-            # rank allocates the full current
-            total_current = xp.empty_like(current)
-            comm.block.all_reduce(current, total_current, op="sum")
-
-            return total_current
+                    _serinv.permuted_selinv(**serinv_context)

@@ -29,7 +29,6 @@ from quatrex.electron import (
     SigmaPhoton,
 )
 from quatrex.grid import get_electron_energies
-from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
@@ -182,12 +181,9 @@ class SCBAData:
             )
             self.w_greater = dsdbsparse_type.empty_like(self.w_lesser)
 
-        # TODO: The interactions with photons and phonons are not yet
+        # TODO: The interactions with photons are not yet
         # implemented.
         if config.scba.photon:
-            raise NotImplementedError
-
-        if config.scba.phonon and config.phonon.model == "negf":
             raise NotImplementedError
 
         # Allocate the data for the Green's functions and self-energies.
@@ -367,14 +363,7 @@ class SCBA(TransportSolver):
 
         # ----- Phonons ------------------------------------------------
         if self.config.scba.phonon:
-            if self.config.phonon.model == "negf":
-                energies_path = self.config.input_dir / "phonon_energies.npy"
-                self.phonon_energies = distributed_load(energies_path)
-                self.pi_phonon = PiPhonon(...)
-                self.phonon_solver = PhononSolver(config, self.phonon_energies)
-                self.sigma_phonon = SigmaPhonon(...)
-
-            elif self.config.phonon.model == "pseudo-scattering":
+            if self.config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
             elif self.config.phonon.model == "long-wavelength":
@@ -509,19 +498,15 @@ class SCBA(TransportSolver):
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
-        if self.config.phonon.model == "negf":
-            raise NotImplementedError
-
-        elif self.config.phonon.model in ("pseudo-scattering", "long-wavelength"):
-            self.sigma_phonon.compute(
-                self.data.g_lesser,
-                self.data.g_greater,
-                out=(
-                    self.data.sigma_lesser,
-                    self.data.sigma_greater,
-                    self.data.sigma_retarded_hermitian,
-                ),
-            )
+        self.sigma_phonon.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            out=(
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded_hermitian,
+            ),
+        )
 
     @profiler.profile(label="SCBA: Photon interactions", level="default", comm=comm)
     def _compute_photon_interaction(self):

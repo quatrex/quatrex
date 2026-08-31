@@ -1486,7 +1486,7 @@ class PhononConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
     """Parameters concerning the Lyapunov solver."""
 
-    model: Literal["pseudo-scattering", "long-wavelength", "negf"] = "pseudo-scattering"
+    model: Literal["pseudo-scattering", "long-wavelength"] = "pseudo-scattering"
     r"""Which model to use for the electron-phonon interaction.
 
     In the monochromatic `"pseudo-scattering"` model, the electron-phonon interaction
@@ -1501,6 +1501,7 @@ class PhononConfig(BaseModel):
     $\hbar \omega$ is the [`phonon_energy`](#phonon_energy), and
     $N_{ph}$ is the phonon occupation number given by the Bose-Einstein
     distribution at the specified [`temperature`](#temperature).
+    Only the diagonal of $\Sigma^{\lessgtr}(E)$ is computed.
 
     In the `"long-wavelength"` model, the self-energy is computed as
 

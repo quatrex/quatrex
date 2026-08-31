@@ -970,16 +970,6 @@ class ContactConfig(BaseModel):
 
     """
 
-    cell_volume: PositiveFloat | None = None
-    """The volume of the contact cell in Å³.
-    This needs to be set when using Poisson and
-    [`lattice_vectors`](#lattice_vectors) parameter is not set
-
-    !!! warning
-        This parameter is currently only used in the `"wf"` formalism.
-
-    """
-
     delta_fermi_level_conduction_band: float | None = None
     """The distance from the conduction band edge to the Fermi level in eV.
 
@@ -2401,35 +2391,6 @@ class QuatrexConfig(BaseModel):
             raise ValueError(
                 "At least one contact must be grounded (i.e. have zero voltage)."
             )
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_cell_volume(self) -> Self:
-        """Validates that the `cell_volume` parameter is consistent with the
-        `lattice_vectors` parameter."""
-        # NOTE: Validated here since we need to know whether SCSP is enabled or not.
-        for contact in self.device.contacts:
-            if self.scsp is not None:
-                if (
-                    contact._contact_finder_method == "from_unit"
-                    and contact.cell_volume is None
-                ):
-                    raise ValueError(
-                        "When using SCSP and constructing the contact from a unit cell, "
-                        "`cell_volume` must be provided."
-                    )
-                elif contact._contact_finder_method == "real_space":
-                    if contact.cell_volume is not None:
-                        raise ValueError(
-                            "When using SCSP and constructing the contact from real space, "
-                            "`cell_volume` must not be provided."
-                        )
-
-                    else:
-                        contact.cell_volume = np.abs(
-                            np.linalg.det(contact.lattice_vectors)
-                        )
 
         return self
 

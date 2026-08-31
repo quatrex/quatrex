@@ -378,7 +378,7 @@ def compute_contact_band_properties(
         e_k=e_k,
         kpoints=kpoints_transport,
         mid_gap_energy=contact.mid_gap_energy,
-        cell_volume=contact_config.cell_volume,
+        cell_volume=contact.cell_volume,
         doping_density=doping_density,
         temperature=contact.temperature,
     )

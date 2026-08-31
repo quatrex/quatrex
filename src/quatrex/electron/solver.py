@@ -630,7 +630,7 @@ class ElectronSolver(SubsystemSolver):
         # Load the potential.
         # TODO: The structure should not be reloaded here.
         # This will be fixed when the device is unified.
-        __, atom_coordinates, atomic_species = Device.load_structure(config)
+        __, atom_coordinates, atomic_species, __ = Device.load_structure(config)
         self.potential = Device.load_potential(
             config.input_dir,
             atom_coordinates,

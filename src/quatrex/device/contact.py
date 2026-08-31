@@ -337,6 +337,17 @@ class Contact:
         self.voltage = contact_config.voltage
         self.temperature = contact_config.temperature
 
+        if contact_config._contact_finder_method == "real_space":
+            lattice_vectors = contact_config.lattice_vectors
+        elif contact_config._contact_finder_method == "from_unit":
+            lattice_vectors = device.lattice_vectors
+        else:
+            raise NotImplementedError(
+                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
+            )
+
+        self.cell_volume = np.abs(np.linalg.det(lattice_vectors))
+
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)

@@ -72,9 +72,12 @@ class Device:
         self.device_config = config.device
 
         self._init_hamiltonian()
-        self.orbital_coordinates, self.atom_coordinates, self.atomic_species = (
-            self.load_structure(config)
-        )
+        (
+            self.orbital_coordinates,
+            self.atom_coordinates,
+            self.atomic_species,
+            self.lattice_vectors,
+        ) = self.load_structure(config)
         # TODO QTBM Device/Contact currently assumes that these quantities are on the host
         self.atom_coordinates = get_host(self.atom_coordinates)
 
@@ -153,9 +156,14 @@ class Device:
     @staticmethod
     def load_structure(
         config: QuatrexConfig,
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Loads the orbital coordinates, atom coordinates, and atomic
-        species for the device.
+    ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+        """Loads the orbital coordinates, atom coordinates, atomic
+        species, and lattice vectors for the device.
+
+        Note
+        ----
+        The lattice vectors if constructed from the unit cell are the
+        unit cell vectors and not full device.
 
         Parameters
         ----------
@@ -164,9 +172,9 @@ class Device:
 
         Returns
         -------
-        tuple[NDArray, NDArray, NDArray]
-            The orbital coordinates, atom coordinates, and atomic
-            species.
+        tuple[NDArray, NDArray, NDArray, NDArray]
+            The orbital coordinates, atom coordinates, atomic species,
+            and lattice vectors.
 
         """
 
@@ -209,7 +217,7 @@ class Device:
                 * config.device.num_transport_cells
             )
 
-        return orbital_coordinates, atom_coordinates, atomic_species
+        return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
 
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.

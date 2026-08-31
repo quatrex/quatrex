@@ -2463,7 +2463,13 @@ class QuatrexConfig(BaseModel):
                     f"Energy grid not specified and file '{(self.input_dir / 'electron_energies.npy').resolve()}' does not exist."
                 )
 
-        # TODO: extend this to other paths, not only energies
+        if self.scba.phonon and self.phonon.model == "long-wavelength":
+            if not (self.input_dir / "phonon_dispersion.npy").resolve().is_file():
+                raise ValueError(
+                    f"The phonon dispersion (file '{(self.input_dir / 'phonon_dispersion.npy').resolve()}') has not been provided."
+                )
+
+        # TODO: extend this to all possible input paths
 
         return self
 

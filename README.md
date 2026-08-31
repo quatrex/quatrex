@@ -22,17 +22,17 @@
 | src/qttools/datastructures/\_\_init\_\_.py                  |        5 |        0 |    100% |           |
 | src/qttools/datastructures/dsdbcoo.py                       |      184 |       12 |     93% |62, 67, 316, 324, 429, 434-439, 442, 445, 549, 623 |
 | src/qttools/datastructures/dsdbcsr.py                       |      144 |      123 |     15% |67-93, 97-109, 137-167, 198-213, 231-292, 308-357, 386-394, 416, 467-500, 513-526 |
-| src/qttools/datastructures/dsdbsparse.py                    |      321 |       46 |     86% |53, 141, 147, 162, 167, 170, 173, 337-360, 389, 482, 485, 504, 523, 526, 532, 731-735, 741-745, 855, 957, 963-966, 1088, 1095, 1100, 1126, 1169, 1173, 1177, 1180, 1185 |
+| src/qttools/datastructures/dsdbsparse.py                    |      322 |       44 |     86% |53, 141, 147, 162, 167, 170, 173, 337-360, 389, 482, 485, 504, 523, 526, 532, 731-735, 741-745, 855, 956, 965, 1090, 1097, 1102, 1128, 1171, 1175, 1179, 1182, 1187 |
 | src/qttools/datastructures/routines.py                      |      194 |       19 |     90% |42, 46, 149-150, 166-178, 212, 222, 398, 403, 407, 510 |
 | src/qttools/fft/\_\_init\_\_.py                             |        2 |        0 |    100% |           |
 | src/qttools/fft/convolve.py                                 |       11 |        9 |     18% |     24-32 |
 | src/qttools/fft/ffts.py                                     |       28 |        1 |     96% |         8 |
 | src/qttools/greens\_function\_solver/\_\_init\_\_.py        |        5 |        0 |    100% |           |
-| src/qttools/greens\_function\_solver/\_serinv.py            |      518 |        8 |     98% |870-878, 975-982 |
-| src/qttools/greens\_function\_solver/inv.py                 |       62 |       53 |     15% |31, 57-81, 132-194 |
-| src/qttools/greens\_function\_solver/rgf.py                 |      151 |       31 |     79% |47-103, 159, 179, 183, 188 |
-| src/qttools/greens\_function\_solver/rgf\_dist.py           |      105 |       30 |     71% |54-123, 197, 201, 206 |
-| src/qttools/greens\_function\_solver/solver.py              |       13 |        0 |    100% |           |
+| src/qttools/greens\_function\_solver/\_serinv.py            |      546 |        8 |     99% |891-899, 997-1004 |
+| src/qttools/greens\_function\_solver/inv.py                 |       63 |       53 |     16% |33, 59-83, 129-189 |
+| src/qttools/greens\_function\_solver/rgf.py                 |      145 |       31 |     79% |53-109, 161, 172, 176, 181 |
+| src/qttools/greens\_function\_solver/rgf\_dist.py           |       79 |       30 |     62% |56-125, 180, 184, 189 |
+| src/qttools/greens\_function\_solver/solver.py              |       32 |        0 |    100% |           |
 | src/qttools/kernels/\_\_init\_\_.py                         |        5 |        0 |    100% |           |
 | src/qttools/kernels/datastructure/\_\_init\_\_.py           |       11 |        5 |     55% |     12-18 |
 | src/qttools/kernels/datastructure/cupy/\_\_init\_\_.py      |        2 |        2 |      0% |       5-7 |
@@ -92,11 +92,11 @@
 | src/quatrex/cli/\_\_init\_\_.py                             |        2 |        0 |    100% |           |
 | src/quatrex/cli/main.py                                     |      112 |       39 |     65% |44-46, 137-139, 146-148, 169-188, 240, 247-250, 280-295, 311, 316 |
 | src/quatrex/core/\_\_init\_\_.py                            |        0 |        0 |    100% |           |
-| src/quatrex/core/config.py                                  |      657 |       57 |     91% |550, 553, 1197, 1204, 1222, 1230, 1390, 1487, 1606-1623, 1778, 1793-1794, 1800, 1966-1970, 1975-1987, 2123-2125, 2206-2212, 2226-2230, 2242-2243, 2261, 2266, 2281, 2286, 2289, 2292, 2306, 2310, 2314, 2331 |
+| src/quatrex/core/config.py                                  |      653 |       56 |     91% |1162, 1169, 1187, 1195, 1355, 1452, 1596-1613, 1768, 1783-1784, 1790, 1956-1960, 1965-1977, 2113-2115, 2196-2202, 2216-2220, 2232-2233, 2251, 2256, 2271, 2276, 2279, 2282, 2296, 2300, 2304, 2321, 2334 |
 | src/quatrex/core/constants.py                               |        9 |        0 |    100% |           |
-| src/quatrex/core/observables.py                             |       46 |        1 |     98% |        41 |
+| src/quatrex/core/observables.py                             |       32 |        1 |     97% |        41 |
 | src/quatrex/core/qtbm.py                                    |      459 |       39 |     92% |106, 153-158, 207, 211, 213, 215, 219, 321, 369, 462-464, 496, 501, 700-702, 930-938, 952-960, 1105, 1195 |
-| src/quatrex/core/scba.py                                    |      375 |       57 |     85% |68, 78, 151, 177, 180, 309, 352-356, 361-365, 469, 485, 664, 682-716, 727-730, 744-751, 801, 824-826, 832-845 |
+| src/quatrex/core/scba.py                                    |      375 |       57 |     85% |68, 78, 151, 177, 180, 308, 351-355, 360-364, 468, 484, 663, 681-715, 726-729, 743-750, 800, 823-825, 831-844 |
 | src/quatrex/core/scsp.py                                    |       56 |       12 |     79% |76-81, 104-113, 120, 146-149 |
 | src/quatrex/core/sse.py                                     |        4 |        0 |    100% |           |
 | src/quatrex/core/statistics.py                              |        6 |        0 |    100% |           |
@@ -111,7 +111,7 @@
 | src/quatrex/device/device.py                                |      103 |       12 |     88% |147, 178, 234, 242, 249, 260-261, 273, 279, 287, 297-298 |
 | src/quatrex/device/inputs.py                                |      229 |       22 |     90% |55, 63, 144, 239, 247, 249, 251, 254, 263, 284, 397, 401, 517, 528, 536, 545, 562, 567, 625-626, 675, 745 |
 | src/quatrex/electron/\_\_init\_\_.py                        |        6 |        0 |    100% |           |
-| src/quatrex/electron/solver.py                              |      298 |       16 |     95% |90, 115, 132, 139, 274, 278, 315, 364-378, 561, 589, 803-808 |
+| src/quatrex/electron/solver.py                              |      374 |       25 |     93% |263, 349, 353, 360, 367, 374, 378, 382, 385, 390, 557, 606, 625, 642, 649, 788, 792, 829, 878-892, 1167-1172 |
 | src/quatrex/electron/sse\_coulomb\_screening.py             |      119 |       18 |     85% |20, 330-351 |
 | src/quatrex/electron/sse\_fock.py                           |       26 |        0 |    100% |           |
 | src/quatrex/electron/sse\_phonon.py                         |       35 |        3 |     91% |32, 36, 51 |
@@ -137,7 +137,7 @@
 | src/quatrex/photon/solver.py                                |        7 |        1 |     86% |        18 |
 | src/quatrex/post\_processing/\_\_init\_\_.py                |        2 |        2 |      0% |       5-7 |
 | src/quatrex/post\_processing/plot\_ldos.py                  |       14 |       14 |      0% |      5-35 |
-| **TOTAL**                                                   | **9071** | **2375** | **74%** |           |
+| **TOTAL**                                                   | **9146** | **2381** | **74%** |           |
 
 
 ## Setup coverage badge

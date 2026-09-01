@@ -5,20 +5,20 @@
 import os
 import warnings
 
+import matplotlib
 import numpy as np
 from matplotlib import pyplot as plt
 
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.utils.gpu_utils import get_host
-from quatrex.bandstructure.contact import (
-    compute_contact_bandstructure,
-    contact_band_structure,
-)
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import Device
 from quatrex.device.inputs import assemble_matrix
 from quatrex.grid import monkhorst_pack
+
+matplotlib.use("Agg")
 
 
 def _plot(
@@ -94,11 +94,10 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 endpoint=False,
             )
 
-            e_k = compute_contact_bandstructure(
+            e_k = contact.compute_contact_bandstructure(
                 h_xx=h_xx,
                 s_xx=s_xx,
                 kpoint=kpoint,
-                contact=contact,
                 kpoints_transport=kpoints_transport,
             )
 
@@ -224,7 +223,7 @@ def plot_contact_band_structure(
         raise ValueError(f"Unknown formalism: {config.formalism}")
 
     plt.rcParams.update({"font.size": 16})
-    __, axes = plt.subplots(
+    fig, axes = plt.subplots(
         len(kpoints),
         len(contacts),
         figsize=(12, 6),
@@ -280,7 +279,8 @@ def plot_contact_band_structure(
     else:
         plot_window = config.pre_process.plot_window
 
-    plt.ylim(plot_window)
-    plt.tight_layout()
-    plt.savefig(config.output_dir / "band_structure.png", dpi=300)
-    plt.close()
+    for ax in axes.flatten():
+        ax.set_ylim(plot_window)
+    fig.tight_layout()
+    fig.savefig(config.output_dir / "band_structure.png", dpi=300)
+    plt.close(fig)

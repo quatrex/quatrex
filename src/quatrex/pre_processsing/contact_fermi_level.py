@@ -8,7 +8,6 @@ from textwrap import dedent
 import tomlkit
 
 from qttools.comm import comm
-from quatrex.bandstructure.contact import compute_contact_band_properties
 from quatrex.config import merge_toml
 from quatrex.core.config import QuatrexConfig, _parse_config
 from quatrex.device import Device
@@ -87,10 +86,8 @@ def pre_process_fermi_level(
                 fermi_level,
                 mid_gap_energy,
                 conduction_band_edge,
-            ) = compute_contact_band_properties(
-                contact=contact,
-                device=device,
-            )
+            ) = contact.compute_contact_band_properties()
+
             # Make sure that they are float and not numpy.float64
             fermi_level = float(fermi_level)
             mid_gap_energy = float(mid_gap_energy)

@@ -371,9 +371,6 @@ class Device:
 
         """
 
-        # NOTE: This is a temporary solution to avoid circular imports.
-        from quatrex.bandstructure.contact import compute_contact_band_properties
-
         # The Fermi level is always required while midgap energy and
         # `conduction_band_edge` are only required if SCSP is
         # used.
@@ -407,7 +404,4 @@ class Device:
                     contact.fermi_level,
                     contact.mid_gap_energy,
                     contact.conduction_band_edge,
-                ) = compute_contact_band_properties(
-                    contact=contact,
-                    device=self,
-                )
+                ) = contact.compute_contact_band_properties()

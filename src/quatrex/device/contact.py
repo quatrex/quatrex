@@ -13,8 +13,17 @@ from qttools.boundary_conditions import obc
 from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
+from qttools.toeplitz.circulant import construct_circulant_cell
+from qttools.utils.gpu_utils import get_host
+from quatrex.bandstructure.contact import (
+    contact_band_edges,
+    contact_band_structure,
+    contact_doping_density,
+    contact_fermi_level,
+)
 from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
 from quatrex.device.contact_discovery import real_space_discovery, simplified_discovery
+from quatrex.grid import monkhorst_pack
 
 profiler = Profiler()
 
@@ -202,6 +211,8 @@ class Contact:
 
     Attributes
     ----------
+    device : Device
+        The device object to which this contact is attached.
     name : str
         The contact identifier.
     transport_direction : int
@@ -245,6 +256,7 @@ class Contact:
     def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
+        self.device = device
         self.contact_config = contact_config
         if contact_config.transport_direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
@@ -445,6 +457,180 @@ class Contact:
         raise NotImplementedError(
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
+
+    def compute_contact_bandstructure(
+        self,
+        h_xx: dict,
+        s_xx: dict,
+        kpoint: NDArray,
+        kpoints_transport: NDArray,
+    ) -> NDArray:
+        """Slices and expands the inptut matrices, and computes the contact
+        band structure for at a specific k-point.
+
+        Parameters
+        ----------
+        h_xx : dict
+            The Hamiltonian matrix blocks of a single contact layer. Already
+            summed over k-points.
+        s_xx : dict
+            The overlap matrix blocks of a single contact layer. Already
+            summed over k-points.
+        kpoint : NDArray
+            The k-point at which to compute the band structure.
+        kpoints_transport : NDArray
+            The k-points along the transport direction.
+
+        Returns
+        -------
+        e_k : np.ndarray
+            The eigenvalues for the contact band structure.
+
+        """
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+
+        h_xx_tmp = {}
+        s_xx_tmp = {}
+        # shuffle keys to to have natural order a,b,c
+        for i, j, k in np.ndindex(*grid):
+            index = [j, k]
+            index.insert(self.transport_direction, i)
+            index = tuple(index)
+            h_xx_tmp[index] = h_xx[i, j, k].toarray()
+            s_xx_tmp[index] = s_xx[i, j, k].toarray()
+        h_xx = h_xx_tmp
+        s_xx = s_xx_tmp
+
+        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+        phases = (
+            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
+        )
+
+        H_XX = tuple(
+            construct_circulant_cell(
+                matrix_dict=h_xx,
+                transport_cell_size=self.transport_repetitions,
+                transport_ind=self.transport_direction,
+                block_index=block_index,
+                sections=self.transverse_repetition_grid,
+                phases=phases,
+                key_assumption="half",
+            )
+            for block_index in [-1, 0, 1]
+        )
+        S_XX = tuple(
+            construct_circulant_cell(
+                matrix_dict=s_xx,
+                transport_cell_size=self.transport_repetitions,
+                transport_ind=self.transport_direction,
+                block_index=block_index,
+                sections=self.transverse_repetition_grid,
+                phases=phases,
+                key_assumption="half",
+            )
+            for block_index in [-1, 0, 1]
+        )
+
+        return contact_band_structure(kpoints_transport, H_XX, S_XX)
+
+    def compute_contact_band_properties(
+        self,
+    ) -> tuple[float, float, float]:
+        """Computes the Fermi level for the contact from the Hamiltonian and
+        overlap matrices.
+
+        Returns
+        -------
+        fermi_level : float
+            The computed Fermi level in eV.
+        mid_gap_energy : float
+            The recomputed mid-gap energy based on the band structure.
+        conduction_band_edge : float
+            The energy of the conduction band edge in eV.
+
+        """
+        contact_config = self.contact_config
+        device_config = self.device.device_config
+
+        kpoints_transport = xp.linspace(
+            -xp.pi,
+            xp.pi,
+            contact_config.num_kpoints_transport,
+            endpoint=False,
+        )
+
+        transverse_axes = [0, 1, 2]
+        transverse_axes.remove(self.transport_direction)
+
+        kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
+
+        e_k = xp.zeros(
+            (
+                len(kpoints_transport),
+                kpoints.shape[0],
+                len(self.unit_cell_orbital_indices[self.origin_key])
+                * self.transport_repetitions
+                * np.prod(self.transverse_repetition_grid),
+            ),
+            dtype=float,
+        )
+
+        hamiltonians = self.device.hamiltonians
+        overlaps = self.device.overlap_matrices
+        for m, kpoint in enumerate(kpoints):
+            h_xx = self.get_contact_blocks(
+                matrices=hamiltonians,
+                kpoint=kpoint,
+                upper=True,
+            )
+            s_xx = self.get_contact_blocks(
+                matrices=overlaps,
+                kpoint=kpoint,
+                upper=True,
+            )
+
+            e_k[:, m, :] = self.compute_contact_bandstructure(
+                h_xx=h_xx,
+                s_xx=s_xx,
+                kpoint=kpoint,
+                kpoints_transport=kpoints_transport,
+            )
+
+        # Average over transverse k-points.
+        e_k = xp.mean(e_k, axis=1)
+
+        doping_density = contact_doping_density(
+            coordinates=get_host(
+                self.device.orbital_coordinates[
+                    self.unit_cell_orbital_indices[self.origin_key]
+                ]
+            ),
+            geometry_regions=device_config.geometry.regions,
+        )
+
+        fermi_level = contact_fermi_level(
+            e_k=e_k,
+            kpoints=kpoints_transport,
+            mid_gap_energy=self.mid_gap_energy,
+            cell_volume=self.cell_volume,
+            doping_density=doping_density,
+            temperature=self.temperature,
+        )
+
+        # Recompute the actual mid-gap energy from the band structure.
+        valence_band_edge, conduction_band_edge = contact_band_edges(
+            e_k, self.mid_gap_energy
+        )
+        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+
+        if comm.rank == 0:
+            print(f"    Doping density: {doping_density} Å^-3", flush=True)
+            print(f"    Fermi level: {fermi_level} eV", flush=True)
+            print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
+            print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
+            print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
+
+        return fermi_level, mid_gap_energy, conduction_band_edge
 
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False

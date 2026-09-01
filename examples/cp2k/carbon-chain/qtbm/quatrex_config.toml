@@ -3,9 +3,6 @@ input_dir = "../inputs"
 
 formalism = "wf" # Compute transport using the wavefunction formalism.
 
-[qtbm]
-max_batch_size = 1 # Process one energy at a time.
-
 [device]
 # Transport is along the x-axis.
 transport_direction = "a"

@@ -3,8 +3,6 @@ input_dir = "../inputs"
 
 formalism = "wf"
 
-[qtbm]
-max_batch_size = 1
 [device]
 transport_direction = "a"
 num_orbitals_per_atom = { "Si" = 4 }

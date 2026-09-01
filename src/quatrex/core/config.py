@@ -140,12 +140,17 @@ class QTBMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_batch_size: PositiveInt = 10
+    max_batch_size: PositiveInt = 1
     """The maximum number of energies that are batched together when
     computing open boundary conditions (OBCs) in the QTBM solver.
 
     This can be used to reduce the memory footprint of the QTBM solver,
     at the cost of increased computation time.
+
+    !!! warning
+        This parameter has currently no real effect since the OBCs are
+        not batched anymore. It is kept to be later used when batching
+        is enabled again.
 
     """
 
@@ -170,7 +175,7 @@ class QTBMConfig(BaseModel):
     """
 
     atom_resolved_outputs: bool = False
-    """Whether to output atomic-resolved observables instead of 
+    """Whether to output atomic-resolved observables instead of
     orbital-resolved observables"""
 
 
@@ -900,16 +905,35 @@ class ContactConfig(BaseModel):
     """Configuration for a contact.
 
     !!! warning
+        Many contact parameters are currently only used in the `"wf"`
+        formalism.
 
-        Many contact parameters are currently only used in the
-        `"wf"` formalism.
+    !!! note
+        For wave function simulation, the contact parameters
+        automatically determine how to find the contact oribitals. The
+        user can either build the device from unit cell through
+        [`construct_from_unit_cell`](device/#construct_from_unit_cell)
+        parameter in the device configuration where the contact orbitals
+        are determined from the device parameters or in real space
+        through setting the [`origin`](#origin),
+        [`lattice_vectors`](#lattice_vectors), and
+        [`transport_direction`](#transport_direction) parameters in the
+        contact configuration.
 
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    """A unique name for the contact."""
+    """A unique name for the contact.
+
+    !!! note
+        In wave function simulations when building the device from unit
+        cell, this name can be either `left` or `right` to automatically
+        determine the contact orbitals from the device unit cell.
+        Otherwise, it can be arbitrary.
+
+    """
 
     _contact_finder_method: Literal["from_unit", "real_space"] | None = PrivateAttr(
         default=None
@@ -942,8 +966,12 @@ class ContactConfig(BaseModel):
     direction.
 
     !!! warning
-
         This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        When building the device from unit cell, this parameter is
+        automatically determined from the unit cell of the device and
+        the contact name. Otherwise, it must be set explicitly.
 
     """
 
@@ -955,6 +983,10 @@ class ContactConfig(BaseModel):
 
     !!! warning
         This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        When building the device from unit cell, this parameter is not
+        needed. Otherwise, it must be set explicitly.
 
     """
 
@@ -968,10 +1000,25 @@ class ContactConfig(BaseModel):
     level of the contact from its doping density and the density of
     states of its band structure.
 
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        When building the device from unit cell, this parameter is not
+        needed. Otherwise, it must be set explicitly.
+
     """
 
     conduction_band_edge: float | None = None
     """The energy of the conduction band edge in eV.
+
+    If not set, the conduction band edge is automatically determined
+    from the band structure of the contact via the `mid_gap_energy`
+    parameter.
+
+    When set explicitly, this may lead to physically inconsistent
+    results, especially in the context of Schrödinger-Poisson
+    simulations.
 
     !!! warning
         This parameter is currently only used in the `"wf"` formalism.
@@ -1828,6 +1875,14 @@ class DeviceConfig(BaseModel):
                         "the contact `transport_direction` must not be specified."
                     )
 
+                if (contact.origin is not None) or (
+                    contact.lattice_vectors is not None
+                ):
+                    raise ValueError(
+                        "When the device is constructed from a unit cell,\n"
+                        "the contact `origin` and `lattice_vectors` must not be specified."
+                    )
+
             else:
                 contact._contact_finder_method = "real_space"
 
@@ -1845,6 +1900,12 @@ class DeviceConfig(BaseModel):
 
         if len(names) != len(set(names)):
             raise ValueError("The contact names must be unique.")
+
+        # TODO Check that when building from unit cell, both left and
+        # right contacts are present. Currently, the check is avoided to
+        # not conflict with SCBA. Otherwise, we would need to know the
+        # formalism here.
+
         return self
 
     @model_validator(mode="after")

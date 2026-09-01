@@ -367,9 +367,10 @@ class SCBA(TransportSolver):
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
             elif self.config.phonon.model == "long-wavelength":
-                assert (
-                    self.electron_solver.overlap is None
-                ), "The long-wavelength model is only implemented for an orthonormal basis."
+                if self.electron_solver.overlap is not None:
+                    raise ValueError(
+                        "The long-wavelength model is only implemented for an orthonormal basis."
+                    )
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
             else:

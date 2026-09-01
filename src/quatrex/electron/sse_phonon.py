@@ -11,12 +11,18 @@ from quatrex.core.statistics import bose_einstein
 
 
 def _get_equal_spacing(a: NDArray):
-    """Asserts that `a` is equispaced and returns the spacing."""
-    assert len(a.shape) == 1
+    """
+    Asserts that the one-dimensional array `a` is equispaced and returns the spacing.
+    """
+
+    if len(a.shape) != 1:
+        raise ValueError("`a` has multiple dimensions.")
 
     differences = xp.diff(a)
     spacing = differences[0]
-    assert xp.allclose(differences, spacing), "`a` is not equispaced"
+
+    if not xp.allclose(differences, spacing):
+        raise ValueError("`a` is not equispaced.")
 
     return spacing
 
@@ -87,10 +93,10 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
             # Infer quantities from the loaded dispersion
             n_modes, n_phonon_momenta = phonon_energies.shape
-            # There are 3 * "number of atoms in unit cell" modes
-            assert (
-                phonon_energies_in.shape[0] % 3 == 0
-            ), "Not the correct amount of modes"
+            if phonon_energies_in.shape[0] % 3 != 0:
+                raise ValueError(
+                    'Not the correct amount of modes: There are supposed to be 3 * "number of atoms in unit cell" modes.'
+                )
             n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
             max_phonon_momentum = xp.pi / config.phonon.lattice_constant
             phonon_momenta = xp.linspace(
@@ -127,7 +133,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
             phonon_energy_shifts = xp.astype(
                 xp.rint(phonon_energies / energy_spacing), int
             )
-            assert xp.all(phonon_energy_shifts >= 0)
+            if not xp.all(phonon_energy_shifts >= 0):
+                raise ValueError("Detected negative phonon energies.")
             occupancies = bose_einstein(phonon_energies, config.phonon.temperature)
 
             # Compute V
@@ -226,7 +233,10 @@ class SigmaPhonon(ScatteringSelfEnergy):
         """
         sigma_lesser, sigma_greater, __ = out
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
-            assert m.distribution_state == "nnz"
+            if m.distribution_state != "nnz":
+                raise ValueError(
+                    'The inputs and outputs of `_compute_long_wavelength` must be in the "nnz" distribution state.'
+                )
 
         ne = g_lesser.data.shape[0]
 

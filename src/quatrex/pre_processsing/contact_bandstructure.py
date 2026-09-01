@@ -8,7 +8,9 @@ import warnings
 import numpy as np
 from matplotlib import pyplot as plt
 
+from qttools import NDArray, xp
 from qttools.comm import comm
+from qttools.utils.gpu_utils import get_host
 from quatrex.bandstructure.contact import (
     compute_contact_bandstructure,
     contact_band_structure,
@@ -21,8 +23,8 @@ from quatrex.grid import monkhorst_pack
 
 def _plot(
     ax: plt.Axes,
-    kpoints_transport: np.ndarray,
-    e_k: np.ndarray,
+    kpoints_transport: NDArray,
+    e_k: NDArray,
 ) -> None:
     """Plots the contact band structure for a given contact.
 
@@ -30,15 +32,15 @@ def _plot(
     ----------
     ax : plt.Axes
         The axes to plot on.
-    kpoints_transport : np.ndarray
+    kpoints_transport : NDArray
         The k-points along the transport direction.
-    e_k : np.ndarray
+    e_k : NDArray
         The eigenvalues for the contact band structure.
 
     """
     e_k = e_k.squeeze()
-    k_repeated = np.repeat(kpoints_transport, e_k.shape[1])
-    ax.scatter(k_repeated, e_k, color="blue", s=10)
+    k_repeated = np.repeat(get_host(kpoints_transport), e_k.shape[1])
+    ax.scatter(k_repeated, get_host(e_k), color="blue", s=10)
 
 
 def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
@@ -85,9 +87,9 @@ def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
                 upper=True,
             )
 
-            kpoints_transport = np.linspace(
-                -np.pi,
-                np.pi,
+            kpoints_transport = xp.linspace(
+                -xp.pi,
+                xp.pi,
                 contact_config.num_kpoints_transport,
                 endpoint=False,
             )

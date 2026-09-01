@@ -9,6 +9,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels import linalg
 from qttools.toeplitz.circulant import construct_circulant_cell
+from qttools.utils.gpu_utils import get_host
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Contact, Device
 from quatrex.electrostatics.geometry_config import Region, VolumeProperties
@@ -319,9 +320,9 @@ def compute_contact_band_properties(
     contact_config = contact.contact_config
     device_config = device.device_config
 
-    kpoints_transport = np.linspace(
-        -np.pi,
-        np.pi,
+    kpoints_transport = xp.linspace(
+        -xp.pi,
+        xp.pi,
         contact_config.num_kpoints_transport,
         endpoint=False,
     )
@@ -368,9 +369,11 @@ def compute_contact_band_properties(
     e_k = xp.mean(e_k, axis=1)
 
     doping_density = contact_doping_density(
-        coordinates=device.orbital_coordinates[
-            contact.unit_cell_orbital_indices[contact.origin_key]
-        ],
+        coordinates=get_host(
+            device.orbital_coordinates[
+                contact.unit_cell_orbital_indices[contact.origin_key]
+            ]
+        ),
         geometry_regions=device_config.geometry.regions,
     )
 

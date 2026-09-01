@@ -149,6 +149,8 @@ def upscale_layer(
         The periodic superblock structure.
 
     """
+    if isinstance(periodic_layer, tuple):
+        periodic_layer = xp.array(periodic_layer)
 
     # Stack the periodic layer to form a periodic superblock structure.
     subblock_shape = periodic_layer[0].shape[:-2] + (periodic_layer[0].shape[-1],) * 2

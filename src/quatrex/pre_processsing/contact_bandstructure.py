@@ -18,8 +18,6 @@ from quatrex.device import Device
 from quatrex.device.inputs import assemble_matrix
 from quatrex.grid import monkhorst_pack
 
-matplotlib.use("Agg")
-
 
 def _plot(
     ax: plt.Axes,
@@ -222,7 +220,13 @@ def plot_contact_band_structure(
     else:
         raise ValueError(f"Unknown formalism: {config.formalism}")
 
+    # Turn off interactive plotting only for this step and increase font
+    # size
+    backend = matplotlib.get_backend()
+    plt.switch_backend("Agg")
+    original_rc = plt.rcParams.copy()
     plt.rcParams.update({"font.size": 16})
+
     fig, axes = plt.subplots(
         len(kpoints),
         len(contacts),
@@ -284,3 +288,5 @@ def plot_contact_band_structure(
     fig.tight_layout()
     fig.savefig(config.output_dir / "band_structure.png", dpi=300)
     plt.close(fig)
+    plt.rcParams.update(original_rc)
+    plt.switch_backend(backend)

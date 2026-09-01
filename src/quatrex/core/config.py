@@ -1837,6 +1837,12 @@ class DeviceConfig(BaseModel):
                         "both `origin` and `lattice_vectors` must be provided."
                     )
 
+                if contact.transport_direction is None:
+                    raise ValueError(
+                        "When the contacts are constructed from real space,\n"
+                        "the `transport_direction` must be provided."
+                    )
+
         if len(names) != len(set(names)):
             raise ValueError("The contact names must be unique.")
         return self

@@ -1,4 +1,5 @@
 simulation_dir = "."
+input_dir = "../inputs-unit-cell"
 
 formalism = "wf" # "negf" or "wf"
 

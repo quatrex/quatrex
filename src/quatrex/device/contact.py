@@ -355,7 +355,9 @@ class Contact:
                 f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
             )
 
-        self.cell_volume = np.abs(np.linalg.det(lattice_vectors))
+        self.cell_volume = np.abs(np.linalg.det(lattice_vectors)) * np.prod(
+            repetition_grid
+        )
 
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)

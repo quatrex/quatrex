@@ -103,7 +103,7 @@ class ElectrostaticSolver:
             for contact in transport_solver.device.contacts:
                 if contact.voltage == 0.0:
                     delta_fermi_level_conduction_band = (
-                        contact.delta_fermi_level_conduction_band
+                        contact.conduction_band_edge - contact.fermi_level
                     )
                     break
 

@@ -375,13 +375,13 @@ class Device:
         from quatrex.bandstructure.contact import compute_contact_band_properties
 
         # The Fermi level is always required while midgap energy and
-        # delta_fermi_level_conduction_band are only required if SCSP is
+        # `conduction_band_edge` are only required if SCSP is
         # used.
         for contact_config, contact in zip(self.device_config.contacts, self.contacts):
             if (
                 (contact_config.fermi_level is None)
                 or (
-                    contact_config.delta_fermi_level_conduction_band is None
+                    contact_config.conduction_band_edge is None
                     and self.config.scsp is not None
                 )
                 or (
@@ -406,7 +406,7 @@ class Device:
                 (
                     contact.fermi_level,
                     contact.mid_gap_energy,
-                    contact.delta_fermi_level_conduction_band,
+                    contact.conduction_band_edge,
                 ) = compute_contact_band_properties(
                     contact=contact,
                     device=self,

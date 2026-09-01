@@ -970,8 +970,8 @@ class ContactConfig(BaseModel):
 
     """
 
-    delta_fermi_level_conduction_band: float | None = None
-    """The distance from the conduction band edge to the Fermi level in eV.
+    conduction_band_edge: float | None = None
+    """The energy of the conduction band edge in eV.
 
     !!! warning
         This parameter is currently only used in the `"wf"` formalism.

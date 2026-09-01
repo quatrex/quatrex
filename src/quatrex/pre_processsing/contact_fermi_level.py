@@ -86,7 +86,7 @@ def pre_process_fermi_level(
             (
                 fermi_level,
                 mid_gap_energy,
-                delta_fermi_level_conduction_band,
+                conduction_band_edge,
             ) = compute_contact_band_properties(
                 contact=contact,
                 device=device,
@@ -94,16 +94,14 @@ def pre_process_fermi_level(
             # Make sure that they are float and not numpy.float64
             fermi_level = float(fermi_level)
             mid_gap_energy = float(mid_gap_energy)
-            delta_fermi_level_conduction_band = float(delta_fermi_level_conduction_band)
+            conduction_band_edge = float(conduction_band_edge)
 
             # NOTE: The contact is overwritten just in case further
             # pre-processing steps are added in the future that require
             # the updated contact object.
             contact.fermi_level = fermi_level
             contact.mid_gap_energy = mid_gap_energy
-            contact.delta_fermi_level_conduction_band = (
-                delta_fermi_level_conduction_band
-            )
+            contact.conduction_band_edge = conduction_band_edge
 
             patch = dedent(
                 f"""
@@ -111,7 +109,7 @@ def pre_process_fermi_level(
                 name = "{contact.name}"
                 {fermi_level=} # Set by `quatrex pre-process`
                 {mid_gap_energy=} # Set by `quatrex pre-process`
-                {delta_fermi_level_conduction_band=} # Set by `quatrex pre-process`
+                {conduction_band_edge=} # Set by `quatrex pre-process`
                 """
             )
             merge_toml(

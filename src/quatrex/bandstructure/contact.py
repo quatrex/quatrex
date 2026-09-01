@@ -312,9 +312,8 @@ def compute_contact_band_properties(
         The computed Fermi level in eV.
     mid_gap_energy : float
         The recomputed mid-gap energy based on the band structure.
-    delta_fermi_level_conduction_band : float
-        The energy difference between the Fermi level and the conduction
-        band edge.
+    conduction_band_edge : float
+        The energy of the conduction band edge in eV.
 
     """
     contact_config = contact.contact_config
@@ -391,7 +390,6 @@ def compute_contact_band_properties(
         e_k, contact.mid_gap_energy
     )
     mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
-    delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
 
     if comm.rank == 0:
         print(f"    Doping density: {doping_density} Å^-3", flush=True)
@@ -399,9 +397,5 @@ def compute_contact_band_properties(
         print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
         print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
         print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
-        print(
-            f"    Delta Fermi level conduction band: {delta_fermi_level_conduction_band} eV",
-            flush=True,
-        )
 
-    return fermi_level, mid_gap_energy, delta_fermi_level_conduction_band
+    return fermi_level, mid_gap_energy, conduction_band_edge

@@ -233,9 +233,8 @@ class Contact:
         Fermi level of the contact in eV.
     mid_gap_energy : float
         Mid-gap energy of the contact in eV.
-    delta_fermi_level_conduction_band : float
-        Energy difference between the Fermi level and the conduction
-        band in eV.
+    conduction_band_edge : float
+        Energy of the conduction band edge in eV.
     voltage : float
         Voltage applied to the contact in V.
     temperature : float
@@ -331,9 +330,7 @@ class Contact:
 
         self.fermi_level = contact_config.fermi_level
         self.mid_gap_energy = contact_config.mid_gap_energy
-        self.delta_fermi_level_conduction_band = (
-            contact_config.delta_fermi_level_conduction_band
-        )
+        self.conduction_band_edge = contact_config.conduction_band_edge
         self.voltage = contact_config.voltage
         self.temperature = contact_config.temperature
 
@@ -352,7 +349,7 @@ class Contact:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
             print(
-                f"    Delta Fermi level to conduction band: {self.delta_fermi_level_conduction_band} eV",
+                f"    Conduction band edge: {self.conduction_band_edge} eV",
                 flush=True,
             )
             print(f"    Voltage: {self.voltage} V", flush=True)

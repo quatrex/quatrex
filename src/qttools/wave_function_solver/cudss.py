@@ -33,7 +33,12 @@ try:
 except ImportError:
     cudss_available = False
 
+import os
+
+import numpy as np
+
 from qttools import NDArray, sparse
+from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_current_stream
 from qttools.wave_function_solver.solver import WFSolver
@@ -45,6 +50,20 @@ class cuDSS(WFSolver):
     """Wavefunction solver using NVIDIA's cuDSS library for sparse
     direct solves on GPUs.
 
+    For distributed solves, the user must provide a communicator and the
+    local row distribution. The communicator must be compatible with the
+    cuDSS communication layer, which can be set via the CUDSS_COMM_LIB
+    environment variable. The local row distribution is specified as a
+    tuple of the form (`start_row`, `end_row`) for each process.
+
+    Note that even though cuDSS MGMN mode takes end_row to be inclusive,
+    we use the exclusive convention in this solver to be consistent with
+    Python slicing.
+
+    The solver also supports multithreading via the cuDSS threading
+    layer, which can be set via the CUDSS_THREADING_LIB environment
+    variable.
+
     Parameters
     ----------
     matrix_type : str, optional
@@ -55,10 +74,23 @@ class cuDSS(WFSolver):
         The view of the system matrix sparsity. This solver supports
         'full', 'upper', and 'lower' views. If None, the solver will use
         the 'full' view.
+    comm : _SubCommunicator, optional
+        The communicator for distributed solves. If None, the solver
+        will assume a single-GPU solve. This must be provided together
+        with local_rows.
+    local_rows : tuple, optional
+        A tuple specifying the local row distribution for distributed
+        solves. If None, the solver will assume a single-GPU solve.
 
     """
 
-    def __init__(self, matrix_type: str | None = None, matrix_view: str | None = None):
+    def __init__(
+        self,
+        matrix_type: str | None = None,
+        matrix_view: str | None = None,
+        comm: _SubCommunicator | None = None,
+        local_rows: tuple | None = None,
+    ):
         """Initializes the cuDSS solver."""
         if not cudss_available:
             raise ImportError(
@@ -80,6 +112,59 @@ class cuDSS(WFSolver):
 
         self.analyzed = False
         self.factorized = False
+
+        # Comm and local_rows must be provided together or not at all.
+        if (comm is None) != (local_rows is None):
+            raise ValueError(
+                "Both 'comm' and 'local_rows' must be provided together or not at all."
+            )
+
+        try:
+            start, stop = local_rows
+            # NOTE: cuDSS uses inclusive end row
+            self.local_rows = (int(start), int(stop) - 1)
+        except ValueError:
+            self.local_rows = None
+
+        if comm is not None:
+            comm_lib = os.getenv("CUDSS_COMM_LIB")
+
+            if comm_lib is None:
+                raise ValueError(
+                    "CUDSS_COMM_LIB environment variable is not set. "
+                    "Please set it to the path to your "
+                    "'libcudss_commlayer_<mpi|nccl>.so' shared library."
+                )
+
+            # Set up communication layer.
+            cudss.set_comm_layer(self._solver_handle, comm_lib)
+
+            # NOTE: Saving this as an attribute to prevent it from being
+            # garbage collected, since cuDSS really only stores a
+            # pointer to this.
+            self._comm_handle = np.array([comm._mpi_comm.py2f()], dtype=np.int32)
+
+            cudss.data_set(
+                self._solver_handle,
+                self._solver_data,
+                cudss.DataParam.COMM_HOST,
+                self._comm_handle.ctypes.data,
+                size_in_bytes=self._comm_handle.nbytes,
+            )
+
+            # TODO: Add some logic to get a NCCL communicator. For now,
+            # we just use the MPI communicator for both host and device.
+            cudss.data_set(
+                self._solver_handle,
+                self._solver_data,
+                cudss.DataParam.COMM_DEVICE,
+                self._comm_handle.ctypes.data,
+                size_in_bytes=self._comm_handle.nbytes,
+            )
+
+        threading_lib = os.getenv("CUDSS_THREADING_LIB")
+        if threading_lib is not None:
+            cudss.set_threading_layer(self._solver_handle, threading_lib)
 
     def _create_cudss_csr(self, a: sparse.csr_matrix) -> int:
         """Creates a cuDSS matrix wrapper for the sparse system matrix a
@@ -111,14 +196,20 @@ class cuDSS(WFSolver):
                 f"Supported types are: {list(cudss_value_types.keys())}"
             )
 
+        # NOTE: We assume that the matrix is always square and in the
+        # case of a distributed matrix, we partition the matrix along
+        # the rows.
+        nrows = ncols = a.shape[1]
+
         csr_handle = cudss.matrix_create_csr(
-            nrows=a.shape[0],
-            ncols=a.shape[1],
+            nrows=nrows,
+            ncols=ncols,
             nnz=a.nnz,
             row_start=a.indptr.data.ptr,  # Beginning of row offset array
             row_end=0,  # Not used in standard CSR
             col_indices=a.indices.data.ptr,
             values=a.data.data.ptr,
+            offset_type=nvmath.CudaDataType.CUDA_R_32I,
             index_type=nvmath.CudaDataType.CUDA_R_32I,
             value_type=value_type,
             mtype=self._mtype,
@@ -126,9 +217,12 @@ class cuDSS(WFSolver):
             index_base=cudss.IndexBase.ZERO,
         )
 
+        if self.local_rows is not None:
+            cudss.matrix_set_distribution_row1d(csr_handle, *self.local_rows)
+
         return csr_handle
 
-    def _create_cudss_array(self, arr: NDArray) -> int:
+    def _create_cudss_array(self, arr: NDArray, nrows_global: int) -> int:
         """Create a cuDSS wrapper for a dense array.
 
         Used for the right-hand side and solution.
@@ -137,6 +231,11 @@ class cuDSS(WFSolver):
         ----------
         arr : NDArray
             The dense array for which to create the cuDSS wrapper.
+        nrows_global : int
+            The global number of rows of the array, which is required
+            for distributed solves. If arr is a local slice of a
+            distributed array, this should be the total number of rows
+            in the global array.
 
         Returns
         -------
@@ -153,13 +252,17 @@ class cuDSS(WFSolver):
             )
 
         array_handle = cudss.matrix_create_dn(
-            nrows=arr.shape[0],
-            ncols=arr.shape[1],
-            ld=arr.shape[0],  # leading dimension
+            nrows=nrows_global,  # global number of rows
+            ncols=arr.shape[1],  # global number of columns
+            ld=arr.shape[0],  # local (!) leading dimension
             values=arr.data.ptr,
             value_type=value_type,
             layout=cudss.Layout.COL_MAJOR,  # Fortran order
         )
+
+        if self.local_rows is not None:
+            cudss.matrix_set_distribution_row1d(array_handle, *self.local_rows)
+
         return array_handle
 
     def _execute_phase(
@@ -283,12 +386,22 @@ class cuDSS(WFSolver):
                 "Please ensure they have the same data type."
             )
 
+        b_shape = b.shape
+
+        if b.ndim == 1:
+            b = b.reshape(-1, 1)
+        elif b.ndim > 2:
+            raise ValueError(
+                f"Right-hand side b has invalid number of dimensions {b.ndim}. "
+                "Expected 1 or 2 dimensions."
+            )
+
         x = cp.zeros_like(b)
 
         # Set up the linear system.
         matrix = self._create_cudss_csr(a)
-        solution = self._create_cudss_array(x)
-        rhs = self._create_cudss_array(b)
+        solution = self._create_cudss_array(x, nrows_global=a.shape[1])
+        rhs = self._create_cudss_array(b, nrows_global=a.shape[1])
 
         if not self.analyzed or not reuse_analysis:
             self._analyze(matrix, solution, rhs)
@@ -304,4 +417,4 @@ class cuDSS(WFSolver):
         for handle in [matrix, rhs, solution]:
             cudss.matrix_destroy(handle)
 
-        return x
+        return x.reshape(b_shape)

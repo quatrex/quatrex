@@ -52,6 +52,7 @@ class WFSolverSpec:
     factorization_needs_analysis: bool = False
     supports_symmetric: bool = False
     supports_hermitian: bool = False
+    supports_distributed: bool = False
     solve_kwargs: dict[str, object] = field(default_factory=dict)
 
 
@@ -106,6 +107,7 @@ SOLVER_SPECS = [
             factorization_needs_analysis=True,
             supports_symmetric=True,
             supports_hermitian=True,
+            supports_distributed=True,
         ),
         id="cudss",
         marks=[

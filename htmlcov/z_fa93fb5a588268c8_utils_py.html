@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_628c12558151fd58___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-31 15:06 +0000
+            created at 2026-09-02 12:13 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -90,7 +90,7 @@
     <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">def</span> <span class="nam">compute_sparsity_pattern</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t">    <span class="nam">positions</span><span class="op">:</span> <span class="nam">NDArray</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t">    <span class="nam">cutoff_distance</span><span class="op">:</span> <span class="nam">float</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t">    <span class="nam">transport_direction</span><span class="op">:</span> <span class="nam">str</span> <span class="op">=</span> <span class="str">&quot;x&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t">    <span class="nam">transport_direction</span><span class="op">:</span> <span class="nam">str</span> <span class="op">=</span> <span class="str">&quot;a&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t">    <span class="nam">strategy</span><span class="op">:</span> <span class="nam">str</span> <span class="op">=</span> <span class="str">&quot;box&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t">    <span class="nam">start_idx</span><span class="op">:</span> <span class="nam">int</span> <span class="op">=</span> <span class="num">0</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">    <span class="nam">end_idx</span><span class="op">:</span> <span class="nam">int</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -105,7 +105,7 @@
     <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t"><span class="str">    cutoff_distance : float</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="str">        The interaction cutoff.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="str">    transport_direction : str, optional</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="str">        The transport direction, by default &#x27;x&#x27;.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="str">        The transport direction, by default &quot;a&quot;.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="str">    strategy : str, optional</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="str">        The strategy to use, by default &quot;box&quot;, where only the distance</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="str">        along the transport direction is considered. The other option is</span>&nbsp;</span><span class="r"></span></p>
@@ -134,7 +134,7 @@
     <p class="pln"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t">    <span class="key">elif</span> <span class="nam">strategy</span> <span class="op">==</span> <span class="str">&quot;box&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t">        <span class="nam">idx</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;x&quot;</span><span class="op">:</span> <span class="num">0</span><span class="op">,</span> <span class="str">&quot;y&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">,</span> <span class="str">&quot;z&quot;</span><span class="op">:</span> <span class="num">2</span><span class="op">}</span><span class="op">[</span><span class="nam">transport_direction</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t">        <span class="nam">idx</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;a&quot;</span><span class="op">:</span> <span class="num">0</span><span class="op">,</span> <span class="str">&quot;b&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">,</span> <span class="str">&quot;c&quot;</span><span class="op">:</span> <span class="num">2</span><span class="op">}</span><span class="op">[</span><span class="nam">transport_direction</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t">        <span class="key">def</span> <span class="nam">distance</span><span class="op">(</span><span class="nam">x</span><span class="op">,</span> <span class="nam">y</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">            <span class="str">&quot;&quot;&quot;Distance along transport direction.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
@@ -220,7 +220,7 @@
             <a class="nav" href="z_628c12558151fd58___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-31 15:06 +0000
+            created at 2026-09-02 12:13 +0000
         </p>
     </div>
 </footer>

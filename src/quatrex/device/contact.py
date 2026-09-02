@@ -13,6 +13,8 @@ from qttools.boundary_conditions import obc
 from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
+from qttools.toeplitz.circulant import construct_circulant_cell
+from qttools.utils.gpu_utils import get_host
 from quatrex.bandstructure.contact import (
     contact_band_edges,
     contact_band_structure,
@@ -20,7 +22,8 @@ from quatrex.bandstructure.contact import (
     contact_fermi_level,
 )
 from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
-from quatrex.grid.kpoints import monkhorst_pack
+from quatrex.device.contact_discovery import real_space_discovery, simplified_discovery
+from quatrex.grid import monkhorst_pack
 
 profiler = Profiler()
 
@@ -98,33 +101,50 @@ def order_vector(
     vector: NDArray,
     order: str | NDArray | None,
 ):
+    """Reorders the elements of the given vector according to the
+    specified order.
+
+    Parameters
+    ----------
+    vector : NDArray
+        The vector to reorder.
+    order : str | NDArray | None
+        The order in which to reorder the elements. The only supported
+        string is "reverse", which reverses the order of the elements.
+
+    Returns
+    -------
+    NDArray
+        The reordered vector.
+
+    """
+
     if isinstance(order, str) and order not in ["reverse"]:
         raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+    if isinstance(order, xp.ndarray) and order.ndim != 1:
         raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
 
     if order is None:
         return vector
-    elif order == "reverse":
+    if order == "reverse":
         return xp.flip(vector, axis=-1)
-    else:
-        return vector[..., order]
+    return vector[..., order]
 
 
 def order_block(
     block: NDArray,
     order: str | NDArray | None,
 ) -> NDArray:
-    """Reorders the blocks of the given matrix according to the specified order.
+    """Reorders the blocks of the given matrix according to the
+    specified order.
 
     Parameters
     ----------
     block : NDArray
         The matrix block to reorder.
     order : str | NDArray | None
-        The order in which to reorder the blocks.
-        The only supported string is "reverse",
-        which reverses the order of the blocks.
+        The order in which to reorder the blocks. The only supported
+        string is "reverse", which reverses the order of the blocks.
 
     Returns
     -------
@@ -135,15 +155,14 @@ def order_block(
 
     if isinstance(order, str) and order not in ["reverse"]:
         raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+    if isinstance(order, xp.ndarray) and order.ndim != 1:
         raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
 
     if order is None:
         return block
-    elif order == "reverse":
+    if order == "reverse":
         return xp.flip(block, axis=(-2, -1))
-    else:
-        return block[..., :, order][..., order, :]
+    return block[..., :, order][..., order, :]
 
 
 def get_inverse_order(
@@ -166,15 +185,14 @@ def get_inverse_order(
 
     if isinstance(order, str) and order not in ["reverse"]:
         raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+    if isinstance(order, xp.ndarray) and order.ndim != 1:
         raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
 
     if order is None:
         return None
-    elif order == "reverse":
+    if order == "reverse":
         return "reverse"
-    else:
-        return xp.argsort(order)
+    return xp.argsort(order)
 
 
 class Contact:
@@ -193,115 +211,104 @@ class Contact:
 
     Attributes
     ----------
+    device : Device
+        The device object to which this contact is attached.
     name : str
         The contact identifier.
-    device : Device
-        Reference to the parent device.
-    lattice_vectors : NDArray
-        Contact unit cell lattice vectors.
-    origin : NDArray
-        Contact origin coordinates.
-    direction : int
+    transport_direction : int
         Transport direction index (0, 1, or 2).
-    transverse_axes : list[int]
-        Indices of the two transverse directions.
-    obc : obc.Spectral
+    obc_solver : obc.Spectral
         Configured open boundary condition solver.
-    unit_cell_hamiltonian : dict
-        Unit cell Hamiltonian matrices indexed by (i, j, k) tuples.
-    unit_cell_overlap : dict
-        Unit cell overlap matrices indexed by (i, j, k) tuples.
     unit_cell_orbital_indices : dict
-        Dict of orbital indices for each contact cell indexed by (i, j, k) tuples.
+        Dict of orbital indices for each contact cell indexed by (i, j,
+        k) tuples.
+    origin_key : tuple[int, int, int]
+        The key corresponding to the origin cell in the
+        unit_cell_orbital_indices.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
-    num_transport_cells : int
+    transport_repetitions : int
         Number of repetitions needed in transport direction for
         convergence.
+    orbital_indices : NDArray
+        Flattened array of orbital indices for the contact, sorted first
+        in transport direction, then in transverse directions.
+    orbital_indices_per_layer : list[NDArray]
+        List of orbital indices for each layer in the transport
+        direction, sorted first in transverse directions, then in
+        transport direction.
+    transverse_to_transport_indices : NDArray
+        Indices to reorder the coupling matrix from transverse-first to
+        transport-first ordering.
+    fermi_level : float
+        Fermi level of the contact in eV.
+    mid_gap_energy : float
+        Mid-gap energy of the contact in eV.
+    conduction_band_edge : float
+        Energy of the conduction band edge in eV.
+    voltage : float
+        Voltage applied to the contact in V.
+    temperature : float
+        Temperature of the contact in K.
 
     """
 
     def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
-        if len(contact_config.origin) != 3:
-            raise ValueError("Origin must be a 3D coordinate.")
-        if contact_config.lattice_vectors.shape != (3, 3):
-            raise ValueError("Vectors must be a 3x3 array.")
-        if contact_config.direction not in ["a", "b", "c"]:
+        self.device = device
+        self.contact_config = contact_config
+        if contact_config.transport_direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
-        self.device = device
         self.name = contact_config.name
+        self.transport_direction = "abc".index(contact_config.transport_direction)
 
-        self.lattice_vectors = contact_config.lattice_vectors
-        self.origin = contact_config.origin
+        if contact_config._contact_finder_method == "real_space":
+            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
+                real_space_discovery(
+                    hamiltonian=device.hamiltonians[0, 0, 0],
+                    atomic_species=device.atomic_species,
+                    atom_coordinates=device.atom_coordinates,
+                    orbital_offsets=device.orbital_offsets,
+                    contact_config=contact_config,
+                )
+            )
+        elif contact_config._contact_finder_method == "from_unit":
+            self.unit_cell_orbital_indices, repetition_grid, self.origin_key = (
+                simplified_discovery(
+                    num_orbitals=len(device.orbital_coordinates),
+                    device_config=device.config.device,
+                    contact_config=contact_config,
+                )
+            )
+        else:
+            raise NotImplementedError(
+                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
+            )
 
-        self.direction = "abc".index(contact_config.direction)
-        self.transverse_axes = [0, 1, 2]
-        self.transverse_axes.remove(self.direction)
-
-        self.unit_cell_hamiltonian = {}
-        self.unit_cell_overlap = {}
-
-        # Get the atoms inside the origin cell (defined by the user)
-        self.origin_atom_indices = self._get_atom_indices_in_cell(0, 0, 0)
-        self.origin_orbital_indices = self._atom_to_orbital_indices(
-            self.origin_atom_indices
+        self.transport_repetitions = repetition_grid[self.transport_direction]
+        self.transverse_repetition_grid = (
+            repetition_grid[: self.transport_direction]
+            + repetition_grid[self.transport_direction + 1 :]
         )
 
-        self.origin_num_orbitals = len(self.origin_orbital_indices)
-
-        if self.origin_num_orbitals == 0:
-            raise ValueError(
-                f"Error in contact {self.name}: No atoms found inside the origin cell."
-            )
-
         if comm.rank == 0:
-            print(f"Contact {self.name}:", flush=True)
             print(
-                f"    Number of orbitals inside the origin cell: {self.origin_num_orbitals}",
+                f"    Number of repetitions in transport direction: {self.transport_repetitions}",
                 flush=True,
             )
 
-        # Check how many periodic repetitions are in the transverse
-        # directions
-        self._init_periodic_transverse_repetitions()
         ny, nz = self.transverse_repetition_grid
-        if comm.rank == 0:
-            print(
-                f"    Number of periodic repetitions in the transverse directions: {ny} x {nz}",
-                flush=True,
-            )
-
-        # TODO Check if the contact transverse UC vectors are in the
-        # same direction as the device vectors
-
-        # +-1 difference because when building the supercells,
-        # the last connection is part of the bigger connection block
-        self.num_transport_cells = self._init_orbital_indices()
-
-        # Initialize the hamiltonian and overlap matrices
-        radius = self._init_hamiltonian_overlap_matrices()
-
-        self._hermitianize_unit_cell_matrices()
-
-        if comm.rank == 0:
-            print(
-                f"    Number of repetitions in transport direction: {self.num_transport_cells}",
-                flush=True,
-            )
-            print(f"    Maximum coupling radius: {radius}")
 
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
         self.orbital_indices = np.concatenate(
             [
                 self.unit_cell_orbital_indices[i, j, k]
-                for j, k, i in np.ndindex(ny, nz, self.num_transport_cells)
+                for j, k, i in np.ndindex(ny, nz, self.transport_repetitions)
             ]
         )
-
         # When getting the coupling matrix (01) for spill over,
         # it is more efficient to have it sorted first in transverse, then in transport
         # The orbital list is then different.
@@ -310,650 +317,57 @@ class Contact:
             np.concatenate(
                 [self.unit_cell_orbital_indices[i, j, k] for j, k in np.ndindex(ny, nz)]
             )
-            for i in range(self.num_transport_cells + 1)
+            for i in range(self.transport_repetitions + 1)
         ]
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
+        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
         self.transverse_to_transport_indices = np.concatenate(
             [
-                np.arange(self.origin_num_orbitals)
-                + i * self.origin_num_orbitals
-                + k * self.origin_num_orbitals * ny * nz
+                np.arange(origin_num_orbitals)
+                + i * origin_num_orbitals
+                + k * origin_num_orbitals * ny * nz
                 for i in range(ny * nz)
-                for k in range(self.num_transport_cells)
+                for k in range(self.transport_repetitions)
             ],
             dtype=int,
         )[None, :]
 
+        # TODO: The obc and nevp config should be directly associated with the contact
+        # with either a config per contact or a config per contact.
+        # This will be simpler when unifying QTBM and SCBA.
         self.obc_solver = self._configure_obc(
             device.config.electron.obc, device.config.compute.nevp
         )
 
-        # NOTE: We can either explicitly set the Fermi level in the
-        # contact config, or compute it from the doping density and a
-        # mid-gap energy.
-        if contact_config.fermi_level is not None and device.config.scsp is None:
-            self.fermi_level = contact_config.fermi_level
-            self.mid_gap_energy = contact_config.mid_gap_energy
-        else:
-            # TODO: The kpoint grid info is not in the contact config,
-            # but we need it to compute a Fermi level. Would be nice if
-            # this could be accessed via a sort of general, global
-            # simulation context.
-            kpoints_transverse = (2 * np.pi) * monkhorst_pack(
-                device.config.device.kpoint_grid, device.config.device.kpoint_shift
-            )[:, self.transverse_axes]
-
-            doping_density = contact_doping_density(
-                coordinates=device.atom_coordinates[self.origin_atom_indices],
-                geometry_regions=device.config.device.geometry.regions,
-            )
-
-            if comm.rank == 0:
-                print(f"    Doping density: {doping_density} Å^-3", flush=True)
-
-            # HACK: If there is a potential present in the input folder,
-            # it will have already been baked into the unit cell
-            # Hamiltonian by the time we get here, so it now needs to be
-            # removed to correctly compute the Fermi level and band
-            # edges and then it has to be added back again immediately
-            # after to not affect the rest of the calculation. Because
-            # the potential is added in-place rather than just set, we
-            # have to in-place add its negative to effectively remove
-            # it.
-            potential = self.device.potential.copy()
-
-            self.device.potential = -potential
-            self.device.apply_potential()
-            self._init_hamiltonian_overlap_matrices()
-
-            (
-                self.fermi_level,
-                self.mid_gap_energy,
-                self.delta_fermi_level_conduction_band,
-            ) = self._compute_fermi_level(
-                num_kpoints_transport=contact_config.num_kpoints_transport,
-                kpoints_transverse=kpoints_transverse,
-                mid_gap_energy=contact_config.mid_gap_energy,
-                temperature=contact_config.temperature,
-                doping_density=doping_density,
-                cell_volume=np.abs(np.linalg.det(self.lattice_vectors)),
-            )
-
-            self.device.potential = potential
-            self.device.apply_potential()
-            self._init_hamiltonian_overlap_matrices()
-
+        self.fermi_level = contact_config.fermi_level
+        self.mid_gap_energy = contact_config.mid_gap_energy
+        self.conduction_band_edge = contact_config.conduction_band_edge
         self.voltage = contact_config.voltage
         self.temperature = contact_config.temperature
+
+        if contact_config._contact_finder_method == "real_space":
+            lattice_vectors = contact_config.lattice_vectors
+        elif contact_config._contact_finder_method == "from_unit":
+            lattice_vectors = device.lattice_vectors
+        else:
+            raise NotImplementedError(
+                f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
+            )
+
+        self.cell_volume = np.abs(np.linalg.det(lattice_vectors)) * np.prod(
+            repetition_grid
+        )
 
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
-            if contact_config.fermi_level is None or device.config.scsp is not None:
-                print(
-                    f"    Delta Fermi level: {self.delta_fermi_level_conduction_band} eV",
-                    flush=True,
-                )
+            print(
+                f"    Conduction band edge: {self.conduction_band_edge} eV",
+                flush=True,
+            )
             print(f"    Voltage: {self.voltage} V", flush=True)
             print(f"    Temperature: {self.temperature} K", flush=True)
-
-    def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
-        """Gets the indices of atoms inside a specific periodic repetition.
-
-        This method finds all device atoms that fall within the
-        specified periodic repetition of the contact unit cell.
-
-        Parameters
-        ----------
-        nx : int
-            The x-coordinate of the periodic repetition.
-        ny : int
-            The y-coordinate of the periodic repetition.
-        nz : int
-            The z-coordinate of the periodic repetition.
-
-        Returns
-        -------
-        NDArray
-            1D array of atom indices that fall within the specified
-            periodic repetition.
-
-        """
-
-        # Shift the coordinates of the device atoms to the origin of the
-        # contact
-        relative_coordinates = self.device.atom_coordinates - self.origin
-
-        # Compute the coefficients relative to the contact cell
-        fractional_coordinates = relative_coordinates @ np.linalg.inv(
-            self.lattice_vectors
-        )
-
-        # Get the indices of the atoms inside the periodic repetition
-        indices_inside = np.nonzero(
-            (fractional_coordinates[:, 0] >= nx)
-            & (fractional_coordinates[:, 0] <= nx + 1)
-            & (fractional_coordinates[:, 1] >= ny)
-            & (fractional_coordinates[:, 1] <= ny + 1)
-            & (fractional_coordinates[:, 2] >= nz)
-            & (fractional_coordinates[:, 2] <= nz + 1)
-        )[0]
-
-        return indices_inside
-
-    def _reorder_atoms(
-        self, atom_indices: NDArray, idx: tuple[int, int, int], tol: float = 0.3
-    ) -> NDArray:
-        """Reorders atoms to match the ordering in the origin cell.
-
-        This method ensures consistent atom ordering across different
-        periodic repetitions of the contact unit cell.
-
-        Parameters
-        ----------
-        atom_indices : NDArray
-            Indices of atoms inside the periodic repetition to be
-            reordered.
-        idx : tuple[int, int, int]
-            The coordinates of the periodic repetition.
-        tol : float, optional
-            Distance tolerance for atom matching, by default 0.3.
-
-        Returns
-        -------
-        NDArray
-            Reordered array of atom indices that correspond to the same
-            ordering as the origin cell atoms.
-
-        """
-
-        sorted_atom_indices = []
-        # Tolerance for the distance check
-
-        # Shift the coordinates of the atoms inside the periodic
-        # repetition to match the origin cell
-        shifted_atom_coordinates = self.device.atom_coordinates[
-            atom_indices, :
-        ] - self.lattice_vectors @ np.array(idx)
-
-        atomic_species = self.device.atomic_species[atom_indices]
-
-        for origin_atom_index in self.origin_atom_indices:
-
-            delta = (
-                shifted_atom_coordinates
-                - self.device.atom_coordinates[origin_atom_index, :]
-            )
-
-            # Find the atoms in the periodic repetition that are close
-            # to the atom in the origin cell and have the same element
-            found_atoms = np.nonzero(
-                (np.linalg.norm(delta, axis=1) < tol)
-                & (self.device.atomic_species[origin_atom_index] == atomic_species)
-            )[0]
-            if found_atoms.size == 0:
-                raise ValueError(
-                    f"Error in contact {self.name}: "
-                    f"Atom {origin_atom_index} not found in the periodic repetition at ({idx})."
-                )
-            elif found_atoms.size > 1:
-                raise ValueError(
-                    f"Error in contact {self.name}: "
-                    f"Multiple atoms found in the periodic repetition at ({idx}) "
-                    f"matching atom {origin_atom_index} from the origin cell."
-                )
-
-            sorted_atom_indices.append(atom_indices[found_atoms[0]])
-
-        return np.array(sorted_atom_indices, dtype=int)
-
-    def _count_repetitions(self, axis: int, sign: int) -> int:
-        """Counts periodic repetitions in a given direction.
-
-        Parameters
-        ----------
-        axis : int
-            The axis along which to count the repetitions (0, 1, or
-            2).
-        sign : int
-            The sign of the direction to count the repetitions (1
-            for positive, -1 for negative).
-
-        Returns
-        -------
-        int
-            The number of periodic repetitions in the given
-            direction.
-
-        """
-
-        assert axis in [0, 1, 2], "Axis must be 0, 1, or 2."
-        assert sign in [1, -1], "Sign must be 1 or -1."
-
-        for repetition in itertools.count(start=1):
-            idx = [0, 0, 0]
-            idx[axis] = sign * repetition
-
-            # Get the atoms inside the periodic repetition
-            atom_indices = self._get_atom_indices_in_cell(*idx)
-
-            if atom_indices.shape[0] == 0:
-                break
-
-            # Number of atoms inside the periodic repetition
-            # does not match the origin cell
-            if len(atom_indices) != len(self.origin_atom_indices):
-                raise ValueError(
-                    f"Atom mismatch at {tuple(idx)} in contact {self.name} for axis {axis} and sign {sign}."
-                )
-
-        # Minus one because the last repetition had no atoms
-        return repetition - 1
-
-    def _init_periodic_transverse_repetitions(self):
-        """Determines number of periodic repetitions in transverse directions."""
-
-        # Count the number of periodic repetitions in each transverse direction
-        # (y+, y-, z+, z- )
-        repetitions_y_pos = self._count_repetitions(self.transverse_axes[0], 1)
-        repetitions_y_neg = self._count_repetitions(self.transverse_axes[0], -1)
-        repetitions_z_pos = self._count_repetitions(self.transverse_axes[1], 1)
-        repetitions_z_neg = self._count_repetitions(self.transverse_axes[1], -1)
-
-        # Store the number of periodic repetitions in the contact object
-        # and the coordinates of the origin cell
-        self.origin_cell_offset = np.array((repetitions_y_neg, repetitions_z_neg))
-        self.transverse_repetition_grid = np.array(
-            [
-                repetitions_y_pos + repetitions_y_neg + 1,
-                repetitions_z_pos + repetitions_z_neg + 1,
-            ]
-        )
-
-    def _init_orbital_indices(self) -> int:
-        """Initializes orbital indices for all periodic repetitions
-        in transverse directions and counts number of transport cells.
-
-        Returns
-        -------
-        int
-            The number of periodic repetitions in the transport
-            direction needed for convergence.
-
-        """
-
-        # Initialize empty orbitals indices
-        # for each periodic repetition in transverse directions
-        # list[ny][nz][transport_index] -> orbital indices
-        ny, nz = self.transverse_repetition_grid
-        self.unit_cell_orbital_indices = {}
-
-        residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
-
-        residual_orbitals_old = residual_orbitals.copy()
-
-        # First initialize all orbital indices
-        # NOTE: This is basically a while True loop with a return inside.
-        for transport_index in itertools.count(0):
-            residual_orbitals = self._init_orbitals_transverse(
-                transport_index, residual_orbitals
-            )
-            if self._residual_coupling(residual_orbitals) == 0:
-                return transport_index
-
-            # The residual orbitals did not change
-            # but there are still residual couplings
-            # then some orbitals got missed
-            if np.array_equal(residual_orbitals_old, residual_orbitals):
-                raise ValueError(
-                    f"Error in contact {self.name}: "
-                    f"Could not find all orbitals in the contact unit cell. "
-                )
-            residual_orbitals_old = residual_orbitals.copy()
-
-    def _init_orbitals_transverse(
-        self, transport_index: int, residual_orbitals: NDArray
-    ) -> NDArray:
-        """Initialize the orbitals for a given transport cell
-        for all transverse periodic repetitions. Additionally,
-        this method updates the residual orbitals.
-
-        Parameters
-        ----------
-        transport_index : int
-            The index of the periodic repetition in the transport
-            direction.
-        residual_orbitals : NDArray
-            The orbital indices that have not yet been included in
-            the contact unit cell.
-
-        Returns
-        -------
-        residual_orbitals : NDArray
-            The updated residual orbital indices after including
-            the orbitals from this transport cell.
-
-        """
-
-        # Iterate over all (x, y) combinations
-        ny, nz = self.transverse_repetition_grid
-        for idy, idz in itertools.product(
-            range(ny),
-            range(nz),
-        ):
-            index = [idy - self.origin_cell_offset[0], idz - self.origin_cell_offset[1]]
-            index.insert(self.direction, transport_index)
-
-            # Process atom and orbital indices
-            atom_indices = self._get_atom_indices_in_cell(*index)
-            atom_indices = self._reorder_atoms(atom_indices, index)
-            orbital_indices = self._atom_to_orbital_indices(atom_indices)
-
-            self.unit_cell_orbital_indices[transport_index, idy, idz] = orbital_indices
-
-            residual_orbitals = residual_orbitals[
-                ~np.isin(residual_orbitals, orbital_indices)
-            ]
-
-        return residual_orbitals
-
-    def _atom_to_orbital_indices(self, atom_indices: NDArray) -> NDArray:
-        """Gets the orbital indices corresponding to the atoms
-
-        Parameters
-        ----------
-        atom_indices : NDArray
-            The indices of the atoms.
-
-        Returns
-        -------
-        NDArray
-            The indices of the orbitals corresponding to the atoms.
-
-        """
-
-        orbital_offsets = self.device.orbital_offsets
-        starts = orbital_offsets[atom_indices]
-        ends = orbital_offsets[atom_indices + 1]
-        counts = ends - starts
-
-        orbital_indices = np.repeat(starts, counts) + np.concatenate(
-            [np.arange(c) for c in counts]
-        )
-
-        return orbital_indices
-
-    def _get_circumference_coordinates(self, radius: int) -> list:
-        """Gets coordinates only on the circumference of the grid.
-
-        Parameters
-        ----------
-        radius : int
-            The radius of the circumference.
-
-        Returns
-        -------
-        list
-            A list of tuples representing the coordinates on the
-            circumference.
-
-        """
-        coordinates = []
-
-        for y in range(-radius, radius + 1):
-            for z in range(-radius, radius + 1):
-                if max(abs(y), abs(z)) == radius:
-                    coordinates.append(np.array([y, z]))
-
-        return coordinates
-
-    def _hermitianize_unit_cell_matrices(self):
-        """Ensures that the unit cell Hamiltonian and overlap matrices
-        are the Hermitian conjugate of the one with the opposite index.
-        """
-
-        for key in list(self.unit_cell_hamiltonian.keys()):
-            if key[0] == 0:
-
-                key_opp = (key[0], -key[1], -key[2])
-                self.unit_cell_hamiltonian[key_opp] = self.unit_cell_hamiltonian[
-                    key
-                ].T.conj()
-
-        for key in list(self.unit_cell_overlap.keys()):
-
-            if key[0] == 0:
-                key_opp = (key[0], -key[1], -key[2])
-                self.unit_cell_overlap[key_opp] = self.unit_cell_overlap[key].T.conj()
-
-    def _init_hamiltonian_overlap_matrices(self) -> int:
-        """Initializes the hamiltonian and overlap matrices.
-
-        Returns
-        -------
-        int
-            The maximum coupling radius found.
-
-        """
-
-        # The hamiltonian and overlap matrices for a given transverse
-        # slice are obtained around the origin cell increasing radius
-        # until no more hamiltonian or overlap is found.
-
-        for transport_index in range(self.num_transport_cells + 1):
-            for radius in itertools.count(0):  # While True loop
-
-                found_any_at_radius = False
-
-                # Get the coordinates on the circumference of the grid
-                circumference_coordinates = self._get_circumference_coordinates(radius)
-                for cell_coordinates in circumference_coordinates:
-
-                    if self.device.gamma_only and (
-                        np.any(
-                            (self.transverse_repetition_grid == 1)
-                            & (cell_coordinates != 0)
-                        )
-                    ):
-                        continue
-
-                    # The coupling is defined in the in the device
-                    # hamiltonian at (H_1, H_2)
-                    shifted_coordinates = cell_coordinates + self.origin_cell_offset
-                    hopping_indices = np.array(
-                        (shifted_coordinates + 0.0001)
-                        / self.transverse_repetition_grid,
-                        dtype=int,
-                    )
-                    hopping_indices += np.array(
-                        [-1 if i < 0 else 0 for i in shifted_coordinates], dtype=int
-                    )
-
-                    # Edge case for periodic devices,
-                    # when the interactions loop
-                    if self.device.gamma_only and np.any(
-                        self.transverse_repetition_grid > 1
-                    ):
-                        diameter = 2 * radius + 1
-                        hopping_indices = np.array([0, 0])
-
-                        if np.any(
-                            (diameter > self.transverse_repetition_grid)
-                            & (self.transverse_repetition_grid > 1)
-                        ):
-                            raise ValueError(
-                                f"Error in contact {self.name}: \n"
-                                f"Cannot obtain the UC matrices from the Gamma-point device matrix, probably because the basis decay is not enough.\n"
-                                f"Possible solutions:\n"
-                                f"  - Increase the UC to include the entire cross-section (1x1 contact UC)\n"
-                                f"  - Provide all the hopping Hamiltonians in the device, not only the Gamma point."
-                                f"Error encountered with radius {radius}"
-                            )
-
-                    # These are the orbitals where to look for the coupling
-                    idy, idz = shifted_coordinates % self.transverse_repetition_grid
-                    orbital_indices = self.unit_cell_orbital_indices[
-                        transport_index, idy, idz
-                    ]
-
-                    found_hamiltonian = self._update_unit_cell_matrices(
-                        self.device.hamiltonians,
-                        self.unit_cell_hamiltonian,
-                        cell_coordinates,
-                        hopping_indices,
-                        transport_index,
-                        orbital_indices,
-                    )
-                    found_overlap = self._update_unit_cell_matrices(
-                        self.device.overlap_matrices,
-                        self.unit_cell_overlap,
-                        cell_coordinates,
-                        hopping_indices,
-                        transport_index,
-                        orbital_indices,
-                    )
-
-                    if found_overlap and not found_hamiltonian:
-                        raise ValueError(
-                            f"Error in contact {self.name}: \n"
-                            f"Overlap matrix found without corresponding Hamiltonian at transport index {transport_index} "
-                            f"and transverse coordinates {cell_coordinates}."
-                        )
-
-                    if found_hamiltonian or found_overlap:
-                        found_any_at_radius = True
-
-                if not found_any_at_radius:
-                    break
-
-        return radius - 1
-
-    def _update_unit_cell_matrices(
-        self,
-        quantity: dict,
-        output_dict: dict,
-        cell_coordinates: NDArray,
-        hopping_indices: NDArray,
-        transport_index: int,
-        orbital_indices: NDArray,
-    ) -> bool:
-        """Updates the unit cell matrices for a given quantity (hamiltonian or overlap).
-
-        Parameters
-        ----------
-        quantity : dict
-            The device quantity (hamiltonian or overlap) to extract
-            the hopping matrix from.
-        output_dict : dict
-            The output dictionary to store the unit cell matrices.
-        cell_coordinates : NDArray
-            The transverse cell coordinates.
-        hopping_indices : NDArray
-            The hopping indices in the device quantity.
-        transport_index : int
-            The transport index of the periodic repetition.
-        orbital_indices : NDArray
-            The orbital indices for the periodic repetition.
-
-        Returns
-        -------
-        bool
-            True if a non-zero matrix was found and added, False
-            otherwise.
-
-        """
-
-        opposite_hopping_indices = (hopping_indices * -1).tolist()
-        hopping_indices = hopping_indices.copy().tolist()
-
-        hopping_indices.insert(self.direction, 0)
-        opposite_hopping_indices.insert(self.direction, 0)
-
-        hopping_indices = tuple(hopping_indices)
-        opposite_hopping_indices = tuple(opposite_hopping_indices)
-
-        hopping_matrix = quantity.get(hopping_indices)
-        if hopping_matrix is None:
-            return False
-
-        y, z = cell_coordinates
-
-        # TODO: The hopping matrix sits on the GPU. It seems that there
-        # is some strange fancy indexing bug that makes it necessary to
-        # handle slicing on the CPU. (cupy-13.5.1)
-        # TODO: Change how to check where the data resides (GPU or CPU)
-        hopping_matrix = (
-            hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
-        )
-
-        opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
-
-        if opposite_hopping_matrix is None:
-            raise ValueError(
-                f"Error in contact {self.name}: \n"
-                f"Hopping matrix found at {hopping_indices} without corresponding opposite hopping at {opposite_hopping_indices}."
-            )
-
-        opposite_hopping_matrix = (
-            opposite_hopping_matrix.get()
-            if hasattr(opposite_hopping_matrix, "get")
-            else opposite_hopping_matrix
-        )
-
-        # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
-        # We need to add the lower part to get the full coupling.
-        unit = (
-            sparse.csr_matrix(
-                hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
-            )
-            + sparse.csr_matrix(
-                opposite_hopping_matrix[orbital_indices, :][
-                    :, self.origin_orbital_indices
-                ]
-            ).T.conj()
-        )
-
-        if np.array_equal(self.origin_orbital_indices, orbital_indices):
-            unit -= sparse.diags(
-                hopping_matrix[self.origin_orbital_indices, :][
-                    :, orbital_indices
-                ].diagonal(),
-                format="csr",
-            )
-
-        if unit.nnz == 0:
-            return False
-
-        output_dict[(transport_index, y, z)] = unit
-
-        return True
-
-    def _residual_coupling(self, residual_orbitals: NDArray) -> bool:
-        """Checks if there is residual coupling between the orbitals in
-        the contact and the full device.
-
-        Parameters
-        ----------
-        residual_orbitals : NDArray
-            The orbital indices that have not yet been included in
-            the contact unit cell.
-
-        Returns
-        -------
-        bool
-            True if there is residual coupling, False otherwise.
-
-        """
-
-        return (
-            self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
-                :, residual_orbitals
-            ].nnz
-            + self.device.hamiltonians[0, 0, 0][residual_orbitals, :][
-                :, self.origin_orbital_indices
-            ].nnz
-        )
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig
@@ -982,11 +396,11 @@ class Contact:
                 "Sancho-rubio OBC algorithm does not work with QTBM, please use spectral OBC solver."
             )
 
-        elif obc_config.algorithm == "spectral":
+        if obc_config.algorithm == "spectral":
             nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=self.num_transport_cells,  # WARNING: overrides config
+                block_sections=self.transport_repetitions,  # WARNING: overrides config
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -1036,65 +450,96 @@ class Contact:
                 use_pinned_memory=nevp_config.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
-
-            a_xx = None
-            if nevp_config.reduce_sparsity:
-                # For QTBM, we can precompute the sparsity pattern of
-                # the matrix polynomial coefficients here.
-
-                a_xx = [None] * (2 * self.num_transport_cells + 1)
-                for r, h_r in self.unit_cell_hamiltonian.items():
-                    s_r = self.unit_cell_overlap.get(r, 0)
-                    a_r = sparse.csc_matrix(s_r + h_r)
-
-                    a_xx[self.num_transport_cells + r[0]] = a_r
-                    a_xx[self.num_transport_cells - r[0]] = a_r.T
-
-                a_xx = tuple(a_xx)
-
             return Full(
                 eig_compute_location=nevp_config.eig_compute_location,
                 use_pinned_memory=nevp_config.use_pinned_memory,
                 reduce=nevp_config.reduce_sparsity,
-                a_xx_sparsity=a_xx,
             )
 
         raise NotImplementedError(
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def _compute_fermi_level(
+    def compute_contact_bandstructure(
         self,
-        num_kpoints_transport: int,
-        kpoints_transverse: NDArray,
-        mid_gap_energy: float,
-        temperature: float,
-        doping_density: float,
-        cell_volume: float,
-    ) -> tuple[float, float, float]:
-        """Computes the Fermi level for the contact.
+        h_xx: dict,
+        s_xx: dict,
+        kpoint: NDArray,
+        kpoints_transport: NDArray,
+    ) -> NDArray:
+        """Slices and expands the inptut matrices, and computes the contact
+        band structure for at a specific k-point.
 
         Parameters
         ----------
-        num_kpoints_transport : int
-            The number of k-points to sample in the transport direction
-            for the band structure calculation.
-        kpoints_transverse : NDArray
-            The array of transverse k-points at which to compute the
-            band structure.
-        mid_gap_energy : float
-            The mid-gap energy of the contact material.
+        h_xx : dict
+            The Hamiltonian matrix blocks of a single contact layer. Already
+            summed over k-points.
+        s_xx : dict
+            The overlap matrix blocks of a single contact layer. Already
+            summed over k-points.
+        kpoint : NDArray
+            The k-point at which to compute the band structure.
+        kpoints_transport : NDArray
+            The k-points along the transport direction.
 
-        temperature : float
-            The temperature of the contact in Kelvin.
-        doping_density : float
-            The doping density of the contact. This has to have the
-            inverse units of the cell volume, e.g. cm^-3 if the cell
-            volume is in cm^3.
-        cell_volume : float
-            The volume of the contact unit cell in the same units as the
-            inverse of the doping density, e.g. cm^3 if the doping
-            density is in cm^-3.
+        Returns
+        -------
+        e_k : np.ndarray
+            The eigenvalues for the contact band structure.
+
+        """
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+
+        h_xx_tmp = {}
+        s_xx_tmp = {}
+        # shuffle keys to to have natural order a,b,c
+        for i, j, k in np.ndindex(*grid):
+            index = [j, k]
+            index.insert(self.transport_direction, i)
+            index = tuple(index)
+            h_xx_tmp[index] = h_xx[i, j, k].toarray()
+            s_xx_tmp[index] = s_xx[i, j, k].toarray()
+        h_xx = h_xx_tmp
+        s_xx = s_xx_tmp
+
+        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+        phases = (
+            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
+        )
+
+        H_XX = tuple(
+            construct_circulant_cell(
+                matrix_dict=h_xx,
+                transport_cell_size=self.transport_repetitions,
+                transport_ind=self.transport_direction,
+                block_index=block_index,
+                sections=self.transverse_repetition_grid,
+                phases=phases,
+                key_assumption="half",
+            )
+            for block_index in [-1, 0, 1]
+        )
+        S_XX = tuple(
+            construct_circulant_cell(
+                matrix_dict=s_xx,
+                transport_cell_size=self.transport_repetitions,
+                transport_ind=self.transport_direction,
+                block_index=block_index,
+                sections=self.transverse_repetition_grid,
+                phases=phases,
+                key_assumption="half",
+            )
+            for block_index in [-1, 0, 1]
+        )
+
+        return contact_band_structure(kpoints_transport, H_XX, S_XX)
+
+    def compute_contact_band_properties(
+        self,
+    ) -> tuple[float, float, float]:
+        """Computes the Fermi level for the contact from the Hamiltonian and
+        overlap matrices.
 
         Returns
         -------
@@ -1102,60 +547,92 @@ class Contact:
             The computed Fermi level in eV.
         mid_gap_energy : float
             The recomputed mid-gap energy based on the band structure.
-        delta_fermi_level_conduction_band : float
-            The energy difference between the Fermi level and the
-            conduction band edge.
+        conduction_band_edge : float
+            The energy of the conduction band edge in eV.
 
         """
+        contact_config = self.contact_config
+        device_config = self.device.device_config
+
         kpoints_transport = xp.linspace(
-            -xp.pi, xp.pi, num_kpoints_transport, endpoint=False
+            -xp.pi,
+            xp.pi,
+            contact_config.num_kpoints_transport,
+            endpoint=False,
         )
+
+        transverse_axes = [0, 1, 2]
+        transverse_axes.remove(self.transport_direction)
+
+        kpoints = monkhorst_pack(device_config.kpoint_grid, device_config.kpoint_shift)
 
         e_k = xp.zeros(
             (
-                num_kpoints_transport,
-                kpoints_transverse.shape[0],
-                self.num_transport_cells * self.origin_num_orbitals,
+                len(kpoints_transport),
+                kpoints.shape[0],
+                len(self.unit_cell_orbital_indices[self.origin_key])
+                * self.transport_repetitions
+                * np.prod(self.transverse_repetition_grid),
             ),
             dtype=float,
         )
 
-        for n, (ki, kj) in enumerate(kpoints_transverse):
-            hamiltonian_layer = self._construct_contact_matrix(
-                self.unit_cell_hamiltonian, ki, kj
+        hamiltonians = self.device.hamiltonians
+        overlaps = self.device.overlap_matrices
+        for m, kpoint in enumerate(kpoints):
+            h_xx = self.get_contact_blocks(
+                matrices=hamiltonians,
+                kpoint=kpoint,
+                upper=True,
             )
-            overlap_layer = self._construct_contact_matrix(
-                self.unit_cell_overlap, ki, kj
+            s_xx = self.get_contact_blocks(
+                matrices=overlaps,
+                kpoint=kpoint,
+                upper=True,
             )
 
-            h_xx = xp.split(hamiltonian_layer.toarray(), 3, axis=-1)
-            s_xx = xp.split(overlap_layer.toarray(), 3, axis=-1)
-
-            e_k[:, n, :] = contact_band_structure(kpoints_transport, h_xx, s_xx)
+            e_k[:, m, :] = self.compute_contact_bandstructure(
+                h_xx=h_xx,
+                s_xx=s_xx,
+                kpoint=kpoint,
+                kpoints_transport=kpoints_transport,
+            )
 
         # Average over transverse k-points.
         e_k = xp.mean(e_k, axis=1)
 
+        doping_density = contact_doping_density(
+            coordinates=get_host(
+                self.device.orbital_coordinates[
+                    self.unit_cell_orbital_indices[self.origin_key]
+                ]
+            ),
+            geometry_regions=device_config.geometry.regions,
+        )
+
         fermi_level = contact_fermi_level(
             e_k=e_k,
             kpoints=kpoints_transport,
-            mid_gap_energy=mid_gap_energy,
-            cell_volume=cell_volume,
+            mid_gap_energy=self.mid_gap_energy,
+            cell_volume=self.cell_volume,
             doping_density=doping_density,
-            temperature=temperature,
+            temperature=self.temperature,
         )
 
         # Recompute the actual mid-gap energy from the band structure.
         valence_band_edge, conduction_band_edge = contact_band_edges(
-            e_k, mid_gap_energy
+            e_k, self.mid_gap_energy
         )
+        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+
         if comm.rank == 0:
+            print(f"    Doping density: {doping_density} Å^-3", flush=True)
+            print(f"    Fermi level: {fermi_level} eV", flush=True)
             print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
             print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
-        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
-        delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
+            print(f"    Recomputed mid-gap energy: {mid_gap_energy} eV", flush=True)
 
-        return fermi_level, mid_gap_energy, delta_fermi_level_conduction_band
+        return fermi_level, mid_gap_energy, conduction_band_edge
 
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False
@@ -1214,7 +691,7 @@ class Contact:
         coupling_matrix = []
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
         # Assemble column by column
-        for shift in range(self.num_transport_cells):
+        for shift in range(self.transport_repetitions):
             layer = layers[shift:] + [zero] * shift
             coupling_matrix.append(sparse.vstack(layer, format="csr"))
 
@@ -1223,18 +700,13 @@ class Contact:
         indices = self.transverse_to_transport_indices
         return coupling_matrix[indices.T, indices]
 
-    def _construct_contact_matrix(self, UC_matrix: dict, ky: float, kz: float):
+    def _construct_contact_matrix(self, UC_matrix: list):
         """Constructs the full contact matrix for the contact at given
         transverse k-points.
+
         Parameters
         ----------
-        UC_matrix : dict
-            A dictionary containing the unit cell matrices indexed by
-            (i, j, k) tuples.
-        ky : float
-            The transverse wavevector in the y-direction.
-        kz : float
-            The transverse wavevector in the z-direction.
+        UC_matrix : list
 
         Returns
         -------
@@ -1243,20 +715,15 @@ class Contact:
 
         """
 
-        n = UC_matrix[(0, 0, 0)].shape[0]
-        num_cells = self.num_transport_cells
+        n = UC_matrix[0].shape[0]
+        num_cells = self.transport_repetitions
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
 
-        uc_right = [zero for _ in range(num_cells + 1)]
-        for (x, y, z), ham in UC_matrix.items():
-            if 0 <= x <= num_cells:
-                uc_right[x] += ham * xp.exp(1j * (ky * y + kz * z))
-
-        uc_left = [h.conj().T for h in uc_right[1:][::-1]]
+        uc_left = [h.conj().T for h in UC_matrix[1:][::-1]]
 
         # Pad with zeros for the OBCs
         padding = [zero] * (num_cells - 1)
-        first_row_blocks = uc_left + uc_right + padding
+        first_row_blocks = uc_left + UC_matrix + padding
 
         contact_matrix = []
         for ii in range(num_cells):
@@ -1410,22 +877,127 @@ class Contact:
 
         return modes
 
+    def slice_matrix(
+        self,
+        M: sparse.spmatrix,
+        upper: bool = False,
+    ):
+        """Slices the given matrix into a dictionary of submatrices
+        corresponding to the unit cell orbital indices.
+
+        Parameters
+        ----------
+        M : sparse.spmatrix
+            The matrix to slice.
+        upper : bool, optional
+            Whether M is only upper triangular.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping (i, j, k) tuples to the sliced
+            submatrices corresponding to the unit cell orbital indices.
+
+        """
+
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+
+        M_slice = {}
+        M_origin = M[origin_orbital_indices, :]
+
+        if upper:
+            M_origin += M[:, origin_orbital_indices].T.conj()
+            M_origin[:, origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
+            )
+
+        for index in np.ndindex(*grid):
+            M_slice[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+
+        return M_slice
+
+    def get_contact_blocks(
+        self,
+        matrices: dict,
+        kpoint: NDArray,
+        upper: bool = False,
+    ) -> dict:
+        """Constructs the contact blocks for the given k-point.
+
+        Parameters
+        ----------
+        matrices : dict
+            A dictionary of matrices (Hamiltonian or overlap) indexed by
+            the spatial index.
+        kpoint : NDArray
+            The k-point for which to construct the contact blocks.
+        upper : bool, optional
+            Whether M is only upper triangular.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping (i, j, k) tuples to the contact blocks
+            corresponding to the unit cell orbital indices.
+
+        """
+        M_origin = None
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+
+        # NOTE: Needs to slice and multiply the phase at once using
+        # `slice_matrix` would be wrong with `upper=True` since not each
+        # k-point hamiltonian is hermitian, but only the sum over all
+        # k-points is hermitian.
+
+        # Assemble the contact layer for the full summed k-point matrix
+        for r, matrix in matrices.items():
+            phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+            term = phase * matrix[origin_orbital_indices, :]
+            M_origin = term if M_origin is None else M_origin + term
+
+        if upper:
+            # NOTE: We could potentially optimize this by only slicing
+            # the origin orbital indices since the rest is zero due to
+            # being upper triangular.
+
+            M_col = None
+            for r, matrix in matrices.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                term = phase * matrix[:, origin_orbital_indices]
+                M_col = term if M_col is None else M_col + term
+
+            M_origin = M_origin + M_col.T.conj()
+            M_origin[:, origin_orbital_indices] -= (
+                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
+            )
+
+        m_xx = {}
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
+        for index in np.ndindex(*grid):
+            m_xx[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+
+        return m_xx
+
     @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
         self,
+        M: sparse.spmatrix,
+        upper_M: bool,
         k_outer: tuple[float, float, float],
-        energies: NDArray,
         return_modes_only: bool = False,
     ) -> OBCResult:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
         ----------
+        M : sparse.spmatrix
+            The system matrix from which to extract coupling elements.
+            It should have dimensions (n_device_orbitals, n_device_orbitals).
+        upper_M : bool
+            Whether to use the upper triangle of the system matrix.
         k_outer : tuple[float, float, float]
-            Wavevector. Captures periodicity in transverse directions.
-        energies : NDArray
-            Batch of energy values for which to compute the boundary
-            conditions.
+            The k-point in the transport direction.
         return_modes_only : bool, optional
             Whether to return only the injection and surface modes
             without computing the full self-energy and Bloch matrices.
@@ -1437,21 +1009,21 @@ class Contact:
             injection modes, self-energy, and Bloch modes as applicable.
 
         """
-
-        num_energies = energies.shape[0]
-        ny, nz = self.transverse_repetition_grid
-
-        # TODO: Batching over k-points can be implemented here
-        # and not only over energies
-        k_outer = list(k_outer)
-
-        if k_outer[self.direction] != 0:
+        if k_outer[self.transport_direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
-                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.direction}). "
+                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.transport_direction}). "
             )
         # Remove the k-point in the transport direction
-        k_outer.pop(self.direction)
+        k_outer.pop(self.transport_direction)
+
+        num_energies = 1
+
+        ny, nz = self.transverse_repetition_grid
+        M_slice = self.slice_matrix(
+            M=M,
+            upper=upper_M,
+        )
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions
@@ -1472,24 +1044,38 @@ class Contact:
             bloch_k = {}
 
         for ky, kz in itertools.product(k_inner[0], k_inner[1]):
-
-            # Construct the hamiltonian and overlap matrices for the
-            # given ki and kj
-            H_tot = self._construct_contact_matrix(self.unit_cell_hamiltonian, ky, kz)
-            S_tot = self._construct_contact_matrix(self.unit_cell_overlap, ky, kz)
-
-            S_dense = xp.array(S_tot.todense())
-            H_dense = xp.array(H_tot.todense())
-
             # Construct the system matrices for the OBC solver
-            A_tot = xp.split((energies[:, None, None] * S_dense - H_dense), 3, axis=2)
+
+            reduced_M = []
+
+            for i in range(self.transport_repetitions + 1):
+                temp = sparse.csr_matrix(
+                    (M_slice[i, 0, 0].shape[0], M_slice[i, 0, 0].shape[1]),
+                    dtype=xp.complex128,
+                )
+                for j, k in np.ndindex(ny, nz):
+                    if M_slice[i, j, k].nnz > 0:
+                        temp += M_slice[i, j, k] * xp.exp(
+                            1j
+                            * (
+                                (ky) * (j - self.origin_key[1])
+                                + (kz) * (k - self.origin_key[2])
+                            )
+                        )
+                reduced_M.append(temp)
+
+            temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
+            A_tot = xp.split(temp, 3, axis=2)
+
+            # HACK
+            A_tot[1][0, :, :] = (
+                A_tot[1][0, :, :] + A_tot[1][0, :, :].conj().T
+            ) / 2  # Ensure Hermitian
 
             if return_modes_only:
                 _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (
                     self.obc_solver(
-                        A_tot[1],
-                        A_tot[2],
-                        A_tot[0],
+                        A_tot,
                         "",
                         return_injected=True,
                         return_modes_only=True,
@@ -1504,9 +1090,7 @@ class Contact:
             else:
                 # Solve the OBC for the given ki and kj and store the
                 # results in dictionaries
-                x_ii, b_injected = self.obc_solver(
-                    A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
-                )
+                x_ii, b_injected = self.obc_solver(A_tot, "", return_injected=True)
                 sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
                 bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 

@@ -38,7 +38,7 @@ def _intialize(config: QuatrexConfig):
 
     potential = xp.zeros(hamiltonian.shape[-1], dtype=hamiltonian.dtype)
 
-    grid, __, __ = Device.load_structure(config)
+    grid, __, __, __ = Device.load_structure(config)
     block_sizes = get_block_sizes(config, grid)
     energies = get_electron_energies(config)
     kpoint_grid = config.device.kpoint_grid

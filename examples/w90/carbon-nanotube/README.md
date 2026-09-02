@@ -282,14 +282,14 @@ true`) is handled by `quatrex` (see the `gw-unit-cell` example).
 Alternatively, the Hamiltonian can be manually converted to a transport
 Hamiltonian and the corresponding structure file.
 
-Let's say we want to construct a transport Hamiltonian along the `"x"`
+Let's say we want to construct a transport Hamiltonian along the `"a"`
 direction that consists of 12 transport cells, and each transport cell
 should take into account the two neighboring unit cells. In this case,
 we will set the following parameters:
 
 ```python
-transport_direction = "x"
-transport_index = "xyz".index(transport_direction)
+transport_direction = "a"
+transport_index = "abc".index(transport_direction)
 neighbor_cell_cutoff = (2, 0, 0)
 num_transport_cells = 12
 ```

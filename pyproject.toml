@@ -44,6 +44,7 @@ dependencies = [
     "threadpoolctl",
     "typer",
     "h5py",
+    "tomlkit",
 ]
     [project.optional-dependencies]
     dev = [
@@ -137,6 +138,7 @@ platforms = ["linux-64"]
     python-gmsh = "*"    # conda-forge gmsh does not include python bindings
     pyvista = ">=0.46.0"
     matplotlib = "*"
+    tomlkit = "*"
 
 # --- Development features ---------------------------------------------
 [tool.pixi.feature.dev]

@@ -21,6 +21,7 @@ from pydantic import (
     NonNegativeInt,
     PositiveFloat,
     PositiveInt,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -139,12 +140,17 @@ class QTBMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_batch_size: PositiveInt = 10
+    max_batch_size: PositiveInt = 1
     """The maximum number of energies that are batched together when
     computing open boundary conditions (OBCs) in the QTBM solver.
 
     This can be used to reduce the memory footprint of the QTBM solver,
     at the cost of increased computation time.
+
+    !!! warning
+        This parameter has currently no real effect since the OBCs are
+        not batched anymore. It is kept to be later used when batching
+        is enabled again.
 
     """
 
@@ -169,7 +175,7 @@ class QTBMConfig(BaseModel):
     """
 
     atom_resolved_outputs: bool = False
-    """Whether to output atomic-resolved observables instead of 
+    """Whether to output atomic-resolved observables instead of
     orbital-resolved observables"""
 
 
@@ -899,37 +905,92 @@ class ContactConfig(BaseModel):
     """Configuration for a contact.
 
     !!! warning
+        Many contact parameters are currently only used in the `"wf"`
+        formalism.
 
-        Many contact parameters are currently only used in the
-        `"wf"` formalism.
+    !!! note
+        For wave function simulation, the contact parameters
+        automatically determine how to find the contact oribitals. The
+        user can either build the device from unit cell through
+        [`construct_from_unit_cell`](device/#construct_from_unit_cell)
+        parameter in the device configuration where the contact orbitals
+        are determined from the device parameters or in real space
+        through setting the [`origin`](#origin),
+        [`lattice_vectors`](#lattice_vectors), and
+        [`transport_direction`](#transport_direction) parameters in the
+        contact configuration.
 
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    """A unique name for the contact."""
+    """A unique name for the contact.
 
-    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    !!! note
+        In wave function simulations when building the device from unit
+        cell, this name can be either `left` or `right` to automatically
+        determine the contact orbitals from the device unit cell.
+        Otherwise, it can be arbitrary.
+
+    """
+
+    _contact_finder_method: Literal["from_unit", "real_space"] | None = PrivateAttr(
+        default=None
+    )
+    """The method to use to find the contact orbitals.
+
+    This setting is determined automatically based on the other contact
+    parameters.
+
+    - `"from_unit"`: Finds the contact orbitals based on their unit
+      cell. This option will be used if the
+      [`construct_from_unit_cell`](device/#construct_from_unit_cell)
+      parameter is set to `True`. In this case, the contact orbitals are
+      automatically determined from the name [`name`](#name) and the
+      unit cell of the system.
+    - `"real_space"`: Finds the contact orbitals based on their
+      real-space positions. This uses the [`origin`](#origin) and
+      [`lattice_vectors`](#lattice_vectors) parameters to determine
+      which orbitals belong to the contact.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
+    transport_direction: Literal["a", "b", "c"] | None = None
+    """The transport direction from contact to the device.
+
+    This is used to find periodic images of the contact in transport
+    direction.
+
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        When building the device from unit cell, this parameter is
+        automatically determined from the unit cell of the device and
+        the contact name. Otherwise, it must be set explicitly.
+
+    """
+
+    origin: tuple[float, float, float] | None = None
     """The origin of the contact region in Å.
 
     This is used to automatically determine the orbitals that belong to
     this contact.
 
     !!! warning
-
         This parameter is currently only used in the `"wf"` formalism.
 
+    !!! note
+        When building the device from unit cell, this parameter is not
+        needed. Otherwise, it must be set explicitly.
 
     """
 
-    lattice_vectors: list[list[float]] = Field(
-        default_factory=lambda: [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
+    lattice_vectors: list[list[float]] | None = None
     """The lattice vectors of the contact cell in Å.
 
     In `"wf"` simulations this is used to automatically determine the
@@ -939,16 +1000,27 @@ class ContactConfig(BaseModel):
     level of the contact from its doping density and the density of
     states of its band structure.
 
+    !!! warning
+        This parameter is currently only used in the `"wf"` formalism.
+
+    !!! note
+        When building the device from unit cell, this parameter is not
+        needed. Otherwise, it must be set explicitly.
+
     """
 
-    direction: Literal["a", "b", "c"] | None = None
-    """The direction from contact to the device.
+    conduction_band_edge: float | None = None
+    """The energy of the conduction band edge in eV.
 
-    This is used to find periodic images of the contact in transport
-    direction.
+    If not set, the conduction band edge is automatically determined
+    from the band structure of the contact via the `mid_gap_energy`
+    parameter.
+
+    When set explicitly, this may lead to physically inconsistent
+    results, especially in the context of Schrödinger-Poisson
+    simulations.
 
     !!! warning
-
         This parameter is currently only used in the `"wf"` formalism.
 
     """
@@ -1006,8 +1078,9 @@ class ContactConfig(BaseModel):
     @model_validator(mode="after")
     def to_array(self) -> Self:
         """Transforms origin and size to arrays."""
-        self.origin = np.array(self.origin, dtype=float)
-        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
+        if self.origin is not None and self.lattice_vectors is not None:
+            self.origin = np.array(self.origin, dtype=float)
+            self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
         return self
 
 
@@ -1682,7 +1755,7 @@ class DeviceConfig(BaseModel):
 
     """
 
-    transport_direction: Literal["x", "y", "z"]
+    transport_direction: Literal["a", "b", "c"]
     """The direction along which the transport occurs.
 
     !!! note
@@ -1763,11 +1836,75 @@ class DeviceConfig(BaseModel):
     def check_kpoint_grid(self) -> Self:
         """Checks that the k-point grid is 1 along the transport direction."""
 
-        ind = "xyz".index(self.transport_direction)
+        ind = "abc".index(self.transport_direction)
         if self.kpoint_grid[ind] != 1:
             raise ValueError(
                 f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_contacts(self) -> Self:
+        """Validates that the required parameters are provided for the
+        contacts."""
+
+        names = []
+
+        for contact in self.contacts:
+            names.append(contact.name)
+            if contact._contact_finder_method is not None:
+                raise ValueError(
+                    "The `_contact_finder_method` parameter is not user configurable."
+                )
+
+            if self.construct_from_unit_cell:
+                contact._contact_finder_method = "from_unit"
+
+                if contact.name not in ["left", "right"]:
+                    raise ValueError(
+                        "When the device is constructed from a unit cell,\n"
+                        "the contact `name` must be either `left` or `right`."
+                    )
+
+                if contact.transport_direction is None:
+                    contact.transport_direction = self.transport_direction
+                else:
+                    raise ValueError(
+                        "When the device is constructed from a unit cell,\n"
+                        "the contact `transport_direction` must not be specified."
+                    )
+
+                if (contact.origin is not None) or (
+                    contact.lattice_vectors is not None
+                ):
+                    raise ValueError(
+                        "When the device is constructed from a unit cell,\n"
+                        "the contact `origin` and `lattice_vectors` must not be specified."
+                    )
+
+            else:
+                contact._contact_finder_method = "real_space"
+
+                if contact.origin is None or contact.lattice_vectors is None:
+                    raise ValueError(
+                        "When the contacts are constructed from real space,\n"
+                        "both `origin` and `lattice_vectors` must be provided."
+                    )
+
+                if contact.transport_direction is None:
+                    raise ValueError(
+                        "When the contacts are constructed from real space,\n"
+                        "the `transport_direction` must be provided."
+                    )
+
+        if len(names) != len(set(names)):
+            raise ValueError("The contact names must be unique.")
+
+        # TODO Check that when building from unit cell, both left and
+        # right contacts are present. Currently, the check is avoided to
+        # not conflict with SCBA. Otherwise, we would need to know the
+        # formalism here.
 
         return self
 
@@ -1778,7 +1915,7 @@ class DeviceConfig(BaseModel):
         if self.neighbor_cell_cutoff is None:
             return self
 
-        ind = "xyz".index(self.transport_direction)
+        ind = "abc".index(self.transport_direction)
         if not self.construct_from_unit_cell:
             if self.neighbor_cell_cutoff[ind] != 0:
                 raise ValueError(
@@ -2115,6 +2252,34 @@ class ComputeConfig(BaseModel):
         raise ValueError(f"Invalid value '{value}' for dbsparse")
 
 
+class PreProcessConfig(BaseModel):
+    """Top-level configuration for all pre-processing options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # --- Pre-processing options ---------------------------------------
+    plot_contact_band_structure: bool = True
+    """Whether to plot the contact band structure."""
+
+    plot_window: tuple[float, float] | None = None
+    """The energy window to plot the contact band structure.
+    If set to `None`, the energy window is automatically determined by
+    using the mid-gap energy or the fermi level +- 1eV.
+    """
+
+    compute_fermi_level: bool = False
+    """Whether to compute the Fermi level of the contacts.
+
+    This will compute the Fermi level of the contacts based on the
+    doping and the mid-gap energy.
+
+    !!! Note
+        This will override the `fermi_level` parameter in the contact
+        configuration.
+
+    """
+
+
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
 
@@ -2161,7 +2326,18 @@ class QuatrexConfig(BaseModel):
     """Parameters for the photon system."""
 
     # --- Directory paths ----------------------------------------------
-    config_dir: Path
+    config_file: Path
+    """The path to the configuration file.
+
+    This is expected to be `None` and will be set automatically when
+    loading the configuration from a file. If set manually, a
+    `ValueError` will be raised.
+
+    """
+
+    _config_dir: Path = PrivateAttr(default=Path("."))
+    """The directory where the configuration file is located."""
+
     simulation_dir: Path = Path(".")
     """The directory where the simulation is run."""
     input_dir: Path | None = None
@@ -2177,16 +2353,21 @@ class QuatrexConfig(BaseModel):
     compute: ComputeConfig = ComputeConfig()
     """Parameters for the performance and compute options."""
 
+    # --- Pre-processing options ---------------------------------------
+    pre_process: PreProcessConfig = PreProcessConfig()
+    """Parameters for the pre-processing options."""
+
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:
         """Resolves the config directory path."""
-        self.config_dir = Path(self.config_dir).resolve()
+        self.config_file = self.config_file.resolve()
+        self._config_dir = self.config_file.parent.resolve()
         return self
 
     @model_validator(mode="after")
     def resolve_simulation_dir(self):
         """Resolves the simulation directory path."""
-        self.simulation_dir = (self.config_dir / self.simulation_dir).resolve()
+        self.simulation_dir = (self._config_dir / self.simulation_dir).resolve()
         return self
 
     @model_validator(mode="after")
@@ -2198,7 +2379,7 @@ class QuatrexConfig(BaseModel):
                 self.output_dir = self.output_dir.resolve()
                 return self
 
-            self.output_dir = (self.config_dir / self.output_dir).resolve()
+            self.output_dir = (self._config_dir / self.output_dir).resolve()
             return self
 
         self.output_dir = self.simulation_dir / "outputs/"
@@ -2213,7 +2394,7 @@ class QuatrexConfig(BaseModel):
                 self.input_dir = self.input_dir.resolve()
                 return self
 
-            self.input_dir = (self.config_dir / self.input_dir).resolve()
+            self.input_dir = (self._config_dir / self.input_dir).resolve()
             return self
 
         self.input_dir = self.simulation_dir / "inputs/"
@@ -2317,7 +2498,7 @@ class QuatrexConfig(BaseModel):
             return self
 
         for contact in self.device.contacts:
-            if contact.direction is None:
+            if contact.transport_direction is None:
                 raise ValueError(
                     "The `direction` parameter of each contact must be "
                     "set in the 'wf' formalism."
@@ -2337,6 +2518,31 @@ class QuatrexConfig(BaseModel):
             )
 
         return self
+
+
+def _parse_config(
+    config_file: Path,
+    config: dict,
+) -> dict:
+    """Resolve the paths in the configuration dictionary
+    and parse the geometry configuration."""
+    if "simulation_dir" in config:
+        simulation_dir = config["simulation_dir"]
+        if not os.path.isabs(simulation_dir):
+            parent_dir = os.path.dirname(os.path.abspath(config_file))
+            simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
+            config["simulation_dir"] = simulation_dir
+
+    if "config_file" in config.keys():
+        raise ValueError(
+            "The 'config_file' parameter should not be set in the configuration file."
+        )
+
+    config["config_file"] = config_file
+    # Resolve the geometry config.
+    config["device"]["geometry"] = parse_geometry_config(config["device"])
+
+    return config
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:
@@ -2363,22 +2569,12 @@ def parse_config(config_file: Path) -> QuatrexConfig:
 
         with open(config_file, "rb") as f:
             config = tomllib.load(f)
-
-        if "simulation_dir" in config:
-            simulation_dir = config["simulation_dir"]
-            if not os.path.isabs(simulation_dir):
-                parent_dir = os.path.dirname(os.path.abspath(config_file))
-                simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
-                config["simulation_dir"] = simulation_dir
-
-        config["config_dir"] = config_file.parent
+        config = _parse_config(config_file, config)
 
     config = mpi_comm_world.bcast(config, root=0)
 
-    # Resolve the geometry config.
-    config["device"]["geometry"] = parse_geometry_config(config["device"])
-
-    return QuatrexConfig(**config)
+    config = QuatrexConfig(**config)
+    return config
 
 
 def _setup_profiler(config: QuatrexConfig) -> None:
@@ -2393,7 +2589,7 @@ def _setup_profiler(config: QuatrexConfig) -> None:
 
     if not config.outputs.profiling_path.is_absolute():
         config.outputs.profiling_path = (
-            config.config_dir / config.outputs.profiling_path
+            config._config_dir / config.outputs.profiling_path
         ).resolve()
 
     # Saving will strip the extension

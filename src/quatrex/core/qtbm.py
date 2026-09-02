@@ -466,7 +466,12 @@ class QTBM(TransportSolver):
         return rhs
 
     def _add_matrix_to_system_matrix(
-        self, k: xp.complex128, factor: xp.float64, type: str = "hamiltonian"
+        self,
+        k: xp.complex128,
+        factor: xp.float64,
+        matrices: dict,
+        update_indices: dict,
+        update_indices_transpose: dict,
     ) -> None:
         """Adds the contribution of a matrix to the system matrix for a
         given k-point and multiplication factor.
@@ -478,22 +483,16 @@ class QTBM(TransportSolver):
             constructed.
         factor : np.float64
             A scaling factor for the matrix contribution.
-        type : str, optional
-            The type of matrix to add, either "hamiltonian" or
-            "overlap". Default is "hamiltonian".
+        matrices : dict
+            Dictionary of matrices to be added to the system matrix.
+        update_indices : dict
+            Dictionary of indices for updating the system matrix with
+            the corresponding matrices.
+        update_indices_transpose : dict
+            Dictionary of indices for updating the system matrix with
+            the transposed matrices.
 
         """
-
-        if type == "hamiltonian":
-            matrices = self.device.hamiltonians
-            update_indices = self.hamiltonian_update_indices
-            update_indices_transpose = self.hamiltonian_update_indices_transpose
-        elif type == "overlap":
-            matrices = self.device.overlap_matrices
-            update_indices = self.overlap_update_indices
-            update_indices_transpose = self.overlap_update_indices_transpose
-        else:
-            raise ValueError("Invalid matrix type. Must be 'hamiltonian' or 'overlap'.")
 
         for r, m_r in matrices.items():
             k_phase = np.exp(2j * np.pi * np.dot(k, r)) * factor
@@ -555,8 +554,6 @@ class QTBM(TransportSolver):
         self,
         kpoint: xp.complex128,
         energy: xp.float64,
-        obc_results: dict[Contact, OBCResult],
-        energy_ind: int,
     ) -> None:
         """Assembles the system matrix for a given k-point and energy index.
 
@@ -574,16 +571,58 @@ class QTBM(TransportSolver):
         """
         self.system_matrix.data[:] = 0
 
-        # Add the Hamiltonian and overlap to the system matrix
-        self._add_matrix_to_system_matrix(kpoint, -1, type="hamiltonian")
-        self._add_matrix_to_system_matrix(kpoint, energy, type="overlap")
+        # NOTE: Another memory optimization could be to keep the k-point
+        # matrices in memory and not the real-spaces ones. This would
+        # only be more efficient if there are less k-points than real
+        # space points.
 
-        if self.config.qtbm.low_rank_obc:
-            # No need to add the OBC self-energy to the system matrix
-            return
-
-        # Add the boundary self-energy contributions.
-        self._add_sigma_obc_to_system_matrix(-1.0, obc_results, energy_ind)
+        # Add the Hamiltonian
+        self._add_matrix_to_system_matrix(
+            kpoint,
+            -1,
+            matrices=self.device.hamiltonians,
+            update_indices=self.hamiltonian_update_indices,
+            update_indices_transpose=self.hamiltonian_update_indices_transpose,
+        )
+        # Add the potential
+        # TODO: Simplify this when there is identity overlap matrix
+        # NOTE: This can potentially lead to a memory spike since there
+        # will be copies when multiplying. This can be improved by
+        # another kernel that fuses the scaling and addition to the
+        # system matrix.
+        # NOTE: The extra time for addition compared when directly
+        # backing the potential into the Hamiltonian should be
+        # negligible compared to the time to factorize for larger
+        # systems.
+        self._add_matrix_to_system_matrix(
+            kpoint,
+            -1,
+            matrices={
+                r: 0.5 * s_r.multiply(self.device.potential[:, xp.newaxis])
+                for r, s_r in self.device.overlap_matrices.items()
+            },
+            update_indices=self.overlap_update_indices,
+            update_indices_transpose=self.overlap_update_indices_transpose,
+        )
+        self._add_matrix_to_system_matrix(
+            kpoint,
+            -1,
+            matrices={
+                r: 0.5 * s_r.multiply(self.device.potential)
+                for r, s_r in self.device.overlap_matrices.items()
+            },
+            update_indices=self.overlap_update_indices,
+            update_indices_transpose=self.overlap_update_indices_transpose,
+        )
+        # Add the system matrix
+        # TODO: Simplify this when there is identity overlap matrix
+        self._add_matrix_to_system_matrix(
+            kpoint,
+            energy,
+            matrices=self.device.overlap_matrices,
+            update_indices=self.overlap_update_indices,
+            update_indices_transpose=self.overlap_update_indices_transpose,
+        )
 
     def _assemble_pseudo_inverse(
         self,
@@ -1215,9 +1254,8 @@ class QTBM(TransportSolver):
     def set_potential(self, potential: NDArray):
         """Sets the potential for the QTBM calculation.
 
-        This method can be used to update the potential in the system
-        matrix for self-consistent calculations. It modifies the system
-        matrix in-place to include the new potential.
+        This method can be used to update the potential for
+        self-consistent calculations.
 
         Parameters
         ----------
@@ -1226,7 +1264,6 @@ class QTBM(TransportSolver):
 
         """
         if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-
             # Upscale the potential to the number of orbitals
             orbitals_per_atom = [
                 self.config.device.num_orbitals_per_atom.get(species, 1)
@@ -1234,14 +1271,7 @@ class QTBM(TransportSolver):
             ]
             potential = xp.repeat(potential, orbitals_per_atom, axis=0)
 
-        # HACK: Because the potential is baked into the Hamiltonian, we
-        # need to update the Hamiltonian matrices.
-        delta_potential = potential - self.device.potential
-        self.device.potential = delta_potential
-
-        self.device.apply_potential()
-        for contact in self.device.contacts:
-            contact._init_hamiltonian_overlap_matrices()
+        self.device.potential = potential
 
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.
@@ -1296,21 +1326,25 @@ class QTBM(TransportSolver):
                             flush=True,
                         )
 
-                    # Compute the boundary self-energy and injection vector.
-                    obc_results = {}
-                    free_mempool()
-
-                    with profiler.profile_range(
-                        label="QTBM: Boundary conditions", level="default"
-                    ):
-                        for contact in self.device.contacts:
-                            obc_results[contact] = contact.compute_boundary(
-                                kpoint * 2 * np.pi,
-                                energy_batch,
-                                return_modes_only=self.config.qtbm.low_rank_obc,
-                            )
-
                     for energy_ind, energy in enumerate(energy_batch):
+
+                        self._assemble_system_matrix(kpoint, energy)
+
+                        # Compute the boundary self-energy and injection vector.
+                        obc_results = {}
+                        free_mempool()
+
+                        with profiler.profile_range(
+                            label="QTBM: Boundary conditions", level="default"
+                        ):
+                            for contact in self.device.contacts:
+                                obc_results[contact] = contact.compute_boundary(
+                                    self.system_matrix,
+                                    self.system_matrix_view == "upper",
+                                    list(kpoint * 2 * np.pi),
+                                    return_modes_only=self.config.qtbm.low_rank_obc,
+                                )
+
                         rhs = self._assemble_rhs(obc_results, energy_ind)
 
                         if rhs.size == 0:
@@ -1318,9 +1352,10 @@ class QTBM(TransportSolver):
                             # can skip the calculation.
                             continue
 
-                        self._assemble_system_matrix(
-                            kpoint, energy, obc_results, energy_ind
-                        )
+                        if not self.config.qtbm.low_rank_obc:
+                            self._add_sigma_obc_to_system_matrix(
+                                -1.0, obc_results, energy_ind
+                            )
 
                         # Solve for the wavefunction
                         phi = self.solver.solve(

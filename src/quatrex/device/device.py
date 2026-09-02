@@ -63,20 +63,21 @@ class Device:
         List of Contact objects representing the semi-infinite leads
         connected to this device.
 
-    Methods
-    -------
-    apply_potential()
-        Apply the electrostatic potential to the Hamiltonian matrices.
-
     """
 
     def __init__(self, config: QuatrexConfig) -> None:
         """Initializes a Device object from configuration."""
 
         self.config = config
+        self.device_config = config.device
 
         self._init_hamiltonian()
-        __, self.atom_coordinates, self.atomic_species = self.load_structure(config)
+        (
+            self.orbital_coordinates,
+            self.atom_coordinates,
+            self.atomic_species,
+            self.lattice_vectors,
+        ) = self.load_structure(config)
         # TODO QTBM Device/Contact currently assumes that these quantities are on the host
         self.atom_coordinates = get_host(self.atom_coordinates)
 
@@ -85,9 +86,8 @@ class Device:
             self.config.input_dir,
             self.atom_coordinates,
             self.atomic_species,
-            self.config.device.num_orbitals_per_atom,
+            self.device_config.num_orbitals_per_atom,
         )
-        self.apply_potential()
         self._add_contacts()
 
         if comm.rank == 0:
@@ -156,9 +156,14 @@ class Device:
     @staticmethod
     def load_structure(
         config: QuatrexConfig,
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Loads the orbital coordinates, atom coordinates, and atomic
-        species for the device.
+    ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+        """Loads the orbital coordinates, atom coordinates, atomic
+        species, and lattice vectors for the device.
+
+        Note
+        ----
+        The lattice vectors if constructed from the unit cell are the
+        unit cell vectors and not full device.
 
         Parameters
         ----------
@@ -167,9 +172,9 @@ class Device:
 
         Returns
         -------
-        tuple[NDArray, NDArray, NDArray]
-            The orbital coordinates, atom coordinates, and atomic
-            species.
+        tuple[NDArray, NDArray, NDArray, NDArray]
+            The orbital coordinates, atom coordinates, atomic species,
+            and lattice vectors.
 
         """
 
@@ -188,7 +193,7 @@ class Device:
 
         if config.device.construct_from_unit_cell:
 
-            transport_ind = "xyz".index(config.device.transport_direction)
+            transport_ind = "abc".index(config.device.transport_direction)
 
             orbital_coordinates = create_coordinate_grid(
                 orbital_coordinates,
@@ -212,7 +217,7 @@ class Device:
                 * config.device.num_transport_cells
             )
 
-        return orbital_coordinates, atom_coordinates, atomic_species
+        return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
 
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.
@@ -327,25 +332,13 @@ class Device:
         """
         orbitals_per_atom = np.fromiter(
             map(
-                defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
+                defaultdict(lambda: 1, self.device_config.num_orbitals_per_atom).get,
                 self.atomic_species,
             ),
             dtype=np.int32,
         )
         # Create a vector with the starting orbital for each atom
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
-
-    # TODO: THis should probably not happen directly in the Hamiltonian,
-    # but rather during the construction of the system matrix.
-    def apply_potential(self) -> None:
-        """Applies electrostatic potential to device Hamiltonian."""
-
-        potential = self.potential + 1e-10
-
-        for r, s_r in self.overlap_matrices.items():
-            self.hamiltonians[r] += (
-                s_r.multiply(potential[:, xp.newaxis]) + s_r.multiply(potential)
-            ) / 2
 
     def _add_contacts(self):
         """Initializes and attaches contacts to the device.
@@ -358,7 +351,57 @@ class Device:
         """
 
         contacts = []
-        for contact_config in self.config.device.contacts:
+        for contact_config in self.device_config.contacts:
             contacts.append(Contact(device=self, contact_config=contact_config))
 
         self.contacts = contacts
+
+    def validate_contacts(self):
+        """Validates that all required contact parameters are set.
+
+        Raises warnings if any required parameters are missing. If the
+        Fermi level or other contact parameters are not set, they will
+        be computed automatically. It is recommended to run the
+        pre-processing step to compute these parameters beforehand.
+
+        Note
+        ----
+        This method assumes that the potential is not backed in the
+        Hamiltonian.
+
+        """
+
+        # The Fermi level is always required while midgap energy and
+        # `conduction_band_edge` are only required if SCSP is
+        # used.
+        for contact_config, contact in zip(self.device_config.contacts, self.contacts):
+            if (
+                (contact_config.fermi_level is None)
+                or (
+                    contact_config.conduction_band_edge is None
+                    and self.config.scsp is not None
+                )
+                or (
+                    contact_config.mid_gap_energy is None
+                    and self.config.scsp is not None
+                )
+            ):
+                if comm.rank == 0:
+                    print(
+                        f"Computing Fermi level for contact {contact_config.name}",
+                        flush=True,
+                    )
+                if comm.rank == 0:
+                    warnings.warn(
+                        "Recomputing the Fermi level and other contact parameters.\n"
+                        "Please call `quatrex pre-process` beforehand to avoid this\n"
+                        "or manually set the parameters in the contact configuration file.",
+                    )
+                # NOTE: `compute_contact_band_properties` will access the
+                # set properties of the contact. and thus it is called at
+                # the end.
+                (
+                    contact.fermi_level,
+                    contact.mid_gap_energy,
+                    contact.conduction_band_edge,
+                ) = contact.compute_contact_band_properties()

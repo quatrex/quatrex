@@ -3,10 +3,8 @@ input_dir = "../inputs"
 
 formalism = "wf"
 
-[qtbm]
-max_batch_size = 2
 [device]
-transport_direction = 'x'
+transport_direction = "a"
 num_orbitals_per_atom = { "Si" = 4 }
 kpoint_grid = [1, 2, 1]
 kpoint_shift = [0, 0.1, 0.1]
@@ -15,7 +13,7 @@ kpoint_shift = [0, 0.1, 0.1]
     name = "left"
     origin = [-0.01, -0.01, -0.01]
     lattice_vectors = [[5.444, 0, 0], [0, 5.444, 0], [0, 0, 5.444]]
-    direction = "a"
+    transport_direction = "a"
     fermi_level = 6.1
     mid_gap_energy = 5.8
 
@@ -23,7 +21,7 @@ kpoint_shift = [0, 0.1, 0.1]
     name = "right"
     origin = [161.96, -0.001, -0.001]
     lattice_vectors = [[-5.444, 0, 0], [0, 5.444, 0], [0, 0, 5.444]]
-    direction = "a"
+    transport_direction = "a"
     fermi_level = 6.099
     mid_gap_energy = 5.8
 

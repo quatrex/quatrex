@@ -1,0 +1,292 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes functions to plot the contact band structure for a given quatrex configuration."""
+
+import os
+import warnings
+
+import matplotlib
+import numpy as np
+from matplotlib import pyplot as plt
+
+from qttools import NDArray, xp
+from qttools.comm import comm
+from qttools.utils.gpu_utils import get_host
+from quatrex.bandstructure.contact import contact_band_structure
+from quatrex.core.config import QuatrexConfig
+from quatrex.device import Device
+from quatrex.device.inputs import assemble_matrix
+from quatrex.grid import monkhorst_pack
+
+
+def _plot(
+    ax: plt.Axes,
+    kpoints_transport: NDArray,
+    e_k: NDArray,
+) -> None:
+    """Plots the contact band structure for a given contact.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        The axes to plot on.
+    kpoints_transport : NDArray
+        The k-points along the transport direction.
+    e_k : NDArray
+        The eigenvalues for the contact band structure.
+
+    """
+    e_k = e_k.squeeze()
+    k_repeated = np.repeat(get_host(kpoints_transport), e_k.shape[1])
+    ax.scatter(k_repeated, get_host(e_k), color="blue", s=10)
+
+
+def _plot_wf(config: QuatrexConfig, axes: plt.Axes, device: Device) -> None:
+    """Plots the contact band structure for a wavefunction simulation.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex simulation configuration.
+    axes : plt.Axes
+        The axes to plot on.
+    device : Device
+        The device object.
+
+    """
+
+    kpoint_grid = config.device.kpoint_grid
+    kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
+
+    if device.gamma_only and kpoint_grid != (1, 1, 1):
+        raise ValueError(
+            "The device only has a Gamma point Hamiltonian, "
+            "but more than one k-point is configured."
+        )
+
+    hamiltonians = device.hamiltonians
+    overlaps = device.overlap_matrices
+
+    # NOTE: Not the most efficient code since we do naive loops. The
+    # code could be potentially batched, but this should not be a
+    # bottleneck since it is only pre-processing.
+    for m, kpoint in enumerate(kpoints):
+        for n, (contact, contact_config) in enumerate(
+            zip(device.contacts, config.device.contacts)
+        ):
+            h_xx = contact.get_contact_blocks(
+                matrices=hamiltonians,
+                kpoint=kpoint,
+                upper=True,
+            )
+            s_xx = contact.get_contact_blocks(
+                matrices=overlaps,
+                kpoint=kpoint,
+                upper=True,
+            )
+
+            kpoints_transport = xp.linspace(
+                -xp.pi,
+                xp.pi,
+                contact_config.num_kpoints_transport,
+                endpoint=False,
+            )
+
+            e_k = contact.compute_contact_bandstructure(
+                h_xx=h_xx,
+                s_xx=s_xx,
+                kpoint=kpoint,
+                kpoints_transport=kpoints_transport,
+            )
+
+            if contact_config.voltage is not None:
+                e_k += contact_config.voltage
+
+            _plot(
+                ax=axes[m, n],
+                kpoints_transport=kpoints_transport,
+                e_k=e_k,
+            )
+
+
+def _plot_negf(config: QuatrexConfig, axes: plt.Axes) -> None:
+    """Plots the contact band structure for a NEGF simulation.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex simulation configuration.
+    axes : plt.Axes
+        The axes to plot on.
+
+    """
+
+    # Initialize the device
+    hamiltonian, __ = assemble_matrix(
+        config=config,
+        matrix_name="hamiltonian",
+        sparsity_pattern=None,
+        shift_kpoints=False,
+    )
+
+    try:
+        # Attempt to load the device overlap matrix.
+        overlap, __ = assemble_matrix(
+            config=config,
+            matrix_name="overlap",
+            sparsity_pattern=None,
+            shift_kpoints=False,
+        )
+        print("Non-orthogonal basis detected.", flush=True)
+
+    except FileNotFoundError:
+        overlap = None
+        print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
+
+    for i, contact_config in enumerate(
+        [config.electron.left_contact, config.electron.right_contact]
+    ):
+        n = hamiltonian.num_local_blocks - 1
+        m = n - 1
+        diagonal_inds = (0, 0) if contact_config.name == "left" else (n, n)
+        upper_inds = (0, 1) if contact_config.name == "left" else (n, m)
+
+        h_xx = (
+            hamiltonian.blocks[*upper_inds[::-1]],
+            hamiltonian.blocks[*diagonal_inds],
+            hamiltonian.blocks[*upper_inds],
+        )
+
+        if overlap is not None:
+            s_xx = (
+                overlap.blocks[*upper_inds[::-1]],
+                overlap.blocks[*diagonal_inds],
+                overlap.blocks[*upper_inds],
+            )
+        else:
+            s_xx = None
+
+        kpoints_transport = np.linspace(
+            -np.pi,
+            np.pi,
+            contact_config.num_kpoints_transport,
+            endpoint=False,
+        )
+
+        e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
+        for j, kpoint in enumerate(np.ndindex(h_xx[0].shape[:-2])):
+            _plot(
+                ax=axes[j, i],
+                kpoints_transport=kpoints_transport,
+                e_k=e_k[:, *kpoint, :],
+            )
+
+
+def plot_contact_band_structure(
+    config: QuatrexConfig,
+    device: Device | None = None,
+) -> None:
+    """Plots the contact band structure for a given quatrex configuration.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex simulation configuration.
+    device : Device | None
+        The device object. It is `None` for NEGF simulations.
+
+    """
+
+    if comm.rank != 0:
+        return
+
+    if comm.size > 1:
+        warnings.warn(
+            "Pre-processing is only performed on rank 0. "
+            "If you are running a parallel simulation, please ensure that "
+            "the pre-processing steps are completed before starting the parallel run."
+        )
+
+    if not os.path.exists(config.output_dir):
+        os.mkdir(config.output_dir)
+
+    kpoint_grid = config.device.kpoint_grid
+    kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
+
+    if config.formalism == "wf":
+        contacts = device.contacts
+    elif config.formalism == "negf":
+        contacts = [config.electron.left_contact, config.electron.right_contact]
+    else:
+        raise ValueError(f"Unknown formalism: {config.formalism}")
+
+    # Turn off interactive plotting only for this step and increase font
+    # size
+    backend = matplotlib.get_backend()
+    plt.switch_backend("Agg")
+    original_rc = plt.rcParams.copy()
+    plt.rcParams.update({"font.size": 16})
+
+    fig, axes = plt.subplots(
+        len(kpoints),
+        len(contacts),
+        figsize=(12, 6),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+
+    if config.formalism == "wf":
+        _plot_wf(config, axes, device)
+    elif config.formalism == "negf":
+        _plot_negf(config, axes)
+
+    for ax, contact in zip(axes[0], contacts):
+        if contact.fermi_level is not None:
+            ax.axhline(
+                contact.fermi_level, color="red", linestyle="--", label="Fermi Level"
+            )
+        if contact.mid_gap_energy is not None:
+            ax.axhline(
+                contact.mid_gap_energy,
+                color="green",
+                linestyle=":",
+                label="Mid-gap Energy",
+            )
+        if (contact.voltage is not None) and (contact.fermi_level is not None):
+            ax.axhline(
+                contact.fermi_level - contact.voltage,
+                color="orange",
+                linestyle="-.",
+                label=r"Chemical Potential ($\mu$)",
+            )
+
+        ax.legend(loc="upper left")
+
+    for ax, contact in zip(axes[0], contacts):
+        ax.set_title(f"{contact.name.capitalize()} Contact")
+
+    for ax, kpoint in zip(axes[:, 0], kpoints):
+        ax.set_ylabel(f"k-point:\n{kpoint}\nEnergy (eV)")
+
+    for ax in axes[-1]:
+        ax.set_xlabel("k")
+
+    if config.pre_process.plot_window is None:
+        center_energy = (
+            contacts[0].mid_gap_energy
+            if contacts[0].mid_gap_energy is not None
+            else contacts[0].fermi_level
+        )
+        # NOTE: Naively take +-1eV around the center energy for the plot window.
+        plot_window = (center_energy - 1, center_energy + 1)
+    else:
+        plot_window = config.pre_process.plot_window
+
+    for ax in axes.flatten():
+        ax.set_ylim(plot_window)
+    fig.tight_layout()
+    fig.savefig(config.output_dir / "band_structure.png", dpi=300)
+    plt.close(fig)
+    plt.rcParams.update(original_rc)
+    plt.switch_backend(backend)

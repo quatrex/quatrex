@@ -4,64 +4,89 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, xp
-from quatrex.device.inputs import (
-    _construct_transport_cell,
-    _expand_tight_binding_matrix,
-    create_coordinate_grid,
-)
+from qttools.toeplitz.toeplitz import construct_transport_cell
+from quatrex.device.inputs import _expand_tight_binding_matrix, create_coordinate_grid
 
 
 @pytest.mark.parametrize(
-    "transport_cell_size, shift",
+    "transport_cell_size, transverse_shift",
     [
         (
             2,
-            (0, 0, 0),
+            (0, 0),
         ),
         (
             2,
-            (1, 1, 0),
+            (1, 1),
         ),
         (
             3,
-            (0, 0, 0),
+            (0, 0),
         ),
         (
             3,
-            (1, 0, 0),
+            (1, 0),
         ),
     ],
 )
+@pytest.mark.parametrize("key_assumption", [None, "upper", "half"])
+@pytest.mark.parametrize("batch_size", [1, 2])
 def test_construct_transport_cell(
     matrix_dict: dict,
     transport_cell_size: int,
-    shift: tuple[int, int, int],
+    transverse_shift: tuple[int, int],
+    key_assumption: str | None,
+    batch_size: int,
 ):
     """Tests the extraction of the transport block from the tight binding matrix."""
 
     # z-direction for transport
     transport_ind = 2
-    test_block = _construct_transport_cell(
-        matrix_dict, transport_cell_size, transport_ind, shift
+
+    # Avoid modifying the orignal one
+    if batch_size > 1:
+        matrix_dict_copy = {
+            key: xp.array([matrix.copy() for _ in range(batch_size)])
+            for key, matrix in matrix_dict.items()
+        }
+    else:
+        matrix_dict_copy = {key: matrix.copy() for key, matrix in matrix_dict.items()}
+
+    if key_assumption == "upper":
+        matrix_dict_copy = {
+            key: xp.triu(matrix) for key, matrix in matrix_dict_copy.items()
+        }
+    elif key_assumption == "half":
+        matrix_dict_copy = {
+            key: matrix for key, matrix in matrix_dict_copy.items() if key >= (0, 0, 0)
+        }
+
+    test_block = construct_transport_cell(
+        matrix_dict=matrix_dict_copy,
+        transport_cell_size=transport_cell_size,
+        transport_ind=transport_ind,
+        block_index=0,
+        transverse_shift=transverse_shift,
+        key_assumption=key_assumption,
     )
 
-    bs = matrix_dict[(0, 0, 0)].shape[-1]
-    for br in range(transport_cell_size):
-        for bc in range(transport_cell_size):
-            target_ind = list(shift)
-            target_ind[transport_ind] = bc - br
+    shape = matrix_dict[(0, 0, 0)].shape
+    block_size = matrix_dict[(0, 0, 0)].shape[-1]
+    for r_i in range(transport_cell_size):
+        for r_j in range(transport_cell_size):
+            target_ind = list(transverse_shift)
+            target_ind.insert(transport_ind, r_j - r_i)
             target_ind = tuple(target_ind)
 
-            ref_block = matrix_dict.get(target_ind, xp.zeros((bs, bs)))
-
-            if bc > br:
-                ref_block = ref_block + ref_block.conj().T
-                xp.fill_diagonal(ref_block, ref_block.diagonal() / 2)
-            elif bc < br:
-                ref_block = xp.zeros_like(ref_block)
+            ref_block = matrix_dict.get(target_ind, xp.zeros(shape))
 
             assert xp.allclose(
-                test_block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_block
+                test_block[
+                    ...,
+                    r_i * block_size : (r_i + 1) * block_size,
+                    r_j * block_size : (r_j + 1) * block_size,
+                ],
+                ref_block,
             )
 
 
@@ -92,12 +117,12 @@ def test_create_coordinate_grid(
 
 
 @pytest.mark.parametrize(
-    "hopping_shape, num_transport_cells, transport_ind, block_start, block_end, periodic_shift",
+    "hopping_shape, num_transport_cells, transport_ind, block_start, block_end, transverse_shift",
     [
-        ((7, 5, 5), 10, 0, None, None, (0, 0, 0)),
-        ((7, 5, 5), 10, 0, 0, 2, (0, 0, 0)),
-        ((7, 5, 5), 10, 0, None, None, (0, 0, 2)),
-        ((7, 5, 5), 10, 0, 0, 2, (0, 0, 2)),
+        ((7, 5, 5), 10, 0, None, None, (0, 0)),
+        ((7, 5, 5), 10, 0, 0, 2, (0, 0)),
+        ((7, 5, 5), 10, 0, None, None, (0, 2)),
+        ((7, 5, 5), 10, 0, 0, 2, (0, 2)),
     ],
 )
 def test_expand_tight_binding_matrix(
@@ -106,7 +131,7 @@ def test_expand_tight_binding_matrix(
     transport_ind: int,
     block_start: int | None,
     block_end: int | None,
-    periodic_shift: tuple,
+    transverse_shift: tuple,
 ):
     """Tests the expansion of the tight-binding matrix into a block-tridiagonal Hamiltonian."""
     # NOTE: set to ones to make it easy to check the resulting matrix
@@ -115,7 +140,7 @@ def test_expand_tight_binding_matrix(
     block = xp.ones((2, 2))
 
     matrix_dict = {
-        tuple(int(i) for i in ind): block for ind in np.ndindex(hopping_shape)
+        tuple(int(i) for i in ind): xp.triu(block) for ind in np.ndindex(hopping_shape)
     }
 
     for ind in list(matrix_dict.keys()):
@@ -130,7 +155,7 @@ def test_expand_tight_binding_matrix(
         transport_ind=transport_ind,
         block_start=block_start,
         block_end=block_end,
-        periodic_shift=periodic_shift,
+        transverse_shift=transverse_shift,
     )
     block_start = block_start or 0
     block_end = block_end or num_transport_cells

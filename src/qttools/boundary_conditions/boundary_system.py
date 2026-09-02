@@ -223,7 +223,7 @@ class BaseBoundarySystem(ABC):
             The solution of the boundary system.
 
         """
-        solution = self.boundary_solver(*boundary_system, contact, **kwargs)
+        solution = self.boundary_solver(boundary_system, contact, **kwargs)
 
         if self.memoization_mode != "off":
             if type(solution) is not xp.ndarray:

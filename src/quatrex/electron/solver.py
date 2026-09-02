@@ -13,7 +13,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _BlockIndexer, _DStackView, _StackView
 from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.profiling import Profiler
-from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
+from qttools.toeplitz.toeplitz import homogenize, periodize_layer
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
@@ -630,7 +630,7 @@ class ElectronSolver(SubsystemSolver):
         # Load the potential.
         # TODO: The structure should not be reloaded here.
         # This will be fixed when the device is unified.
-        __, atom_coordinates, atomic_species = Device.load_structure(config)
+        __, atom_coordinates, atomic_species, __ = Device.load_structure(config)
         self.potential = Device.load_potential(
             config.input_dir,
             atom_coordinates,
@@ -983,10 +983,12 @@ class ElectronSolver(SubsystemSolver):
 
         inverse_order = get_inverse_order(order)
 
-        m_10, m_00, m_01 = get_periodic_superblocks(
-            a_ji=order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=order_block(self.system_matrix.blocks[*diagonal_inds], order),
-            a_ij=order_block(self.system_matrix.blocks[*upper_inds], order),
+        m_10, m_00, m_01 = periodize_layer(
+            (
+                order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(self.system_matrix.blocks[*diagonal_inds], order),
+                order_block(self.system_matrix.blocks[*upper_inds], order),
+            ),
             block_sections=self.block_sections,
         )
 
@@ -1002,7 +1004,7 @@ class ElectronSolver(SubsystemSolver):
 
         # TODO: use residuals to filter "bad" energies
         g_00, *__ = self.obc(
-            (m_00 + s_00, m_01 + s_01, m_10 + s_10),
+            (m_10 + s_10, m_00 + s_00, m_01 + s_01),
             contact="G: " + contact,
         )
         # Apply the retarded boundary self-energy.

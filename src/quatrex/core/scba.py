@@ -49,7 +49,7 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        grid, __, atomic_species = Device.load_structure(config)
+        grid, __, atomic_species, __ = Device.load_structure(config)
         self.orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
         ]

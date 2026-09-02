@@ -4,7 +4,7 @@ input_dir = "../inputs"
 formalism = "wf" # "negf" or "wf"
 
 [device]
-transport_direction = "x"
+transport_direction = "a"
 kpoint_grid = [1, 1, 1]
 num_orbitals_per_atom = { "X" = 1 }
 
@@ -12,7 +12,7 @@ num_orbitals_per_atom = { "X" = 1 }
     name = "left"
     origin = [0.1551, 0.0, 0.0]
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
+    transport_direction = "a"
     fermi_level = -3.6
     mid_gap_energy = -3.8
 
@@ -20,12 +20,9 @@ num_orbitals_per_atom = { "X" = 1 }
     name = "right"
     origin = [102.694, 0.0, 0.0]
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
+    transport_direction = "a"
     fermi_level = -3.7
     mid_gap_energy = -3.8
-
-[qtbm] # ===============================================================
-max_batch_size = 1
 
 [electron] # ===========================================================
 

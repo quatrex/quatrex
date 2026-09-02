@@ -70,8 +70,9 @@ def get_electron_energies(config: QuatrexConfig) -> NDArray:
                 f"Could not find electron energies file at {energies_path}. Please provide an energy window in the config."
             )
 
-    if not os.path.exists(config.output_dir):
-        os.mkdir(config.output_dir)
-    xp.save(config.output_dir / "electron_energies.npy", electron_energies)
+    if comm.rank == 0:
+        if not os.path.exists(config.output_dir):
+            os.mkdir(config.output_dir)
+        xp.save(config.output_dir / "electron_energies.npy", electron_energies)
 
     return electron_energies

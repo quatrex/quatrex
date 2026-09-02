@@ -59,6 +59,7 @@ def _run_wf(config):
     from quatrex.device import Device
 
     device = Device(config)
+    device.validate_contacts()
     qtbm = QTBM(device, config)
 
     tic = time.perf_counter()
@@ -243,6 +244,58 @@ def run(
 
         if config.outputs.save_profiling_results:
             profiler.dump_stats()
+
+    except Exception as e:
+        if abort_on_exception:
+            _abort_quatrex(e)
+        raise
+
+
+@quatrex_cli.command()
+def pre_process(
+    config: Annotated[
+        Optional[Path],
+        typer.Argument(
+            ...,
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
+            resolve_path=True,
+            exists=True,
+        ),
+    ] = None,
+    abort_on_exception: Annotated[
+        bool,
+        typer.Option(
+            "--abort-on-exception/--no-abort-on-exception",
+            help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
+        ),
+    ] = True,
+):
+    """Run pre-processing tasks for the provided configuration."""
+
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError(
+            "The 'pre-process' command can only be run on a single process."
+        )
+
+    try:
+        config = _resolve_config_path(config)
+
+        from quatrex.core.config import parse_config, setup_context
+        from quatrex.pre_processsing import pre_process as main
+
+        config = parse_config(config)
+        setup_context(config)
+
+        secho_header()
+
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            pprint(threadpool_info()) if comm.rank == 0 else None
+            main(config)
 
     except Exception as e:
         if abort_on_exception:

@@ -5,7 +5,7 @@ formalism = "negf"
 
 
 [device]
-transport_direction = 'x'
+transport_direction = "a"
 num_orbitals_per_atom = { "C" = 13 }
 kpoint_grid = [1, 1, 1]
 kpoint_shift = [0, 0, 0]
@@ -27,10 +27,10 @@ self_energy_density = true
 
 
 [electron]
-left_contact.name = "source"
+left_contact.name = "left"
 left_contact.fermi_level = -3
 
-right_contact.name = "drain"
+right_contact.name = "right"
 right_contact.fermi_level = -3.001
 
 energy_window_min = -5

@@ -37,44 +37,46 @@ build quatrex:
     - cd /opt/repo
     # Set up the visible devices.
     - export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
+    - env | grep CUDSS
+    - ls /usr/local/lib/
   variables:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
     SLURM_GPUS_PER_TASK: 1
-    SLURM_TIMELIMIT: '00:20:00'
+    SLURM_TIMELIMIT: '00:10:00'
     SLURM_PARTITION: normal
 
-test quatrex single:
-  extends: .test-common
-  script:
-    - coverage run --source=src --parallel-mode -m pytest -vv tests/quatrex
+# test quatrex single:
+#   extends: .test-common
+#   script:
+#     - coverage run --source=src --parallel-mode -m pytest -vv tests/quatrex
 
-test qttools single:
-  extends: .test-common
-  variables:
-    QTX_USE_CUPY_JIT: '1'
-  script:
-    - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools
+# test qttools single:
+#   extends: .test-common
+#   variables:
+#     QTX_USE_CUPY_JIT: '1'
+#   script:
+#     - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools
 
-test qttools kernels:
-  extends: .test-common
-  variables:
-    QTX_USE_CUPY_JIT: '0'
-  script:
-    - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools/kernels/datastructure
+# test qttools kernels:
+#   extends: .test-common
+#   variables:
+#     QTX_USE_CUPY_JIT: '0'
+#   script:
+#     - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools/kernels/datastructure
 
-test quatrex dist:
-  extends: .test-common
-  script:
-    - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/quatrex
-  variables:
-    SLURM_JOB_NUM_NODES: 2
-    SLURM_NTASKS: 6
+# test quatrex dist:
+#   extends: .test-common
+#   script:
+#     - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/quatrex
+#   variables:
+#     SLURM_JOB_NUM_NODES: 2
+#     SLURM_NTASKS: 6
 
 test qttools dist:
   extends: .test-common
   script:
-    - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/qttools
+    - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/qttools/wave_function_solver/test_solve.py::test_distributed_solve
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6

@@ -123,7 +123,7 @@ class cuDSS(WFSolver):
             start, stop = local_rows
             # NOTE: cuDSS uses inclusive end row
             self.local_rows = (int(start), int(stop) - 1)
-        except ValueError:
+        except TypeError:
             self.local_rows = None
 
         if comm is not None:

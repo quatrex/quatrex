@@ -1,8 +1,9 @@
 FROM jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:12.8.1-devel-ubuntu24.04
 
-ARG libfabric_version=1.22.0
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG libfabric_version=2.4.0
 ARG mpi_version=4.3.1
-ARG osu_version=7.5.1
 
 # workaround ubuntu ports slowing us down
 RUN sed -i -e 's|http://archive.ubuntu.com/ubuntu|https://jfrog.svc.cscs.ch/artifactory/ubuntu|' -e 's|http://security.ubuntu.com/ubuntu|https://jfrog.svc.cscs.ch/artifactory/ubuntu|' -e 's|http://ports.ubuntu.com/ubuntu-ports|https://jfrog.svc.cscs.ch/artifactory/ubuntu-ports|' /etc/apt/sources.list.d/ubuntu.sources \
@@ -39,6 +40,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 # process
 RUN echo '/usr/local/cuda/lib64/stubs' > /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
 
+
 RUN git clone https://github.com/hpc/xpmem \
     && cd xpmem/lib \
     && gcc -I../include -shared -o libxpmem.so.1 libxpmem.c \
@@ -71,29 +73,34 @@ RUN wget -q https://www.mpich.org/static/downloads/${mpi_version}/mpich-${mpi_ve
     && cd .. \
     && rm -rf mpich-${mpi_version}.tar.gz mpich-${mpi_version}
 
-RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-v${osu_version}.tar.gz \
-    && tar xf osu-micro-benchmarks-v${osu_version}.tar.gz \
-    && cd osu-micro-benchmarks-v${osu_version} \
-    && ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda CC=$(which mpicc) CFLAGS=-O3 \
-    && make -j$(nproc) \
-    && make install \
-    && cd .. \
-    && rm -rf osu-micro-benchmarks-v${osu_version} osu-micro-benchmarks-v${osu_version}.tar.gz
-
 # Make python3.13 the default python3.
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 \
     && python3 -m ensurepip --upgrade
+
+# Install cuDSS and build a commlayer for it.
+RUN wget https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-sbsa/libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz \
+    && tar -xf libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz \
+    && cp -a libcudss-linux-sbsa-0.8.0.10_cuda12-archive/lib/libcudss.* /usr/local/lib/ \
+    && cp -a libcudss-linux-sbsa-0.8.0.10_cuda12-archive/include/. /usr/local/include/ \
+    && cd libcudss-linux-sbsa-0.8.0.10_cuda12-archive/src \
+    # Not actually OpenMPI, but the build script expects it to be called that way.
+    && CUDA_PATH=/usr/local/cuda CUDSS_PATH=./.. MPI_PATH=/usr/local/mpich source ./cudss_build_commlayer.sh openmpi \
+    && mv cudss_commlayer_openmpi.so /usr/local/lib \
+    && ldconfig \
+    && cd ../.. \
+    && rm -rf libcudss-linux-sbsa-0.8.0.10_cuda12-archive libcudss-linux-sbsa-0.8.0.10_cuda12-archive.tar.xz
+
+ENV CUDSS_COMM_LIB=/usr/local/lib/cudss_commlayer_openmpi.so
 
 # Install Python dependencies.
 RUN python3 -m venv /opt/venv \
     && . /opt/venv/bin/activate \
     && python3 -m pip install numpy scipy h5py \
     && python3 -m pip install --no-binary=mpi4py mpi4py \
-    && python3 -m pip install cupy \
+    && python3 -m pip install cupy-cuda12x \
     && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
     && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist \
     && python3 -m pip install nvmath-python \
-    && python3 -m pip install nvidia-cudss-cu12==0.7.1.6 \
     && python3 -m pip install ase meshio scikit-fem pyvista
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and

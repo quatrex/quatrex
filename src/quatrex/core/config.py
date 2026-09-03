@@ -1519,7 +1519,7 @@ class PhononConfig(BaseModel):
     In order to calculate the prefactors, the deformation potential constants
     [`acoustic_deformation_potential`](#acoustic_deformation_potential) and
     [`optical_deformation_potential`](#optical_deformation_potential) as well as the
-    [`atom_mass`](#atom_mass) and the
+    [`atom_mass_u`](#atom_mass_u) and the
     [`lattice_constant`](#lattice_constant) are required.
     """
 
@@ -1537,9 +1537,9 @@ class PhononConfig(BaseModel):
     """The deformation potential of the acoustic phonon modes in eV."""
     optical_deformation_potential: FiniteFloat | None = None
     """The deformation potential of the optical phonon modes in eV/Å."""
-    atom_mass: NonNegativeFloat | None = None
+    atom_mass_u: NonNegativeFloat | None = None
     """
-    The mass of a single atom in (eV s^2) / Å^2.
+    The mass of a single atom in the unified atomic mass unit.
     All atoms are assumed to have the same mass.
     """
     lattice_constant: PositiveFloat | None = None
@@ -1565,11 +1565,11 @@ class PhononConfig(BaseModel):
         if (
             self.acoustic_deformation_potential is None
             or self.optical_deformation_potential is None
-            or self.atom_mass is None
+            or self.atom_mass_u is None
             or self.lattice_constant is None
         ):
             raise ValueError(
-                "'acoustic_deformation_potential', 'optical_deformation_potential', 'atom_mass', and 'lattice_constant' must be set."
+                "'acoustic_deformation_potential', 'optical_deformation_potential', 'atom_mass_u', and 'lattice_constant' must be set."
             )
 
         return self

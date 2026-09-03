@@ -107,10 +107,9 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
             # Compute electron-phonon coupling constants
             coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
+            atom_mass = config.phonon.atom_mass_u * constants.atomic_mass_unit
             # prefactors[mode, qx]
-            prefactors = xp.sqrt(
-                constants.hbar**2 / (2 * config.phonon.atom_mass * phonon_energies)
-            )
+            prefactors = xp.sqrt(constants.hbar**2 / (2 * atom_mass * phonon_energies))
             # Acoustic longitudinal phonons
             longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
             coupling_constants[0, :] = (

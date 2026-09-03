@@ -4,6 +4,7 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
+from qttools.utils.mpi_utils import distributed_load
 from quatrex.core import constants
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -72,20 +73,21 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 )
 
             # Load phonon modes
-            with open(config.input_dir / "phonon_dispersion.npy", "rb") as f:
-                """
-                Specification on phonon_dispersion.npy:
-                This file contains the angular velocities `omega[mode, momentum]`
-                for the different phonon modes and momenta. The phonon momenta are
-                equally spaced as
-                `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
-                constant.
-                The longitudinal acoustic mode along x is the first one
-                (`omega[0, :]`), followed by the two transverse acoustic modes.
-                The remaining modes are in no particular order.
-                """
-                # phonon_energies[mode, qx]
-                phonon_energies_in = constants.hbar * xp.load(f)
+            """
+            Specification on phonon_dispersion.npy:
+            This file contains the angular velocities `omega[mode, momentum]`
+            for the different phonon modes and momenta. The phonon momenta are
+            equally spaced as
+            `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
+            constant.
+            The longitudinal acoustic mode along x is the first one
+            (`omega[0, :]`), followed by the two transverse acoustic modes.
+            The remaining modes are in no particular order.
+            """
+            # phonon_energies[mode, qx]
+            phonon_energies_in = constants.hbar * distributed_load(
+                config.input_dir / "phonon_dispersion.npy"
+            )
 
             # We ignore the transverse acoustic modes since the corresponding
             # long-wavelength coupling vanishes.
@@ -102,30 +104,26 @@ class SigmaPhonon(ScatteringSelfEnergy):
             phonon_momenta = xp.linspace(
                 -max_phonon_momentum, max_phonon_momentum, n_phonon_momenta
             )
-            longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
 
             # Compute electron-phonon coupling constants
             coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
-            for mode_index in range(n_modes):
-                # [prefactor] = Å
-                prefactor = xp.sqrt(
-                    constants.hbar**2
-                    / (2 * config.phonon.atom_mass * phonon_energies[mode_index, :])
-                )
-                if mode_index == 0:
-                    # Acoustic longitudinal phonons
-                    coupling_constants[mode_index, :] = (
-                        1j
-                        * config.phonon.acoustic_deformation_potential
-                        * prefactor
-                        * phonon_momenta
-                        * longitudinal_epsilon_x
-                    )
-                else:
-                    # Optical phonons
-                    coupling_constants[mode_index, :] = (
-                        config.phonon.optical_deformation_potential * prefactor
-                    )
+            # prefactors[mode, qx]
+            prefactors = xp.sqrt(
+                constants.hbar**2 / (2 * config.phonon.atom_mass * phonon_energies)
+            )
+            # Acoustic longitudinal phonons
+            longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
+            coupling_constants[0, :] = (
+                1j
+                * config.phonon.acoustic_deformation_potential
+                * prefactors[0, :]
+                * phonon_momenta
+                * longitudinal_epsilon_x
+            )
+            # Optical phonons
+            coupling_constants[1:, :] = (
+                config.phonon.optical_deformation_potential * prefactors[1:, :]
+            )
 
             energy_spacing = _get_equal_spacing(electron_energies)
             # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing

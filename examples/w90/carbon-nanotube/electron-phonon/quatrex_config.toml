@@ -62,6 +62,5 @@ temperature = 300  # K
 # https://journals.aps.org/prb/abstract/10.1103/PhysRevB.104.195201#s3
 acoustic_deformation_potential = 1  # eV
 optical_deformation_potential = 1  # eV / Å
-# 1.99264688270e-26 kg / (1e-20 / e)
-atom_mass = 3.192572275274879e-25  # (eV s^2) / Å^2
+atom_mass_u = 12  # In the unified atomic mass unit
 lattice_constant = 4.26  # Å

@@ -10,7 +10,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.util import pkl5
 
 from qttools import NDArray, sparse, xp
-from qttools.utils.hdf5_utils import load_hdf5_dict
 
 comm = pkl5.Intracomm(comm)
 
@@ -69,7 +68,12 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
+def distributed_load(
+    path: Path,
+    stack_comm: MPI.Intracomm = comm,
+    block_comm: MPI.Intracomm | None = None,
+    partitioning_scheme: str = "fishtail",
+) -> sparse.spmatrix | NDArray | dict:
     """Loads an array from disk and broadcasts it to all ranks.
 
     Parameters
@@ -93,7 +97,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
     if path.suffix not in [".npz", ".npy", ".h5", ".txt"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
-    if comm.rank == 0:
+    if stack_comm.rank == 0:
         if path.suffix == ".npz":
             # NOTE: cupyx.scipy.sparse.load_npz does not exist.
             arr = sps.load_npz(path)
@@ -101,19 +105,18 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
         elif path.suffix == ".npy":
             arr = xp.load(path)
         elif path.suffix == ".h5":
-            arr = load_hdf5_dict(path)
-            arr = {
-                tuple(map(int, r.strip("[]").split(","))): h_r
-                for r, h_r in arr.items()
-                if r.startswith("[")
-            }
+            from qttools.utils.hdf5_utils import load_hdf5_dict
+
+            arr = load_hdf5_dict(
+                path, comm=block_comm, partitioning_scheme=partitioning_scheme
+            )
         elif path.suffix == ".txt":
             # Assumes the text file contains integers.
             arr = xp.loadtxt(path, dtype=int)
     else:
         arr = None
 
-    arr = comm.bcast(arr, root=0)
+    arr = stack_comm.bcast(arr, root=0)
 
     return arr
 

@@ -442,7 +442,15 @@ def load_matrices(
     """
 
     # load the matrices
-    matrix_dict = matrices or distributed_load(config.input_dir / f"{matrix_name}.h5")
+
+    matrix_dict = matrices or distributed_load(
+        config.input_dir / f"{matrix_name}.h5",
+        stack_comm=comm.stack._mpi_comm,
+        block_comm=(
+            None if config.device.construct_from_unit_cell else comm.block._mpi_comm
+        ),
+        partitioning_scheme="fishtail" if config.formalism == "negf" else "row",
+    )
 
     if (0, 0, 0) not in matrix_dict:
         raise ValueError(

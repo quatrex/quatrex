@@ -4,9 +4,28 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
+from qttools.utils.mpi_utils import distributed_load
+from quatrex.core import constants
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
+
+
+def _get_equal_spacing(a: NDArray):
+    """
+    Asserts that the one-dimensional array `a` is equispaced and returns the spacing.
+    """
+
+    if len(a.shape) != 1:
+        raise ValueError("`a` has multiple dimensions.")
+
+    differences = xp.diff(a)
+    spacing = differences[0]
+
+    if not xp.allclose(differences, spacing):
+        raise ValueError("`a` is not equispaced.")
+
+    return spacing
 
 
 class SigmaPhonon(ScatteringSelfEnergy):
@@ -28,10 +47,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the self-energy."""
 
-        if config.phonon.model == "negf":
-            raise NotImplementedError
-
         if config.phonon.model == "pseudo-scattering":
+            self._compute_fn = self._compute_pseudo_scattering
             if electron_energies is None:
                 raise ValueError(
                     "Electron energies must be provided for deformation potential model."
@@ -45,6 +62,88 @@ class SigmaPhonon(ScatteringSelfEnergy):
             # energy +- hbar * omega
             self.shift = xp.argmin(
                 xp.abs(electron_energies - (electron_energies[0] + self.phonon_energy))
+            )
+            return
+
+        if config.phonon.model == "long-wavelength":
+            self._compute_fn = self._compute_long_wavelength
+            if electron_energies is None:
+                raise ValueError(
+                    "Electron energies must be provided for the long-wavelength model."
+                )
+
+            # Load phonon modes
+            """
+            Specification on phonon_dispersion.npy:
+            This file contains the angular velocities `omega[mode, momentum]`
+            for the different phonon modes and momenta. The phonon momenta are
+            equally spaced as
+            `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
+            constant.
+            The longitudinal acoustic mode along x is the first one
+            (`omega[0, :]`), followed by the two transverse acoustic modes.
+            The remaining modes are in no particular order.
+            """
+            # phonon_energies[mode, qx]
+            phonon_energies_in = constants.hbar * distributed_load(
+                config.input_dir / "phonon_dispersion.npy"
+            )
+
+            # We ignore the transverse acoustic modes since the corresponding
+            # long-wavelength coupling vanishes.
+            phonon_energies = xp.delete(phonon_energies_in, [1, 2], axis=0)
+
+            # Infer quantities from the loaded dispersion
+            n_modes, n_phonon_momenta = phonon_energies.shape
+            if phonon_energies_in.shape[0] % 3 != 0:
+                raise ValueError(
+                    'Not the correct amount of modes: There are supposed to be 3 * "number of atoms in unit cell" modes.'
+                )
+            n_atoms_unit_cell = phonon_energies_in.shape[0] // 3
+            max_phonon_momentum = xp.pi / config.phonon.lattice_constant
+            phonon_momenta = xp.linspace(
+                -max_phonon_momentum, max_phonon_momentum, n_phonon_momenta
+            )
+
+            # Compute electron-phonon coupling constants
+            coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)
+            atom_mass = config.phonon.atom_mass_u * constants.atomic_mass_unit
+            # prefactors[mode, qx]
+            prefactors = xp.sqrt(constants.hbar**2 / (2 * atom_mass * phonon_energies))
+            # Acoustic longitudinal phonons
+            longitudinal_epsilon_x = 1 / xp.sqrt(n_atoms_unit_cell)
+            coupling_constants[0, :] = (
+                1j
+                * config.phonon.acoustic_deformation_potential
+                * prefactors[0, :]
+                * phonon_momenta
+                * longitudinal_epsilon_x
+            )
+            # Optical phonons
+            coupling_constants[1:, :] = (
+                config.phonon.optical_deformation_potential * prefactors[1:, :]
+            )
+
+            energy_spacing = _get_equal_spacing(electron_energies)
+            # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing
+            # is the phonon energy rounded to the electron energy grid
+            phonon_energy_shifts = xp.astype(
+                xp.rint(phonon_energies / energy_spacing), int
+            )
+            if not xp.all(phonon_energy_shifts >= 0):
+                raise ValueError("Detected negative phonon energies.")
+            occupancies = bose_einstein(phonon_energies, config.phonon.temperature)
+
+            # Compute V
+            prefactor = 1 / (n_phonon_momenta * n_atoms_unit_cell)
+            coupling_factors = xp.abs(coupling_constants) ** 2
+            self.V_em = prefactor * xp.bincount(
+                phonon_energy_shifts.flatten(),
+                weights=(coupling_factors * (occupancies + 1)).flatten(),
+            )
+            self.V_abs = prefactor * xp.bincount(
+                phonon_energy_shifts.flatten(),
+                weights=(coupling_factors * occupancies).flatten(),
             )
             return
 
@@ -66,7 +165,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             sigma_lesser, sigma_greater, sigma_retarded_hermitian.
 
         """
-        return self._compute_pseudo_scattering(g_lesser, g_greater, out)
+        return self._compute_fn(g_lesser, g_greater, out)
 
     def _compute_pseudo_scattering(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
@@ -114,3 +213,40 @@ class SigmaPhonon(ScatteringSelfEnergy):
         )
 
         sigma_greater.fill_diagonal(sg_diag)
+
+    def _compute_long_wavelength(
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
+    ) -> None:
+        """Computes the long-wavelength phonon self-energy.
+
+        Parameters
+        ----------
+        g_lesser : DSDBSparse
+            The lesser Green's function.
+        g_greater : DSDBSparse
+            The greater Green's function.
+        out : tuple[DSDBSparse, ...]
+            The lesser, greater and retarded self-energies.
+        """
+        sigma_lesser, sigma_greater, __ = out
+        for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
+            if m.distribution_state != "nnz":
+                raise ValueError(
+                    'The inputs and outputs of `_compute_long_wavelength` must be in the "nnz" distribution state.'
+                )
+
+        ne = g_lesser.data.shape[0]
+
+        for shift in range(len(self.V_em)):
+            sigma_lesser.data[: ne - shift, :] += (
+                self.V_em[shift] * g_lesser.data[shift:, :]
+            )
+            sigma_lesser.data[shift:, :] += (
+                self.V_abs[shift] * g_lesser.data[: ne - shift, :]
+            )
+            sigma_greater.data[shift:, :] += (
+                self.V_em[shift] * g_greater.data[: ne - shift, :]
+            )
+            sigma_greater.data[: ne - shift, :] += (
+                self.V_abs[shift] * g_greater.data[shift:, :]
+            )

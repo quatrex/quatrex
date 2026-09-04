@@ -245,8 +245,12 @@ right-hand side of the Keldysh equation, which is explained in the
 ### Phonons
 
 Electron-phonon scattering is treated in a more simple picture.
-`quatrex` currently implements an electron-phonon coupling model with a
-single optical phonon mode. The implemented phonon self-energy is
+`quatrex` currently implements a
+`"pseudo-scattering"` electron-phonon coupling model with a
+single optical phonon mode as well as a
+`"long-wavelength"` model with multiple modes.
+
+In the `"pseudo-scattering"` model, the implemented phonon self-energy is
 
 $$
 \mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k}) =
@@ -260,3 +264,20 @@ where \(D_{ph}\) is the electron-phonon deformation potential,
 $\hbar\omega_{ph}$ is the phonon energy and $N_{ph} =
 \left[\exp\left(\hbar\omega_{ph}/k_BT\right) - 1\right]^{-1}$ is its
 Bose-Einstein occupancy at temperature $T$.
+This model only computes the diagonal entries of
+$\mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k})$.
+
+In the `"long-wavelength"` model, the self-energy is computed as
+
+$$
+\Sigma^\gtrless(E)
+= \sum_{E_\mathrm{ph}}
+V_{E_\mathrm{ph}}^\mathrm{em}
+G^\gtrless(E\mp E_\mathrm{ph})
++ V_{E_\mathrm{ph}}^\mathrm{abs}
+G^\gtrless(E\pm E_\mathrm{ph}),
+$$
+
+where the prefactors $V_{E_\mathrm{ph}}^\mathrm{em}$ and
+$V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from a provided phonon dispersion.
+Here the off-diagonal elements are computed as well.

@@ -38,7 +38,7 @@ right_contact.fermi_level = -3.8  # eV
 # Energy grid.
 energy_window_min = -5.6
 energy_window_max = -1.6
-energy_window_num = 100
+energy_window_num = 50
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
@@ -47,8 +47,6 @@ obc.algorithm = "spectral"
 obc.nevp_solver = "full"
 obc.block_sections = 1
 
-# Parameters for Beyn's method.
-obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
 

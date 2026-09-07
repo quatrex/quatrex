@@ -307,10 +307,10 @@ class SCBA(TransportSolver):
             if self.config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
-            elif self.config.phonon.model == "long-wavelength":
+            elif self.config.phonon.model == "deformation-potential":
                 if self.electron_solver.overlap is not None:
                     raise ValueError(
-                        "The long-wavelength model is only implemented for an orthonormal basis."
+                        'The "deformation-potential" model is only implemented for an orthonormal basis.'
                     )
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 

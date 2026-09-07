@@ -56,7 +56,7 @@ obc.memoizer.mode = "off"
 
 [phonon]
 interaction_cutoff = 5.5  # Å
-model = "long-wavelength"
+model = "deformation-potential"
 temperature = 300  # K
 # Deformation potentials are of order 1 eV / 1 eV/Å:
 # https://journals.aps.org/prb/abstract/10.1103/PhysRevB.104.195201#s3

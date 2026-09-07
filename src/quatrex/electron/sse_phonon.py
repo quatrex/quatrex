@@ -65,11 +65,11 @@ class SigmaPhonon(ScatteringSelfEnergy):
             )
             return
 
-        if config.phonon.model == "long-wavelength":
-            self._compute_fn = self._compute_long_wavelength
+        if config.phonon.model == "deformation-potential":
+            self._compute_fn = self._compute_deformation_potential
             if electron_energies is None:
                 raise ValueError(
-                    "Electron energies must be provided for the long-wavelength model."
+                    "Electron energies must be provided for the deformation-potential model."
                 )
 
             # Load phonon modes
@@ -90,7 +90,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             )
 
             # We ignore the transverse acoustic modes since the corresponding
-            # long-wavelength coupling vanishes.
+            # deformation potential coupling vanishes.
             phonon_energies = xp.delete(phonon_energies_in, [1, 2], axis=0)
 
             # Infer quantities from the loaded dispersion
@@ -214,10 +214,11 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
         sigma_greater.fill_diagonal(sg_diag)
 
-    def _compute_long_wavelength(
+    def _compute_deformation_potential(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
-        """Computes the long-wavelength phonon self-energy.
+        """
+        Computes the phonon self-energy in the deformation potential approximation.
 
         Parameters
         ----------
@@ -232,7 +233,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
             if m.distribution_state != "nnz":
                 raise ValueError(
-                    'The inputs and outputs of `_compute_long_wavelength` must be in the "nnz" distribution state.'
+                    'The inputs and outputs of `_compute_deformation_potential` must be in the "nnz" distribution state.'
                 )
 
         ne = g_lesser.data.shape[0]

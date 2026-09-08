@@ -2,7 +2,7 @@
 
 """Includes the scattering self-energy from the electron-phonon interaction."""
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSDBSparse
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core import constants
@@ -26,6 +26,28 @@ def _get_equal_spacing(a: NDArray):
         raise ValueError("`a` is not equispaced.")
 
     return spacing
+
+
+def _get_v_matrix(v: NDArray, g_size: int):
+    r"""
+    Given a one-dimensional array `v`, returns the matrix `m` such that
+    (m @ g)[i] = \sum_s v[s] g[i + s] for any vector g of size `g_size`.
+    The sum runs over all indices where both factors are defined.
+
+    Note that
+    (m.T @ g)[i] = \sum_s v[s] g[i - s].
+    """
+
+    if len(v.shape) != 1:
+        raise ValueError("`v` has multiple dimensions.")
+
+    v_size = xp.size(v)
+
+    diagonals = [xp.full(g_size - i, v[i]) for i in range(v_size)]
+    offsets = xp.arange(v_size)
+    m = sparse.diags(diagonals, offsets, format="csc")
+
+    return m
 
 
 class SigmaPhonon(ScatteringSelfEnergy):
@@ -134,17 +156,24 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 raise ValueError("Detected negative phonon energies.")
             occupancies = bose_einstein(phonon_energies, config.phonon.temperature)
 
-            # Compute V
+            # Compute v
             prefactor = 1 / (n_phonon_momenta * n_atoms_unit_cell)
             coupling_factors = xp.abs(coupling_constants) ** 2
-            self.V_em = prefactor * xp.bincount(
+            v_em = prefactor * xp.bincount(
                 phonon_energy_shifts.flatten(),
                 weights=(coupling_factors * (occupancies + 1)).flatten(),
             )
-            self.V_abs = prefactor * xp.bincount(
+            v_abs = prefactor * xp.bincount(
                 phonon_energy_shifts.flatten(),
                 weights=(coupling_factors * occupancies).flatten(),
             )
+
+            # Compute corresponding banded matrices
+            n_electron_energies = electron_energies.shape[0]
+            m_em = _get_v_matrix(v_em, g_size=n_electron_energies)
+            m_abs = _get_v_matrix(v_abs, g_size=n_electron_energies)
+            # m_greater = m_lesser.T is not stored to save memory
+            self.m_lesser = m_em + m_abs.T
             return
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
@@ -236,18 +265,5 @@ class SigmaPhonon(ScatteringSelfEnergy):
                     'The inputs and outputs of `_compute_deformation_potential` must be in the "nnz" distribution state.'
                 )
 
-        ne = g_lesser.data.shape[0]
-
-        for shift in range(len(self.V_em)):
-            sigma_lesser.data[: ne - shift, :] += (
-                self.V_em[shift] * g_lesser.data[shift:, :]
-            )
-            sigma_lesser.data[shift:, :] += (
-                self.V_abs[shift] * g_lesser.data[: ne - shift, :]
-            )
-            sigma_greater.data[shift:, :] += (
-                self.V_em[shift] * g_greater.data[: ne - shift, :]
-            )
-            sigma_greater.data[: ne - shift, :] += (
-                self.V_abs[shift] * g_greater.data[shift:, :]
-            )
+        sigma_lesser.data = self.m_lesser @ g_lesser.data
+        sigma_greater.data = self.m_lesser.T @ g_greater.data

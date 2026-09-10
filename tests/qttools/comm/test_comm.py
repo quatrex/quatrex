@@ -1,88 +1,13 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
 import numpy as np
 import pytest
-from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI, _default_config, pad_buffer
+from qttools.comm.comm import pad_buffer
 
 data_size = 20
-
-
-def _configure(
-    backend_type: str,
-    block_comm_size: int,
-) -> bool:
-
-    # set config to all the same backend type
-    config = _default_config.copy()
-    config = {key: backend_type for key in config.keys()}
-
-    if (block_comm_size > global_comm.size) | (global_comm.size % block_comm_size != 0):
-        with pytest.raises(ValueError):
-            comm.configure(
-                block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                override=True,
-            )
-        return False
-
-    if xp.__name__ == "numpy" and backend_type in ["nccl", "host_mpi"]:
-        with pytest.raises(ValueError):
-            comm.configure(
-                block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                override=True,
-            )
-        return False
-
-    if xp.__name__ == "cupy":
-        from cupy.cuda import nccl
-
-        if not nccl.available and backend_type == "nccl":
-            with pytest.raises(RuntimeError):
-                comm.configure(
-                    block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    override=True,
-                )
-            return False
-
-        if not GPU_AWARE_MPI and backend_type == "device_mpi":
-            with pytest.raises(ValueError):
-                comm.configure(
-                    block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    override=True,
-                )
-            return False
-
-    comm.configure(
-        block_comm_size=block_comm_size,
-        block_comm_config=config,
-        stack_comm_config=config,
-        override=True,
-    )
-    return True
-
-
-@pytest.mark.mpi(min_size=3)
-def test_configure(
-    backend_type: str,
-    block_comm_size: int,
-) -> bool:
-    """Test the configure function of the comm singleton."""
-
-    _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    )
-    return
 
 
 @pytest.mark.mpi(min_size=3)
@@ -91,12 +16,6 @@ def test_all_to_all(
     block_comm_size: int,
 ):
     """Test the all_to_all function of the comm singleton."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     for test_comm in [comm.block, comm.stack]:
 
@@ -120,12 +39,6 @@ def test_all_gather(
 ):
     """Test the all_gather function of the comm singleton."""
 
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
-
     for test_comm in [comm.block, comm.stack]:
 
         # random sendbuf
@@ -148,12 +61,6 @@ def test_all_reduce(
     block_comm_size: int,
 ):
     """Test the all_reduce function of the comm singleton."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     for test_comm in [comm.block, comm.stack]:
 
@@ -180,12 +87,6 @@ def test_bcast(
 ):
     """Test the bcast function of the comm singleton."""
 
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
-
     for test_comm in [comm.block, comm.stack]:
 
         # random sendbuf
@@ -205,12 +106,6 @@ def test_pad_buffer(
     block_comm_size: int,
 ):
     """Test the pad_buffer function."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     for test_comm in [comm.block, comm.stack]:
 
@@ -250,12 +145,6 @@ def test_all_gather_v(
     block_comm_size: int,
 ):
     """Test the all_gather_v function."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     for test_comm in [comm.block, comm.stack]:
 
@@ -301,12 +190,6 @@ def test_send_recv(
 ):
     """Test the send_recv function."""
 
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
-
     for test_comm in [comm.block, comm.stack]:
 
         if test_comm.size < 2:
@@ -335,12 +218,6 @@ def test_send_and_recv(
     block_comm_size: int,
 ):
     """Test the send and recv functions."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     for test_comm in [comm.block, comm.stack]:
 
@@ -373,12 +250,6 @@ def test_isend_and_irecv(
     block_comm_size: int,
 ):
     """Test the isend and irecv functions."""
-
-    if not _configure(
-        backend_type=backend_type,
-        block_comm_size=block_comm_size,
-    ):
-        pytest.skip("Config not valid")
 
     if backend_type == "host_mpi":
         pytest.skip("Non-blocking receive is not implemented for the host_mpi backend.")

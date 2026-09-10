@@ -7,6 +7,20 @@ formalism = "negf" # "negf" or "wf"
 transport_direction = "a"
 block_size = 32
 
+    [[device.contacts]]
+    name = "source"
+    origin = [0.1551, 0.0, 0.0]
+    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    fermi_level = -3.6
+
+    [[device.contacts]]
+    name = "drain"
+    origin = [102.694, 0.0, 0.0]
+    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    fermi_level = -3.8
+
 [scba] # ===============================================================
 max_iterations = 2
 mixing_factor = 1
@@ -29,12 +43,6 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-left_contact.name = "source"
-left_contact.fermi_level = -3.6  # eV
-
-right_contact.name = "drain"
-right_contact.fermi_level = -3.8  # eV
-
 # Energy grid.
 energy_window_min = -5.6
 energy_window_max = -1.6
@@ -45,7 +53,6 @@ solver.max_batch_size = 1000
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
-obc.block_sections = 1
 
 obc.max_decay = 15
 obc.min_decay = 1e-3

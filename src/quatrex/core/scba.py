@@ -10,9 +10,8 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
-from qttools.comm import comm
+from qttools.comm import comm, distributed_max
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density
@@ -31,17 +30,6 @@ from quatrex.grid import get_electron_energies
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
-
-
-def _max(a: NDArray):
-    """Compute the maximum of the real array `a`."""
-    # TODO: Move this to qttools.utils?
-
-    local_maximum = get_host(xp.max(a))
-    maximum = np.empty_like(local_maximum)
-    global_comm.Allreduce(local_maximum, maximum, op=MPI.MAX)
-
-    return maximum
 
 
 class SCBAData:
@@ -308,7 +296,7 @@ class SCBA(TransportSolver):
                 self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
             elif self.config.phonon.model == "deformation-potential":
-                if self.electron_solver.overlap is not None:
+                if self.device.overlap_matrices is not None:
                     raise ValueError(
                         'The "deformation-potential" model is only implemented for an orthonormal basis.'
                     )
@@ -382,13 +370,13 @@ class SCBA(TransportSolver):
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        max_diff_sigma_lesser = _max(
+        max_diff_sigma_lesser = distributed_max(
             xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data)
         )
-        max_diff_sigma_greater = _max(
+        max_diff_sigma_greater = distributed_max(
             xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data)
         )
-        max_diff_sigma_retarded_hermitian = _max(
+        max_diff_sigma_retarded_hermitian = distributed_max(
             xp.abs(
                 self.data.sigma_retarded_hermitian.data
                 - self.data.sigma_retarded_hermitian_prev.data

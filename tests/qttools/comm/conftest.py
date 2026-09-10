@@ -12,6 +12,7 @@ BACKEND_TYPE = [pytest.param(backend, id=backend) for backend in _backends]
 BLOCK_COMM_SIZES = [
     pytest.param(1, id="1"),
     pytest.param(2, id="2"),
+    pytest.param(3, id="3"),
     pytest.param(4, id="4"),
 ]
 
@@ -28,59 +29,39 @@ def block_comm_size(request: pytest.FixtureRequest) -> int:
 
 @pytest.fixture(autouse=True)
 def configure(
+    request,
     backend_type: str,
     block_comm_size: int,
 ):
+    # To specifically test the `configure` function, we can use the
+    # `no_autoconf` marker to skip this fixture.
+    if "no_autoconf" in request.keywords:
+        yield
+        return
+
     # set config to all the same backend type
     config = _default_config.copy()
     config = {key: backend_type for key in config.keys()}
 
     if (block_comm_size > global_comm.size) | (global_comm.size % block_comm_size != 0):
-        with pytest.raises(ValueError):
-            comm.configure(
-                block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                override=True,
-            )
         pytest.skip("Config not valid")
 
     if xp.__name__ == "numpy" and backend_type in ["nccl", "host_mpi"]:
-        with pytest.raises(ValueError):
-            comm.configure(
-                block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                override=True,
-            )
         pytest.skip("Config not valid")
 
     if xp.__name__ == "cupy":
         from cupy.cuda import nccl
 
         if not nccl.available and backend_type == "nccl":
-            with pytest.raises(RuntimeError):
-                comm.configure(
-                    block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    override=True,
-                )
-        pytest.skip("Config not valid")
-
+            pytest.skip("Config not valid")
         if not GPU_AWARE_MPI and backend_type == "device_mpi":
-            with pytest.raises(ValueError):
-                comm.configure(
-                    block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    override=True,
-                )
-        pytest.skip("Config not valid")
+            pytest.skip("Config not valid")
 
     comm.configure(
         block_comm_size=block_comm_size,
         block_comm_config=config,
         stack_comm_config=config,
+        global_comm_config=config,
         override=True,
     )
+    yield

@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI
+from qttools.comm.comm import GPU_AWARE_MPI, _default_config
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -32,27 +32,18 @@ def configure_comm(request):
     """Setup any state specific to the execution of the given module."""
     block_comm_size = request.param
 
-    # Default configuration setup based on the xp module
-    if xp.__name__ == "cupy":
-        _default_config = {
-            "all_to_all": "host_mpi",
-            "all_gather": "host_mpi",
-            "all_reduce": "host_mpi",
-            "bcast": "host_mpi",
-        }
-    elif xp.__name__ == "numpy":
-        _default_config = {
-            "all_to_all": "device_mpi",
-            "all_gather": "device_mpi",
-            "all_reduce": "device_mpi",
-            "bcast": "device_mpi",
-        }
+    if global_comm.size % block_comm_size != 0:
+        pytest.skip(
+            f"Global communicator size {global_comm.size}"
+            f" is not divisible by block communicator size {block_comm_size}."
+        )
 
     # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
         block_comm_size=block_comm_size,
         block_comm_config=_default_config,
         stack_comm_config=_default_config,
+        global_comm_config=_default_config,
         override=True,
     )
 

@@ -2154,6 +2154,17 @@ class CommConfig(BaseModel):
     stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     """Communication backend to use for stack send-receive."""
 
+    global_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-to-all."""
+    global_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-gather."""
+    global_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-reduce."""
+    global_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack broadcast."""
+    global_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack send-receive."""
+
 
 class ComputeConfig(BaseModel):
     """Top level configuration for all performance and compute options."""
@@ -2586,10 +2597,19 @@ def _setup_comm(comm_config: CommConfig) -> None:
         "send_recv": comm_config.stack_send_recv or default_backend,
     }
 
+    global_comm_config = {
+        "all_to_all": comm_config.global_all_to_all or default_backend,
+        "all_gather": comm_config.global_all_gather or default_backend,
+        "all_reduce": comm_config.global_all_reduce or default_backend,
+        "bcast": comm_config.global_bcast or default_backend,
+        "send_recv": comm_config.global_send_recv or default_backend,
+    }
+
     comm.configure(
         block_comm_size=comm_config.block_comm_size,
         block_comm_config=block_comm_config,
         stack_comm_config=stack_comm_config,
+        global_comm_config=global_comm_config,
         override=True,
     )
 

@@ -2,22 +2,33 @@
 
 """Functions on distributed arrays."""
 
-import numpy as np
-from mpi4py import MPI
-from mpi4py.MPI import COMM_WORLD as global_comm
-
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_host
+from qttools.comm.comm import _SubCommunicator
 
 
-def distributed_max(a: NDArray):
-    """Returns the maximum of the real and possibly distributed `NDArray` `a`."""
+def distributed_max(a: NDArray, comm: _SubCommunicator) -> NDArray:
+    """Returns the maximum of the real and possibly distributed `NDArray` `a`.
+
+    Parameters
+    ----------
+    a : NDArray
+        The input array, which can be distributed across multiple processes.
+    comm : _SubCommunicator
+        The communicator that defines the distribution of the array `a`.
+
+    Returns
+    -------
+    NDArray
+        The maximum value of the array `a` across all processes.
+
+    """
 
     if xp.iscomplexobj(a):
         raise ValueError("The maximum of a complex array is not defined")
 
-    local_maximum = get_host(xp.max(a))
-    maximum = np.empty_like(local_maximum)
-    global_comm.Allreduce(local_maximum, maximum, op=MPI.MAX)
+    # NOTE: numpy would return a scalar and thus, we use `atleast_1d`.
+    local_maximum = xp.atleast_1d(xp.max(a))
+    maximum = xp.empty_like(local_maximum)
+    comm.all_reduce(local_maximum, maximum, op="max")
 
     return maximum

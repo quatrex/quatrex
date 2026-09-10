@@ -371,16 +371,19 @@ class SCBA(TransportSolver):
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
         max_diff_sigma_lesser = distributed_max(
-            xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data)
+            xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data),
+            comm.global_,
         )
         max_diff_sigma_greater = distributed_max(
-            xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data)
+            xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data),
+            comm.global_,
         )
         max_diff_sigma_retarded_hermitian = distributed_max(
             xp.abs(
                 self.data.sigma_retarded_hermitian.data
                 - self.data.sigma_retarded_hermitian_prev.data
-            )
+            ),
+            comm.global_,
         )
 
         meir_wingreen_current = self.observables.electron_current.get(

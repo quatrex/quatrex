@@ -2,22 +2,83 @@
 
 import numpy as np
 import pytest
+from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.comm.comm import pad_buffer
+from qttools.comm.comm import GPU_AWARE_MPI, _default_config, pad_buffer
 
 data_size = 20
 
 
 @pytest.mark.mpi(min_size=3)
-def test_all_to_all(
+@pytest.mark.no_autoconf
+def test_configure(
     backend_type: str,
     block_comm_size: int,
 ):
+    """Test the configure function of the comm singleton."""
+    config = _default_config.copy()
+    config = {key: backend_type for key in config.keys()}
+
+    if (block_comm_size > global_comm.size) | (global_comm.size % block_comm_size != 0):
+        with pytest.raises(ValueError):
+            comm.configure(
+                block_comm_size=block_comm_size,
+                block_comm_config=config,
+                stack_comm_config=config,
+                global_comm_config=config,
+                override=True,
+            )
+        return
+    if xp.__name__ == "numpy" and backend_type in ["nccl", "host_mpi"]:
+        with pytest.raises(ValueError):
+            comm.configure(
+                block_comm_size=block_comm_size,
+                block_comm_config=config,
+                stack_comm_config=config,
+                global_comm_config=config,
+                override=True,
+            )
+        return
+    if xp.__name__ == "cupy":
+        from cupy.cuda import nccl
+
+        if not nccl.available and backend_type == "nccl":
+            with pytest.raises(RuntimeError):
+                comm.configure(
+                    block_comm_size=block_comm_size,
+                    block_comm_config=config,
+                    stack_comm_config=config,
+                    global_comm_config=config,
+                    override=True,
+                )
+            return
+        if not GPU_AWARE_MPI and backend_type == "device_mpi":
+            with pytest.raises(ValueError):
+                comm.configure(
+                    block_comm_size=block_comm_size,
+                    block_comm_config=config,
+                    stack_comm_config=config,
+                    global_comm_config=config,
+                    override=True,
+                )
+            return
+
+    comm.configure(
+        block_comm_size=block_comm_size,
+        block_comm_config=config,
+        stack_comm_config=config,
+        global_comm_config=config,
+        override=True,
+    )
+
+
+@pytest.mark.mpi(min_size=3)
+def test_all_to_all():
     """Test the all_to_all function of the comm singleton."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = xp.ones((test_comm.size,), dtype=xp.float32) * test_comm.rank
@@ -33,13 +94,10 @@ def test_all_to_all(
 
 
 @pytest.mark.mpi(min_size=3)
-def test_all_gather(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_all_gather():
     """Test the all_gather function of the comm singleton."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = xp.ones((data_size,), dtype=xp.float32) * test_comm.rank
@@ -56,13 +114,10 @@ def test_all_gather(
 
 
 @pytest.mark.mpi(min_size=3)
-def test_all_reduce(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_all_reduce():
     """Test the all_reduce function of the comm singleton."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = xp.ones((data_size,), dtype=xp.float32) * test_comm.rank
@@ -81,13 +136,10 @@ def test_all_reduce(
 
 
 @pytest.mark.mpi(min_size=3)
-def test_bcast(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_bcast():
     """Test the bcast function of the comm singleton."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = xp.ones((data_size,), dtype=xp.float32) * xp.pi
@@ -101,13 +153,10 @@ def test_bcast(
 
 
 @pytest.mark.mpi(min_size=3)
-def test_pad_buffer(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_pad_buffer():
     """Test the pad_buffer function."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = (
@@ -140,13 +189,10 @@ def test_pad_buffer(
 
 
 @pytest.mark.mpi(min_size=3)
-def test_all_gather_v(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_all_gather_v():
     """Test the all_gather_v function."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         # random sendbuf
         sendbuf = (
@@ -184,13 +230,10 @@ def test_all_gather_v(
 
 
 @pytest.mark.mpi(min_size=2)
-def test_send_recv(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_send_recv():
     """Test the send_recv function."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         if test_comm.size < 2:
             pytest.skip("Need at least 2 processes for send_recv test")
@@ -213,13 +256,10 @@ def test_send_recv(
 
 
 @pytest.mark.mpi(min_size=2)
-def test_send_and_recv(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_send_and_recv():
     """Test the send and recv functions."""
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         if test_comm.size < 2:
             pytest.skip("Need at least 2 processes for isend_irecv test")
@@ -247,14 +287,13 @@ def test_send_and_recv(
 @pytest.mark.mpi(min_size=2)
 def test_isend_and_irecv(
     backend_type: str,
-    block_comm_size: int,
 ):
     """Test the isend and irecv functions."""
 
     if backend_type == "host_mpi":
         pytest.skip("Non-blocking receive is not implemented for the host_mpi backend.")
 
-    for test_comm in [comm.block, comm.stack]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
 
         if test_comm.size < 2:
             pytest.skip("Need at least 2 processes for isend_irecv test")

@@ -7,22 +7,15 @@ from qttools.comm import comm, distributed_max
 
 
 @pytest.mark.mpi(min_size=3)
-def test_distributed_max(
-    backend_type: str,
-    block_comm_size: int,
-):
+def test_distributed_max():
     """Test the distributed_max function."""
 
-    for test_comm in [comm.block]:
+    for test_comm in [comm.block, comm.stack, comm.global_]:
         a = xp.ones((test_comm.size,), dtype=xp.float32) * test_comm.rank
-        a_max = distributed_max(a)
+        a_max = distributed_max(a, test_comm)
 
-        found_max = False
-        for a_entry in a.flatten():
-            assert a_entry <= a_max, "`distributed_max` did not return the maximum"
-            if a_entry == a_max:
-                found_max = True
+        reference_max = xp.array([test_comm.size - 1], dtype=xp.float32)
 
-        assert (
-            found_max
-        ), f"The maximum returned by `distributed_max` does not occur in the array: a_max = {a_max}, a = {a}"
+        assert xp.allclose(
+            a_max, reference_max
+        ), f"a: {a}, a_max: {a_max}, reference_max: {reference_max}"

@@ -23,7 +23,8 @@ from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
     SigmaFock,
-    SigmaPhonon,
+    SigmaPhononDeformationPotential,
+    SigmaPhononPseudoScattering,
     SigmaPhoton,
 )
 from quatrex.grid import get_electron_energies, get_equal_spacing
@@ -293,14 +294,18 @@ class SCBA(TransportSolver):
         # ----- Phonons ------------------------------------------------
         if self.config.scba.phonon:
             if self.config.phonon.model == "pseudo-scattering":
-                self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
+                self.sigma_phonon = SigmaPhononPseudoScattering(
+                    config, self.electron_energies
+                )
 
             elif self.config.phonon.model == "deformation-potential":
                 if self.device.overlap_matrices is not None:
                     raise ValueError(
                         'The "deformation-potential" model is only implemented for an orthonormal basis.'
                     )
-                self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
+                self.sigma_phonon = SigmaPhononDeformationPotential(
+                    config, self.electron_energies
+                )
 
             else:
                 raise ValueError(f"Unknown phonon model: {self.config.phonon.model}")

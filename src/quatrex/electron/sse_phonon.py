@@ -9,23 +9,7 @@ from quatrex.core import constants
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
-
-
-def _get_equal_spacing(a: NDArray):
-    """
-    Asserts that the one-dimensional array `a` is equispaced and returns the spacing.
-    """
-
-    if len(a.shape) != 1:
-        raise ValueError("`a` has multiple dimensions.")
-
-    differences = xp.diff(a)
-    spacing = differences[0]
-
-    if not xp.allclose(differences, spacing):
-        raise ValueError("`a` is not equispaced.")
-
-    return spacing
+from quatrex.grid import get_equal_spacing
 
 
 def _get_v_matrix(v: NDArray, g_size: int):
@@ -146,7 +130,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 config.phonon.optical_deformation_potential * prefactors[1:, :]
             )
 
-            energy_spacing = _get_equal_spacing(electron_energies)
+            energy_spacing = get_equal_spacing(electron_energies)
             # phonon_energy_shifts[momentum_index, mode_index] * energy_spacing
             # is the phonon energy rounded to the electron energy grid
             phonon_energy_shifts = xp.astype(

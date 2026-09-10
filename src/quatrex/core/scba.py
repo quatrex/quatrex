@@ -26,7 +26,7 @@ from quatrex.electron import (
     SigmaPhonon,
     SigmaPhoton,
 )
-from quatrex.grid import get_electron_energies
+from quatrex.grid import get_electron_energies, get_equal_spacing
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
@@ -215,7 +215,7 @@ class SCBA(TransportSolver):
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
-        energy_resolution = self.electron_energies[1] - self.electron_energies[0]
+        energy_resolution = get_equal_spacing(self.electron_energies)
         num_energies_per_rank = num_energies // comm.stack.size
         if comm.rank == 0:
             print(
@@ -392,7 +392,7 @@ class SCBA(TransportSolver):
         i_left = xp.real(meir_wingreen_current[..., 0])
         i_right = xp.real(meir_wingreen_current[..., -1])
 
-        dE = self.electron_energies[1] - self.electron_energies[0]
+        dE = get_equal_spacing(self.electron_energies)
         left_current = xp.sum(i_left) * dE
         right_current = xp.sum(i_right) * dE
         avg_current = (left_current + right_current) / 2

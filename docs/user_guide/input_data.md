@@ -1,4 +1,6 @@
-# Electronic Structure Data
+# Input Data
+
+## Electronic Structure Data
 
 To compute *non-equilibrium* electronic transport properties with
 `quatrex`, we need information about the underlying electronic structure
@@ -39,7 +41,7 @@ used to construct device Hamiltonians (see
 and/or to sample the Brillouin zone in transverse directions (see
 [`kpoint_grid`](parameters/device/#kpoint_grid)).
 
-## Interfacing with DFT Codes
+### Interfacing with DFT Codes
 
 !!! note "Unified Electronic Structure Interface"
     We are working on a unified interface for different DFT codes, which
@@ -65,7 +67,7 @@ function to save them in HDF5 format for use with `quatrex`.
     transport direction, `quatrex` simulations require electronic
     structure data to be represented in localized orbital basis.
 
-### Plane-Wave DFT & Wannier90
+#### Plane-Wave DFT & Wannier90
 
 To extract the necessary Hamiltonian and overlap matrices from
 plane-wave DFT codes, one can use the [Wannier90](https://wannier.org/)
@@ -157,7 +159,7 @@ documentation](https://wannier90.readthedocs.io/en/latest/user_guide/wannier90/f
     save_hdf5_dict("hamiltonian.h5", hamiltonian)
     ```
 
-### CP2K
+#### CP2K
 
 In [CP2K](https://cp2k.org/) input files, you can enable the output of
 the Hamiltonian and overlap matrices in CSR format by adding the
@@ -231,7 +233,7 @@ You can check CP2K's documentation for more information about the
 [`KS_CSR_WRITE`](https://manual.cp2k.org/trunk/CP2K_INPUT/FORCE_EVAL/DFT/PRINT/KS_CSR_WRITE.html#ks-csr-write)
 section.
 
-### GPAW
+#### GPAW
 
 We can also extract the Hamiltonian and overlap matrices from
 [GPAW](https://gpaw.readthedocs.io/) calculations performed in the
@@ -276,7 +278,7 @@ transport](https://gpaw.readthedocs.io/tutorialsexercises/electronic/transport/t
     save_hdf5_dict("overlap.h5", overlap)
     ```
 
-### Siesta
+#### Siesta
 
 The [Siesta](https://siesta-project.org/) code also allows extracting
 Hamiltonian and overlap matrices conveniently via
@@ -317,3 +319,31 @@ which can read the `.HSX` output files from Siesta calculations.
     save_hdf5_dict("hamiltonian.h5", hamiltonian_r)
     save_hdf5_dict("overlap.h5", overlap_r)
     ```
+
+# Phonon Data
+
+`quatrex` can incorporate the interactions of electrons and phonons in
+its transport calculations. Depending on the electron-phonon model that
+is used (see [Phonons](methodology/negf/#phonons)), additional inputs
+describing the phononic structure inside the device are required.
+
+## Phonon Dispersion
+
+The `"deformation-potential`" model requires the phonon dispersion to be
+provided in a file named `phonon_dispersion.npy`. This file must contain
+the angular velocities `omega[mode, momentum]` in
+$\mathrm{rad}/\mathrm{s}$ for the different phonon modes and momenta.
+The phonon momenta are assumed to be equally spaced as
+`np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
+constant.
+
+!!! question "Why is the phonon momentum only one-dimensional?"
+    Currently, the `"deformation-potential`" model is only implemented
+    for 1D structures. Phonons can thus only propagate along a single
+    dimension.
+
+The longitudinal acoustic mode should be the first one (`omega[0, :]`),
+followed by the two transverse acoustic modes. These three modes are
+treated as special cases in the `"deformation-potential"` model. The
+remaining modes are all treated equally and don't have to be in any
+particular order.

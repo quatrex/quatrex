@@ -11,9 +11,9 @@ have a look at the more detailed [example setups](./examples/).
 
 **In This Section**
 
-- **[Electronic Structure Data](input_data.md)** — How to acquire the
-  required electronic structure data (Hamiltonian and overlap matrices)
-  for a given system.
+- **[Input Data](input_data.md)** — How to acquire the required input
+  data (such as the Hamiltonian and the overlap matrices) for a given
+  system.
 - **[Command Line Interface](cli.md)** — How to run `quatrex`
   simulations from the command line.
 - **[Simulation Parameters](parameters)** — What parameters can be

@@ -134,18 +134,6 @@ class SigmaPhononDeformationPotential(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the self-energy."""
 
-        # Load phonon modes
-        """
-        Specification on phonon_dispersion.npy:
-        This file contains the angular velocities `omega[mode, momentum]`
-        for the different phonon modes and momenta. The phonon momenta are
-        equally spaced as
-        `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
-        constant.
-        The longitudinal acoustic mode along x is the first one
-        (`omega[0, :]`), followed by the two transverse acoustic modes.
-        The remaining modes are in no particular order.
-        """
         # phonon_energies[mode, qx]
         phonon_energies_in = constants.hbar * distributed_load(
             config.input_dir / "phonon_dispersion.npy"

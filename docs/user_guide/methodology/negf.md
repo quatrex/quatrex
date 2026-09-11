@@ -241,6 +241,8 @@ Electron-phonon scattering is treated in a more simple picture.
 single optical phonon mode as well as a
 `"deformation-potential"` model with multiple modes.
 
+#### Pseudo-scattering
+
 In the `"pseudo-scattering"` model, the implemented phonon self-energy is
 
 $$
@@ -258,18 +260,76 @@ Bose-Einstein occupancy at temperature $T$.
 This model only computes the diagonal entries of
 $\mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k})$.
 
-In the `"deformation-potential"` model, the self-energy is computed as
+#### Deformation Potential
+
+In the `"deformation-potential"` model, the self-energy is given by
 
 $$
-\Sigma^\gtrless(E)
+\mathbf{\Sigma}^\gtrless(E)
+= \frac{1}{N} \sum_{\vec{q}, \lambda}
+\left|\mathcal{M}_{\vec{q} \lambda}\right|^2
+\left(
+(n_\mathrm{p}(\hbar \omega_{\vec{q}, \lambda}) + 1)
+\mathbf{G}^\gtrless(E\mp \hbar \omega_{\vec{q}, \lambda})
+\right.
+$$
+
+$$
+\left. + n_\mathrm{p}(\hbar \omega_{\vec{q}, \lambda})
+\mathbf{G}^\gtrless(E\pm\hbar \omega_{\vec{q}, \lambda}) \right).
+$$
+
+$N$ Is the number of atoms in the unit cell, $\vec{q}, \lambda$ label
+the phonon momenta and modes, and $n_\mathrm{p}(\hbar \omega_{\vec{q},
+\lambda})$ is the corresponding spectral density. We assume that the
+phonons are in equilibrium and thus model the spectral density by the
+Bose-Einstein distribution. Here the off-diagonal elements of
+$\mathbf{\Sigma}$ are being computed.
+
+The electron-phonon coupling constants $\mathcal{M}_{\vec{q} \lambda}$
+are derived from deformation potential constants
+[`acoustic_deformation_potential`](../parameters/phonon.md#acoustic_deformation_potential)
+($\xi$) and
+[`optical_deformation_potential`](../parameters/phonon.md#optical_deformation_potential)
+($D_0$) as follows:
+
+1. For longitudinal acoustic (LA) phonons $\mathcal{M}_{\vec{q} \lambda}
+   = i\Xi\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}} \left( \vec{q}
+   \cdot \vec{\epsilon}_{\vec{q}, \lambda} \right) =
+   i\Xi\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}} \left( |\vec{q}|
+   \cdot |\vec{\epsilon}_{\vec{q}, \lambda}| \right)$.
+2. For transverse acoustic (TA) phonons $\mathcal{M}_{\vec{q} \lambda} =
+   0$ since $\vec{q} \perp \vec{\epsilon}_{\vec{q}, \lambda}$.
+3. All other phonons $\mathcal{M}_{\alpha\beta, \vec{q} \lambda} =
+   D_0\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}}$.
+
+The phonon modes must be provided as an input file, see [Phonon
+Data](../input_data/#phonon-data).
+
+!!! note "Limitations of the `"deformation-potential"` model" 
+    The `"deformation-potential"` model is currently implemented under the
+    following assumptions:
+
+    1. We assume 1D structures, i.e., a unit cell repeated along a single axis.
+    2. The electronic basis is assumed to be orthonormal.
+    3. All atoms are assumed to have the same mass.
+
+    Except for the LA and TA modes all phonon modes are treated as optical
+    with the same deformation potential $D_0$. In particular, torsional
+    acoustic modes are not treated accurately.
+
+For computational efficiency, we precompute factors
+$V_{E_\mathrm{ph}}^\mathrm{em}$ and $V_{E_\mathrm{ph}}^\mathrm{abs}$ and
+compute the self-energies as
+
+$$
+\mathbf{\Sigma}^\lessgtr_{ph}(E)
 = \sum_{E_\mathrm{ph}}
 V_{E_\mathrm{ph}}^\mathrm{em}
-G^\gtrless(E\mp E_\mathrm{ph})
+\mathbf{G}^\lessgtr(E\pm E_\mathrm{ph})
 + V_{E_\mathrm{ph}}^\mathrm{abs}
-G^\gtrless(E\pm E_\mathrm{ph}),
+\mathbf{G}^\lessgtr(E\mp E_\mathrm{ph}),
 $$
 
-where the prefactors $V_{E_\mathrm{ph}}^\mathrm{em}$ and
-$V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from the provided phonon dispersion
-and deformation potential constants.
-Here the off-diagonal elements are computed as well.
+where the phonon energies $E_\mathrm{ph}$ coincide with the electronic
+energy grid.

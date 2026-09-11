@@ -354,3 +354,211 @@ d = np.linalg.norm(structure[:, np.newaxis, :] - structure[np.newaxis, :, :], ax
 coulomb_matrix = e / (4 * np.pi * epsilon_0 * d)
 np.fill_diagonal(coulomb_matrix, 0)
 ```
+
+## Phonon Dispersion
+
+The `"deformation-potential"` electron-phonon scattering model requires
+the `phonon_dispersion.npy` input file containing the angular momenta of
+the phonons. For the required format, see User Guide -> Input Data ->
+Phonon Data -> Phonon Dispersion in the documentation.
+
+To obtain the dispersion, one can start from the Force Constants Matrix
+$\mathbf{\Phi}_{ij}^{kk'}$, which gives the force on each atom $k$ in
+any unit cell $i$ given the atomic displacements $\vec{u}_i^{k}$:
+
+$$
+\vec{F}_i^k = m^k \ddot{\vec{u}}_i^k 
+= - \sum_{jk'}\mathbf{\Phi}_{ij}^{kk'} \cdot \vec{u}_j^{k'}
+$$
+
+Modeling the forces like this corresponds to the harmonic approximation.
+
+In the following we assume a 1D structure that is periodic in one
+dimension and confined in the other two. Let $\vec{a}$ label the
+displacement between two neighboring unit cells. We will also ignore
+interactions extending beyond neighboring unit cells. Then we can define
+the dynamical matrix as $$ \mathbf{D}_{\vec{q}}^{kk'} := \left[
+\mathbf{\Phi}_{0, -1}^{kk'} e^{-i\vec{q} \cdot \vec{a}} +
+\mathbf{\Phi}_{0, 0}^{kk'} + \mathbf{\Phi}_{0, 1}^{kk'} e^{i\vec{q}
+\cdot \vec{a}} \right] e^{i\vec{q} \cdot \left( \vec{R}_0^{k'} -
+\vec{R}_0^{k} \right)}. $$
+
+The angular velocities $\omega_{\vec{q}\lambda}^2$ and polarizations
+$\vec{\epsilon}_{\vec{q}\lambda}$ are now obtained by solving
+
+$$ 
+-m^k \omega_{\vec{q}\lambda}^2 \vec{\epsilon}_{\vec{q}\lambda}^k 
+= -\sum_{k'} \mathbf{D}_{\vec{q}}^{kk'}
+\vec{\epsilon}_{\vec{q}\lambda}^{k'}.
+$$
+
+This is a standard eigenvalue problem for each momentum $\vec{q}$ if we
+combine the coordinates of all atoms in the unit cell into a single
+basis.
+
+After solving for the modes at different phonon momenta, the modes are
+not necessarily sorted equally for each momentum. We can obtain the
+correct sorting by iterating through the momenta and sorting the modes
+such that the overlap with the previous modes is maximized. This can be
+done with the help of `scipy.optimize.linear_sum_assignment` for
+example.
+
+The following script reads the required parts of the force constants
+matrix
+(`H00` := $\mathbf{\Phi}_{0, 0}^{kk'}$,
+`H10` := $\mathbf{\Phi}_{0,-1}^{kk'}$,
+`H01` := $\mathbf{\Phi}_{0, 1}^{kk'}$,
+`H` := $\mathbf{D}_{\vec{q}}^{kk'}$)
+and computes the corresponding modes, making sure that the sorting is
+always the same. It also ensures that the longitudinal acoustic (LA)
+mode comes first, followed by the two transverse acoustic (TA) modes.
+
+```python
+import numpy as np
+import scipy
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.use("Agg")  # Avoiding a dependency on qt
+
+
+load_path = "/path/to/data/"
+save_path = load_path + "output/"
+
+
+def get_dispersion(qx_a, *, H00, H10, H01):
+    """
+    Returns:
+        omega[mode]
+        epsilon[atom/dimension, mode]
+    """
+
+    H = H10 * np.exp(-1j * qx_a) + H00 + H01 * np.exp(1j * qx_a)
+
+    result = np.linalg.eig(H)
+
+    omega2 = result.eigenvalues
+    if not np.allclose(np.imag(omega2) / np.real(omega2), 0, atol=1e-5):
+        print(
+            "Complex eigenvalues encountered at qx={qx_a} / a:",
+            omega2[
+                np.logical_not(
+                    np.isclose(np.imag(omega2) / np.real(omega2), 0, atol=1e-5)
+                )
+            ],
+        )
+    omega2 = np.real(result.eigenvalues)
+    sorting = np.argsort(omega2)
+    nonphysical = omega2 < 0
+    if np.any(nonphysical):
+        print(
+            f"Nonphysical values encountered for omega2 at qx={qx_a} / a:",
+            omega2[nonphysical],
+        )
+        omega2[nonphysical] = float("nan")
+    omega = np.sqrt(omega2)
+
+    epsilon = result.eigenvectors
+
+    return omega[sorting], epsilon[:, sorting]
+
+
+# H00/H01/H10 are in a combined basis of the 3 dimensions and the N atoms
+# in the unit cell. They are ordered as atom1 x, atom1 y, atom1 z,
+# atom2 x, ...
+H00 = np.loadtxt(load_path + "H00.dat", delimiter=",")
+H01 = np.loadtxt(load_path + "H01.dat", delimiter=",")
+H10 = np.loadtxt(load_path + "H10.dat", delimiter=",")
+# Choosing an even N_q to avoid qx=0, where degeneracies make it difficult to
+# assign the modes.
+N_q = 250
+hbar = scipy.constants.physical_constants["reduced Planck constant in eV s"][0]
+
+assert N_q % 2 == 0
+N_q_computed = N_q // 2
+N_modes = H00.shape[0]
+N_atoms = N_modes // 3
+# qxs_a: momenta multiplied by the lattice constant
+qxs_a = np.linspace(-np.pi, np.pi, N_q)
+
+positive_qxs_a = qxs_a[N_q_computed:]
+negative_qxs_a = qxs_a[:N_q_computed]
+assert np.all(positive_qxs_a > 0)
+assert np.all(negative_qxs_a < 0)
+assert np.allclose(negative_qxs_a, -np.flip(positive_qxs_a))
+
+# Obtain the full phonon dispersion for the positive momenta
+omega = np.zeros((N_modes, N_q))
+prev_epsilon = None
+for shifted_qx_index, qx_a in enumerate(positive_qxs_a):
+    qx_index = shifted_qx_index + N_q_computed
+    omega[:, qx_index], epsilon = get_dispersion(qx_a, H00=H00, H10=H10, H01=H01)
+
+    if shifted_qx_index == 0:
+        # At the first momentum we determine the acoustic branches.
+        # This requires the first momentum to be small and positive.
+        # reshaped_epsilon[atom, dimension, mode]
+        reshaped_epsilon = np.reshape(epsilon, (N_atoms, 3, N_modes))
+        # avg_epsilon[dimension, mode]: Average over all atoms
+        avg_epsilon = np.mean(reshaped_epsilon, axis=0)
+        epsilon_deviation = np.abs(
+            np.expand_dims(avg_epsilon, axis=0) - reshaped_epsilon
+        )
+        max_epsilon_deviation = np.max(epsilon_deviation, axis=(0, 1))
+        acoustic_mode_indices = np.argmax(avg_epsilon, axis=1)
+        print("Acoustic modes along x/y/z:", acoustic_mode_indices)
+        assert len(np.unique(acoustic_mode_indices)) == 3, "Missing an acoustic mode"
+
+        # Move acoustic mode to the beginning in the correct order (x, y, z, optical)
+        order = list(acoustic_mode_indices) + [
+            mode_index
+            for mode_index in range(N_modes)
+            if mode_index not in acoustic_mode_indices
+        ]
+        assert len(order) == N_modes
+        omega[:, qx_index] = omega[order, qx_index]
+        epsilon = epsilon[:, order]
+        avg_epsilon = avg_epsilon[:, order]
+        max_epsilon_deviation = max_epsilon_deviation[order]
+
+        fig, ax = plt.subplots()
+        ax.plot(np.real(avg_epsilon.T), "o", label=["x", "y", "z"])
+        ax.set_prop_cycle(None)
+        ax.plot(np.imag(avg_epsilon.T), "+", label=None)
+        ax.plot(hbar * omega[:, qx_index], color="black", label="energy [eV]")
+        ax.plot(max_epsilon_deviation, "x", color="black", label="max deviation")
+        ax.legend()
+        ax.set_xlabel("Mode index")
+        ax.set_ylabel("epsilon average")
+        fig.savefig(save_path + "polarizations.svg")
+
+    else:
+        assert prev_epsilon is not None  # Type narrowing
+        # Sort the modes the same as in the previous momentum by finding the
+        # eigenvectors that match the best
+        # epsilon_overlaps[mode, mode]: overlap between the two modes
+        epsilon_overlaps = np.abs(
+            np.matmul(np.conj(np.transpose(prev_epsilon)), epsilon)
+        )
+        # linear_sum_assignement: Unique indices which maximize the total overlap
+        row_ind, col_ind = scipy.optimize.linear_sum_assignment(
+            epsilon_overlaps, maximize=True
+        )
+        matching_modes = col_ind
+        omega[:, qx_index] = omega[matching_modes, qx_index]
+        epsilon = epsilon[:, matching_modes]
+
+    prev_epsilon = epsilon
+
+# Infer omega at negative momenta from symmetry
+omega[:, :N_q_computed] = np.flip(omega[:, N_q_computed:], axis=1)
+
+fig, ax = plt.subplots()
+ax.plot(qxs_a / np.pi, hbar * omega.T)
+ax.set_xlabel("qx [pi/a]")
+ax.set_ylabel("E [eV]")
+fig.savefig(save_path + "dispersion.svg")
+
+with open(save_path + "phonon_dispersion.npy", "wb") as f:
+    np.save(f, omega)
+```

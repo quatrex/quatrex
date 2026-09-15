@@ -1331,14 +1331,6 @@ class QTBM(TransportSolver):
                         else bond_currents_matrix
                     ),
                 )
-                sps.save_npz(
-                    f"{output_dir}/P.npz",
-                    (
-                        self.device.P.get()
-                        if hasattr(self.device.P, "get")
-                        else self.device.P
-                    ),
-                )
 
     def _compute_excess_charge_densities(self):
         """Computes the charge density from the local density of states.

@@ -140,6 +140,16 @@ class QTBM(TransportSolver):
                     dtype=xp.float64,
                 )
 
+        for contact in self.device.contacts:
+            self.observables.electron_ldos[contact] = xp.zeros(
+                (
+                    self.device.num_kpoints,
+                    self.num_orbitals,
+                    self.local_energies.shape[0],
+                ),
+                dtype=xp.float64,
+            )
+
         if self.config.qtbm.low_rank_obc:
             self.system_matrix_view = "upper"
             # Check if we can use real arithmetic for the system matrix
@@ -177,33 +187,11 @@ class QTBM(TransportSolver):
 
         self._allocate_system_matrix()
 
-        # Look for all the combinations of contacts
-        for contact_in in self.device.contacts:
-            for contact_out in self.device.contacts:
-                if contact_in == contact_out:
-                    continue
-
-                # Initialize the observables
-                self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                    (self.device.num_kpoints, self.local_energies.shape[0]),
-                    dtype=xp.float64,
-                )
-
-        for contact in self.device.contacts:
-            self.observables.electron_ldos[contact] = xp.zeros(
-                (
-                    self.device.num_kpoints,
-                    self.num_orbitals,
-                    self.local_energies.shape[0],
-                ),
+        if self.config.qtbm.full_current:
+            self.observables.bond_currents = xp.zeros(
+                (self.system_matrix.nnz,),
                 dtype=xp.float64,
             )
-
-            if self.config.qtbm.full_current:
-                self.observables.bond_currents = xp.zeros(
-                    (self.system_matrix.nnz,),
-                    dtype=xp.float64,
-                )
 
         free_mempool()
 
@@ -1277,32 +1265,6 @@ class QTBM(TransportSolver):
                         else self.observables.excess_hole_density
                     ),
                 )
-
-            if self.observables.excess_electron_density is not None:
-                np.save(
-                    f"{output_dir}/excess_electron_density.npy",
-                    (
-                        xp.add.reduceat(
-                            self.observables.excess_electron_density,
-                            self.device.orbital_offsets[:-1],
-                        )
-                        if self.config.qtbm.atom_resolved_outputs
-                        else self.observables.excess_electron_density
-                    ),
-                )
-            if self.observables.excess_hole_density is not None:
-                np.save(
-                    f"{output_dir}/excess_hole_density.npy",
-                    (
-                        xp.add.reduceat(
-                            self.observables.excess_hole_density,
-                            self.device.orbital_offsets[:-1],
-                        )
-                        if self.config.qtbm.atom_resolved_outputs
-                        else self.observables.excess_hole_density
-                    ),
-                )
-
             if self.config.qtbm.full_current:
                 bond_currents_matrix = self.system_matrix.tocoo()
                 bond_currents_matrix.data[:] = self.observables.bond_currents
@@ -1371,6 +1333,28 @@ class QTBM(TransportSolver):
             excess_hole_density,
         )
 
+    def set_potential(self, potential: NDArray):
+        """Sets the potential for the QTBM calculation.
+
+        This method can be used to update the potential for
+        self-consistent calculations.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The new potential values to be set in the system matrix.
+
+        """
+        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
+            # Upscale the potential to the number of orbitals
+            orbitals_per_atom = [
+                self.config.device.num_orbitals_per_atom.get(species, 1)
+                for species in self.device.atomic_species
+            ]
+            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
+
+        self.device.potential = potential
+
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.
 
@@ -1394,78 +1378,6 @@ class QTBM(TransportSolver):
         )
 
         return charge_density
-
-    def _compute_excess_charge_densities(self):
-        """Computes the charge density from the local density of states.
-
-        Returns
-        -------
-        excess_electron_density : NDArray
-            The excess electron density computed from the local density
-            of states.
-        excess_hole_density : NDArray
-            The excess hole density computed from the local density of
-            states.
-        """
-
-        # Compute the spectral electron and hole densities.
-        electron_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
-        hole_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
-        for contact, ldos in self.observables.electron_ldos.items():
-            mu = contact.fermi_level - contact.voltage
-            occupancy = fermi_dirac(
-                self.electron_energies - mu,
-                contact.temperature,
-            )
-
-            electron_density += occupancy * ldos.sum(axis=0) * 2  # Spin
-            hole_density += (1 - occupancy) * ldos.sum(axis=0) * 2  # Spin
-
-        # Find the reference contact mid-gap energy to separate
-        # electrons and holes.
-        for contact in self.device.contacts:
-            if contact.voltage == 0:
-                mid_gap_energy = contact.mid_gap_energy
-                break
-        else:  # Did not break, no reference contact found
-            raise ValueError(
-                "No reference contact with zero voltage found to determine mid-gap energy."
-            )
-
-        mid_gap_energy = self.device.potential + mid_gap_energy
-
-        mask = self.electron_energies > mid_gap_energy[:, None]
-        electron_density[~mask] = 0
-        hole_density[mask] = 0
-
-        excess_electron_density = xp.trapezoid(
-            electron_density, self.electron_energies, axis=1
-        )
-        excess_hole_density = xp.trapezoid(hole_density, self.electron_energies, axis=1)
-
-        return excess_electron_density, excess_hole_density
-
-    def set_potential(self, potential: NDArray):
-        """Sets the potential for the QTBM calculation.
-
-        This method can be used to update the potential for
-        self-consistent calculations.
-
-        Parameters
-        ----------
-        potential : NDArray
-            The new potential values to be set in the system matrix.
-
-        """
-        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-            # Upscale the potential to the number of orbitals
-            orbitals_per_atom = [
-                self.config.device.num_orbitals_per_atom.get(species, 1)
-                for species in self.device.atomic_species
-            ]
-            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-
-        self.device.potential = potential
 
     @profiler.profile(label="QTBM", level="default", comm=comm)
     def run(self) -> None:
@@ -1577,11 +1489,6 @@ class QTBM(TransportSolver):
         if self.config.qtbm.full_current:
             # Reduce the bond currents across all processes to get the total bond currents
             # all_reduce_v is not present, so we need a temporary array
-            temp = xp.empty_like(self.observables.bond_currents)
-            comm.stack.all_reduce(self.observables.bond_currents, temp)
-            self.observables.bond_currents = temp
-
-        if self.config.qtbm.full_current:
             temp = xp.empty_like(self.observables.bond_currents)
             comm.stack.all_reduce(self.observables.bond_currents, temp)
             self.observables.bond_currents = temp

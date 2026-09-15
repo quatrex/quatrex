@@ -8,7 +8,7 @@ max_batch_size = 1
 full_current = true
 
 [device]
-transport_direction = 'x'
+transport_direction = 'a'
 num_orbitals_per_atom = {"C"=13}
 kpoint_grid = [1,2,1]
 kpoint_shift = [0.0,0.1,0]
@@ -17,15 +17,17 @@ kpoint_shift = [0.0,0.1,0]
     name = "left"
     origin = [-0.001, -0.001 ,-0.001]
     lattice_vectors = [[2.461, 0, 0], [0,4.263 , 0], [0, 0, 10]]
-    direction = "a"
+    transport_direction = "a"
      fermi_level = -4
+     mid_gap_energy = -20
 
     [[device.contacts]]
     name = "right"
     origin = [48,  -0.001 ,-0.001]
     lattice_vectors = [[-2.461, 0, 0], [0,4.263 , 0], [0, 0, 10]]
-    direction = "a"
+    transport_direction = "a"
     fermi_level = -10
+    mid_gap_energy = -20
 
 
 [electron]

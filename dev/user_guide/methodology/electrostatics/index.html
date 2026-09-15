@@ -1,0 +1,7313 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Quantum transport simulations at the exascale and beyond.">
+      
+      
+      
+        <link rel="canonical" href="https://quatrex.github.io/quatrex/dev/user_guide/methodology/electrostatics/">
+      
+      
+        <link rel="prev" href="../negf/">
+      
+      
+        <link rel="next" href="../../../contributing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/logo/favicon.svg">
+      <meta name="generator" content="zensical-0.0.53">
+    
+    
+      
+        <title>Electrostatics - quatrex</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.20815dad.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CFira+Code:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"Fira Code"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/custom.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#electrostatics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="quatrex" class="md-header__button md-logo" aria-label="quatrex" data-md-component="logo">
+      <img id="logo_dark" src="../../../assets/logo/logo_dark.svg" alt="logo" />
+<img id="logo_light" src="../../../assets/logo/logo_light.svg" alt="logo" />
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            quatrex
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Electrostatics
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun-moon" viewBox="0 0 24 24"><path d="M12 2v2M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715M16 12a4 4 0 0 0-4-4M19 5l-1.256 1.256M20 12h2"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/quatrex/quatrex" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    quatrex/quatrex
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting_started/what_is_quatrex/" class="md-tabs__link">
+          
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
+          
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../contributing/" class="md-tabs__link">
+        
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api/" class="md-tabs__link">
+          
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="quatrex" class="md-nav__button md-logo" aria-label="quatrex" data-md-component="logo">
+      <img id="logo_dark" src="../../../assets/logo/logo_dark.svg" alt="logo" />
+<img id="logo_light" src="../../../assets/logo/logo_light.svg" alt="logo" />
+    </a>
+    quatrex
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/quatrex/quatrex" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    quatrex/quatrex
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Getting Started
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting_started/what_is_quatrex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  What is quatrex?
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting_started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting_started/first_simulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Setting up and running a first simulation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  User Guide
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  User Guide
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running Transport Simulations
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Running Transport Simulations
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../input_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Electronic Structure Data
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command Line Interface
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../parameters/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Simulation Parameters
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_4" id="__nav_3_1_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Simulation Parameters
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/quatrex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  quatrex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/device/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Device
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/contact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contact
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/scsp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SCSP
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/electrostatics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Electrostatics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/scba/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SCBA
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/qtbm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  QTBM
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/output/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Output
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1_4_11" id="__nav_3_1_4_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Subsystems
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Subsystems
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/electron/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Electron
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/coulomb_screening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Coulomb Screening
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/phonon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Phonon
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/photon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Photon
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1_4_12" id="__nav_3_1_4_12_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Boundary Conditions
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Boundary Conditions
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/obc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OBC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/lyapunov/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lyapunov
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/memoizer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Memoizer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1_4_13" id="__nav_3_1_4_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Device Geometry
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Device Geometry
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/geometry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Geometry
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/region/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Region
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_13_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1_4_13_3" id="__nav_3_1_4_13_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Shapes
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="5" aria-labelledby="__nav_3_1_4_13_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_13_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Shapes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/box/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Box
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/cylinder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cylinder
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/rectangle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Rectangle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/tube/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tube
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/shape_union/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Union
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/shape_difference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Difference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/volume_properties/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Volume Properties
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/surface_properties/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Surface Properties
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1_4_14" id="__nav_3_1_4_14_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Performance
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Performance
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/compute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Compute
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/convolve/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Convolve
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/nevp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  NEVP
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/lyapunov_compute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lyapunov Compute
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/band_edge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Band Edge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameters/comm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Comm
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../simulation_output/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Simulation Output
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../examples/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Examples
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/cnt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Carbon Nanotube
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Methodology
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Methodology
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quantum_transport/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Atomistic Quantum Transport
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_3" id="__nav_3_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Boundary Conditions
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Boundary Conditions
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../obc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Open Boundary Conditions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nevp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Polynomial Eigenvalue Problem
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lyapunov/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lyapunov Problem
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../qtbm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Quantum Transmitting Boundary Method
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../negf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Non-Equilibrium Green's Functions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Electrostatics
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Electrostatics
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#excess-charge-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Excess Charge Approach
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-linear-poisson-equation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Non-linear Poisson Equation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Non-linear Poisson Equation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#density-response-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Density Response Models
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contact-chemical-potentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Contact Chemical Potentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-real-space-and-localized-orbital-basis-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connecting Real-Space and Localized Orbital Basis Sets
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connecting Real-Space and Localized Orbital Basis Sets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mulliken-charge-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mulliken Charge Projection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#finite-element-discretization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Finite Element Discretization
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dirichlet-boundary-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dirichlet Boundary Conditions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multifreedom-constraints-for-periodic-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multifreedom Constraints for Periodic Boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contributing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  API Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  qttools
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  qttools
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/boundary_conditions/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  boundary_conditions
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_2" id="__nav_5_2_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  boundary_conditions
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_2_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/boundary_conditions/lyapunov/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  lyapunov
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_2_2" id="__nav_5_2_2_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_5_2_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  lyapunov
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/lyapunov/lyapunov/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  lyapunov
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/lyapunov/doubling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  doubling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/lyapunov/spectral/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  spectral
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/boundary_conditions/obc/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  obc
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_2_3" id="__nav_5_2_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_5_2_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  obc
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/obc/obc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  obc
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/obc/sancho_rubio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sancho_rubio
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/obc/spectral/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  spectral
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/boundary_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  boundary_system
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/boundary_conditions/system_reduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  system_reduction
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/comm/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  comm
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_3" id="__nav_5_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  comm
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/comm/comm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  comm
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/datastructures/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  datastructures
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_4" id="__nav_5_2_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  datastructures
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/datastructures/dsdbsparse/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  dsdbsparse
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/datastructures/dsdbcoo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  dsdbcoo
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/datastructures/dsdbcsr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  dsdbcsr
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/datastructures/routines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  routines
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/fft/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  fft
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_5" id="__nav_5_2_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  fft
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/fft/ffts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ffts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/fft/convolve/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  convolve
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/greens_function_solver/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  greens_function_solver
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_6" id="__nav_5_2_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  greens_function_solver
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/greens_function_solver/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/greens_function_solver/rgf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  rgf
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/greens_function_solver/rgf_dist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  rgf_dist
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/greens_function_solver/_serinv/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  _serinv
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/greens_function_solver/inv/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  inv
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/nevp/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  nevp
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_7" id="__nav_5_2_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  nevp
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/nevp/nevp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  nevp
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/nevp/beyn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  beyn
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/nevp/full/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  full
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/profiling/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  profiling
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_8" id="__nav_5_2_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  profiling
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/profiling/profiler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  profiler
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/toeplitz/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  toeplitz
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_9" id="__nav_5_2_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  toeplitz
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/toeplitz/toeplitz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  toeplitz
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_10" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/utils/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  utils
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_10" id="__nav_5_2_10_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  utils
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/solvers_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solvers_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/gpu_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  gpu_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/hdf5_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  hdf5_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/mpi_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  mpi_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/sparse_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sparse_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/inplace_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  inplace_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/utils/stack_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  stack_utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/qttools/wave_function_solver/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  wave_function_solver
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_11" id="__nav_5_2_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  wave_function_solver
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/wave_function_solver/superlu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  superlu
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/wave_function_solver/cudss/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  cudss
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/wave_function_solver/mumps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  mumps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/qttools/wave_function_solver/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  quatrex
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  quatrex
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/bandstructure/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  bandstructure
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_2" id="__nav_5_3_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  bandstructure
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/bandstructure/contact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  contact
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/bandstructure/band_edges/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  band_edges
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/core/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  core
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_3" id="__nav_5_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  core
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/scba/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  scba
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/qtbm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  qtbm
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/observables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  observables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  utils
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/constants/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  constants
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/sse/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sse
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/statistics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  statistics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/core/subsystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  subsystem
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/coulomb_screening/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  coulomb_screening
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_4" id="__nav_5_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  coulomb_screening
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/coulomb_screening/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/coulomb_screening/polarization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  polarization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/device/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  device
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_5" id="__nav_5_3_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  device
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/device/device.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  none
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/device/inputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  inputs
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/device/contact.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  none
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/electron/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  electron
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_6" id="__nav_5_3_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  electron
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/electron/sse_photon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sse_photon
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/electron/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/electron/sse_coulomb_screening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sse_coulomb_screening
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/electron/sse_fock/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sse_fock
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/electron/sse_phonon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sse_phonon
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/grid/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  grid
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_7" id="__nav_5_3_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  grid
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/grid/energies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  energies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/grid/kpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  kpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/phonon/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  phonon
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_8" id="__nav_5_3_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  phonon
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/phonon/polarization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  polarization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/phonon/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/photon/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  photon
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_9" id="__nav_5_3_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  photon
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/photon/solver/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  solver
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/photon/polarization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  polarization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_10" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api/quatrex/post_processing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  post_processing
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_10" id="__nav_5_3_10_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  post_processing
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quatrex/post_processing/plot_ldos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  plot_ldos
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#excess-charge-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Excess Charge Approach
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-linear-poisson-equation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Non-linear Poisson Equation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Non-linear Poisson Equation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#density-response-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Density Response Models
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contact-chemical-potentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Contact Chemical Potentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-real-space-and-localized-orbital-basis-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connecting Real-Space and Localized Orbital Basis Sets
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connecting Real-Space and Localized Orbital Basis Sets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mulliken-charge-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mulliken Charge Projection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#finite-element-discretization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Finite Element Discretization
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dirichlet-boundary-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dirichlet Boundary Conditions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multifreedom-constraints-for-periodic-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multifreedom Constraints for Periodic Boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="electrostatics">Electrostatics<a class="headerlink" href="#electrostatics" title="Permanent link">#</a></h1>
+<p>Solving the Poisson equation self-consistently with the open-boundary
+Schrödinger equation is a key part of <code>quatrex</code>'s quantum transport
+formalism. By inducing a non-equilibrium charge density in the device,
+the electrostatic potential will change, which in turn changes the
+charge density. This feedback loop is solved self-consistently until
+convergence.</p>
+<h2 id="excess-charge-approach">Excess Charge Approach<a class="headerlink" href="#excess-charge-approach" title="Permanent link">#</a></h2>
+<div class="admonition danger">
+<p class="admonition-title">No Electrostatics Support for Metallic Systems</p>
+<p>The excess charge approach to electrostatics and the automatic
+computation of <a href="#contact-chemical-potentials">contact Fermi levels</a>
+are <strong><em>only applicable in semiconductors</em></strong>. In principle a full
+charge model could be used (at least for simulations without
+scattering) but this is not implemented in <code>quatrex</code>.</p>
+</div>
+<p>We employ an excess charge approach in the electrostatic model
+implemented in <code>quatrex</code>. The <strong><em>excess charge density</em></strong>
+<span class="arithmatex">\(\rho(\mathbf{r})=n(\mathbf{r}) - p(\mathbf{r})\)</span> is computed from the
+occupied/depleted electronic states around a charge neutrality level
+<span class="arithmatex">\(E_{CNL}(\mathbf{r})\)</span>. For NEGF we can write</p>
+<div class="arithmatex">\[
+n(\mathbf{r}) \equiv - 2_\mathrm{spin} \int_{E_{CNL}(\mathbf{r})}^\infty
+\frac{dE}{2\pi} \operatorname{Im} \left\{ G^{&lt;}(\mathbf{r}, \mathbf{r},
+E) \right\}
+\]</div>
+<div class="arithmatex">\[
+p(\mathbf{r}) \equiv 2_\mathrm{spin}
+\int_{-\infty}^{E_{CNL}(\mathbf{r})}  \frac{dE}{2\pi}
+\operatorname{Im}\left\{ G^{&gt;}(\mathbf{r}, \mathbf{r}, E) \right\}
+\]</div>
+<!-- NOTE: Included as snippet for dynamic coloring -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<figure id="excess-charge">
+<p><svg version="1.2" viewBox="18809 1859 12130 7614" preserveAspectRatio="xMidYMid" fill-rule="evenodd" stroke-width="28.222" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" xmlns:ooo="http://xml.openoffice.org/svg/export" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:presentation="http://sun.com/xmlns/staroffice/presentation" xmlns:smil="http://www.w3.org/2001/SMIL20/" xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xml:space="preserve">
+ <defs>
+  <font id="EmbeddedFont_1" horiz-adv-x="2048">
+   <font-face font-family="Arial embedded" units-per-em="2048" font-weight="normal" font-style="italic" ascent="1852" descent="423"/>
+   <missing-glyph horiz-adv-x="2048" d="M 0,0 L 2047,0 2047,2047 0,2047 0,0 Z "/>
+   <glyph unicode="p" horiz-adv-x="1120" d="M 554,-20 C 472,-20 405,-3 354,32 302,67 265,115 244,178 L 239,178 C 239,171 236,149 231,113 225,77 191,-102 128,-425 L -51,-425 198,861 C 213,935 225,1009 233,1082 L 400,1082 C 400,1064 398,1037 394,1000 389,963 386,936 383,921 L 387,921 C 436,984 487,1030 541,1059 595,1088 662,1102 741,1102 846,1102 927,1071 986,1008 1044,945 1073,858 1073,748 1073,613 1053,482 1012,355 971,228 913,133 839,72 764,11 669,-20 554,-20 Z M 689,963 C 623,963 567,950 520,923 473,896 433,855 400,801 367,746 342,678 323,597 304,515 295,442 295,377 295,294 316,229 359,183 401,136 460,113 535,113 618,113 683,138 731,189 779,239 817,319 844,429 871,538 885,634 885,716 885,798 869,860 838,901 807,942 757,963 689,963 Z "/>
+   <glyph unicode="n" horiz-adv-x="1009" d="M 717,0 L 843,645 C 855,704 861,754 861,795 861,906 801,962 682,962 598,962 524,930 460,866 396,802 353,715 332,606 L 214,0 34,0 200,851 C 213,914 226,991 239,1082 L 409,1082 C 409,1075 406,1049 399,1005 392,960 386,924 381,897 L 384,897 C 439,974 495,1027 551,1057 606,1086 672,1101 749,1101 848,1101 922,1077 972,1028 1021,979 1046,909 1046,817 1046,774 1039,720 1025,653 L 898,0 717,0 Z "/>
+   <glyph unicode="E" horiz-adv-x="1317" d="M 63,0 L 336,1409 1385,1409 1355,1253 497,1253 409,801 1207,801 1177,647 379,647 284,156 1183,156 1153,0 63,0 Z "/>
+   <glyph unicode=")" horiz-adv-x="757" d="M -199,-424 C 186,-85 379,323 379,798 379,1057 310,1286 172,1484 L 346,1484 C 489,1287 560,1053 560,782 560,534 510,308 410,103 310,-102 165,-277 -25,-424 L -199,-424 Z "/>
+   <glyph unicode="(" horiz-adv-x="757" d="M 855,1484 C 470,1145 277,737 277,262 277,3 346,-226 484,-424 L 310,-424 C 167,-227 96,7 96,278 96,526 146,752 246,957 346,1162 491,1337 681,1484 L 855,1484 Z "/>
+  </font>
+ </defs>
+ <defs>
+  <font id="EmbeddedFont_2" horiz-adv-x="2048">
+   <font-face font-family="Arial embedded" units-per-em="2048" font-weight="bold" font-style="italic" ascent="1852" descent="423"/>
+   <missing-glyph horiz-adv-x="2048" d="M 0,0 L 2047,0 2047,2047 0,2047 0,0 Z "/>
+   <glyph unicode="r" horiz-adv-x="853" d="M 844,853 C 798,863 760,868 730,868 648,868 581,839 530,781 478,723 440,634 417,514 L 316,0 35,0 196,830 C 212,910 226,994 238,1082 L 506,1082 484,910 476,861 480,861 C 529,950 577,1013 624,1049 671,1084 726,1102 787,1102 818,1102 853,1097 890,1088 L 844,853 Z "/>
+  </font>
+ </defs>
+ <defs class="EmbeddedBulletChars">
+  <g id="bullet-char-template-57356" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 580,1141 L 1163,571 580,0 -4,571 580,1141 Z"/>
+  </g>
+  <g id="bullet-char-template-57354" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 8,1128 L 1137,1128 1137,0 8,0 8,1128 Z"/>
+  </g>
+  <g id="bullet-char-template-10146" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 174,0 L 602,739 174,1481 1456,739 174,0 Z M 1358,739 L 309,1346 659,739 1358,739 Z"/>
+  </g>
+  <g id="bullet-char-template-10132" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 2015,739 L 1276,0 717,0 1260,543 174,543 174,936 1260,936 717,1481 1274,1481 2015,739 Z"/>
+  </g>
+  <g id="bullet-char-template-10007" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 0,-2 C -7,14 -16,27 -25,37 L 356,567 C 262,823 215,952 215,954 215,979 228,992 255,992 264,992 276,990 289,987 310,991 331,999 354,1012 L 381,999 492,748 772,1049 836,1024 860,1049 C 881,1039 901,1025 922,1006 886,937 835,863 770,784 769,783 710,716 594,584 L 774,223 C 774,196 753,168 711,139 L 727,119 C 717,90 699,76 672,76 641,76 570,178 457,381 L 164,-76 C 142,-110 111,-127 72,-127 30,-127 9,-110 8,-76 1,-67 -2,-52 -2,-32 -2,-23 -1,-13 0,-2 Z"/>
+  </g>
+  <g id="bullet-char-template-10004" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 285,-33 C 182,-33 111,30 74,156 52,228 41,333 41,471 41,549 55,616 82,672 116,743 169,778 240,778 293,778 328,747 346,684 L 369,508 C 377,444 397,411 428,410 L 1163,1116 C 1174,1127 1196,1133 1229,1133 1271,1133 1292,1118 1292,1087 L 1292,965 C 1292,929 1282,901 1262,881 L 442,47 C 390,-6 338,-33 285,-33 Z"/>
+  </g>
+  <g id="bullet-char-template-9679" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 813,0 C 632,0 489,54 383,161 276,268 223,411 223,592 223,773 276,916 383,1023 489,1130 632,1184 813,1184 992,1184 1136,1130 1245,1023 1353,916 1407,772 1407,592 1407,412 1353,268 1245,161 1136,54 992,0 813,0 Z"/>
+  </g>
+  <g id="bullet-char-template-8226" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 346,457 C 273,457 209,483 155,535 101,586 74,649 74,723 74,796 101,859 155,911 209,963 273,989 346,989 419,989 480,963 531,910 582,859 608,796 608,723 608,648 583,586 532,535 482,483 420,457 346,457 Z"/>
+  </g>
+  <g id="bullet-char-template-8211" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M -4,459 L 1135,459 1135,606 -4,606 -4,459 Z"/>
+  </g>
+  <g id="bullet-char-template-61548" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 173,740 C 173,903 231,1043 346,1159 462,1274 601,1332 765,1332 928,1332 1067,1274 1183,1159 1299,1043 1357,903 1357,740 1357,577 1299,437 1183,322 1067,206 928,148 765,148 601,148 462,206 346,322 231,437 173,577 173,740 Z"/>
+  </g>
+ </defs>
+ <g ooo:name="Slide20" class="Page">
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id3">
+    <rect class="BoundingBox" stroke="none" fill="none" x="20933" y="5848" width="9135" height="1651"/>
+    <g style="opacity: 0.749019607843137">
+     <path fill="none" stroke="rgb(0,112,192)" stroke-width="362" stroke-linejoin="miter" d="M 20961,6109 C 21429,6036 21898,5964 22930,6132 23962,6302 25965,6929 27154,7126 28343,7323 29204,7319 30066,7315 "/>
+    </g>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id4">
+    <rect class="BoundingBox" stroke="none" fill="none" x="20886" y="3016" width="9135" height="1651"/>
+    <g>
+     <defs>
+      <linearGradient id="gradient1" x1="24050" y1="1387" x2="26883" y2="6293" gradientUnits="userSpaceOnUse">
+       <stop offset="0" style="stop-color:rgb(221,232,203)"/>
+       <stop offset="1" style="stop-color:rgb(255,215,215)"/>
+      </linearGradient>
+     </defs>
+     <path style="fill:url(#gradient1)" d="M 20914,3277 L 21274,3226 21471,3208 21687,3198 21930,3200 22206,3215 22521,3248 22883,3300 23312,3383 23811,3499 24936,3787 26091,4079 26626,4202 27107,4294 27942,4407 28686,4464 29368,4483 30019,4483 20914,3277 Z "/>
+    </g>
+    <g style="opacity: 0.749019607843137">
+     <path fill="none" stroke="rgb(192,0,0)" stroke-width="362" stroke-linejoin="miter" d="M 20914,3277 C 21382,3204 21851,3132 22883,3300 23915,3470 25918,4097 27107,4294 28296,4491 29157,4487 30019,4483 "/>
+    </g>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id5">
+    <rect class="BoundingBox" stroke="none" fill="none" x="20964" y="3316" width="9114" height="1377"/>
+    <path fill="none" stroke="currentcolor" stroke-width="88" stroke-linejoin="miter" d="M 20971,3440 C 21439,3367 21908,3295 22940,3463 23972,3633 25975,4260 27164,4457 28353,4654 29214,4650 30076,4646 "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id6">
+    <rect class="BoundingBox" stroke="none" fill="none" x="20964" y="5806" width="9114" height="1377"/>
+    <path fill="none" stroke="currentcolor" stroke-width="88" stroke-linejoin="miter" d="M 20971,5930 C 21439,5857 21908,5785 22940,5953 23972,6123 25975,6750 27164,6947 28353,7144 29214,7140 30076,7136 "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id7">
+    <rect class="BoundingBox" stroke="none" fill="none" x="20966" y="4620" width="9112" height="1342"/>
+    <path fill="none" stroke="rgb(0,176,80)" stroke-width="53" stroke-linejoin="miter" stroke-dasharray="423,423" d="M 20971,4727 C 21439,4654 21908,4582 22940,4750 23972,4920 25975,5547 27164,5744 28353,5941 29214,5937 30076,5933 "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id8">
+    <rect class="BoundingBox" stroke="none" fill="none" x="19749" y="1859" width="201" height="6447"/>
+    <path fill="none" stroke="currentcolor" stroke-width="53" stroke-linejoin="miter" d="M 19849,8305 L 19849,2146 "/>
+    <path fill="currentcolor" stroke="none" d="M 19849,1859 L 19749,2159 19949,2159 19849,1859 Z "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id9">
+    <rect class="BoundingBox" stroke="none" fill="none" x="19872" y="8205" width="11067" height="201"/>
+    <path fill="none" stroke="currentcolor" stroke-width="53" stroke-linejoin="miter" d="M 19872,8305 L 30651,8305 "/>
+    <path fill="currentcolor" stroke="none" d="M 30938,8305 L 30638,8205 30638,8405 30938,8305 Z "/>
+   </g>
+  </g>
+  <g ooo:text-adjust="left" class="TextShape">
+   <g id="id10">
+    <rect class="BoundingBox" stroke="none" fill="none" x="18809" y="4569" width="1027" height="846"/>
+    <text class="SVGTextShape" transform="rotate(-90 19571 5160)"><tspan class="TextParagraph"><tspan class="TextPosition" x="19571" y="5160"><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="400" lengthAdjust="spacingAndGlyphs" textLength="424" fill="currentcolor" stroke="none" style="white-space: pre">E</tspan></tspan></tspan></text>
+   </g>
+  </g>
+  <g ooo:text-adjust="left" class="TextShape">
+   <g id="id11">
+    <rect class="BoundingBox" stroke="none" fill="none" x="24983" y="8446" width="846" height="1027"/>
+    <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="25237" y="9208"><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="700" lengthAdjust="spacingAndGlyphs" textLength="247" fill="currentcolor" stroke="none" style="white-space: pre">r</tspan></tspan></tspan></text>
+   </g>
+  </g>
+  <g ooo:text-adjust="left" class="TextShape">
+   <g id="id12">
+    <rect class="BoundingBox" stroke="none" fill="none" x="24191" y="2583" width="2485" height="1027"/>
+    <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="24445" y="3345"><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="400" lengthAdjust="spacingAndGlyphs" textLength="565" fill="currentcolor" stroke="none" style="white-space: pre">n(</tspan><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="700" lengthAdjust="spacingAndGlyphs" textLength="247" fill="currentcolor" stroke="none" style="white-space: pre">r</tspan><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="400" lengthAdjust="spacingAndGlyphs" textLength="211" fill="currentcolor" stroke="none" style="white-space: pre">)</tspan></tspan></tspan></text>
+   </g>
+  </g>
+  <g ooo:text-adjust="left" class="TextShape">
+   <g id="id13">
+    <rect class="BoundingBox" stroke="none" fill="none" x="23735" y="6623" width="2485" height="1027"/>
+    <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="23989" y="7385"><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="400" lengthAdjust="spacingAndGlyphs" textLength="565" fill="currentcolor" stroke="none" style="white-space: pre">p(</tspan><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="700" lengthAdjust="spacingAndGlyphs" textLength="247" fill="currentcolor" stroke="none" style="white-space: pre">r</tspan><tspan font-family="Arial, sans-serif" font-size="635px" font-style="italic" font-weight="400" lengthAdjust="spacingAndGlyphs" textLength="211" fill="currentcolor" stroke="none" style="white-space: pre">)</tspan></tspan></tspan></text>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id14">
+    <rect class="BoundingBox" stroke="none" fill="none" x="25727" y="2397" width="201" height="3018"/>
+    <path fill="none" stroke="rgb(0,176,80)" stroke-width="71" stroke-linejoin="miter" stroke-dasharray="71,71" d="M 25827,5414 L 25827,2684 "/>
+    <path fill="rgb(0,176,80)" stroke="none" d="M 25827,2397 L 25727,2697 25927,2697 25827,2397 Z "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id15">
+    <rect class="BoundingBox" stroke="none" fill="none" x="23635" y="4991" width="201" height="2469"/>
+    <path fill="none" stroke="rgb(0,176,80)" stroke-width="71" stroke-linejoin="miter" stroke-dasharray="71,71" d="M 23735,4991 L 23735,7172 "/>
+    <path fill="rgb(0,176,80)" stroke="none" d="M 23735,7459 L 23835,7159 23635,7159 23735,7459 Z "/>
+   </g>
+  </g>
+ </g>
+ <rect width="100%" height="100%" fill="aliceblue" />
+</svg></p>
+<figcaption>
+<p><span class="caption-prefix">Figure 1.</span> Illustration of excess electron and hole charge densities around the
+band gap of a device with a potential drop along it's transport
+direction <span class="arithmatex">\(\mathbf{r}\)</span>. The charge neutrality level
+<span class="arithmatex">\(E_{CNL}(\mathbf{r})\)</span> is shown in the middle of the band gap in green.</p>
+</figcaption>
+</figure>
+<p>For the wave function transport formalism we get a very similar formula,
+where instead of the lesser/greater Green's functions we have the
+contact density of states multiplied by the respective Fermi-Dirac
+occupancies.</p>
+<p>In either case, the electrostatic potential <span class="arithmatex">\(\phi(\mathbf{r})\)</span> is then
+obtained via the Poisson equation</p>
+<div class="arithmatex">\[
+\nabla \cdot \left (\varepsilon(\mathbf{r}) \nabla
+\phi(\mathbf{r})\right) = -\rho(\mathbf{r}),
+\]</div>
+<p>where <span class="arithmatex">\(\varepsilon(\mathbf{r})\)</span> is the dielectric permittivity. We
+iterate between computing transport and electrostatics until reaching
+convergence.</p>
+<div class="admonition tip">
+<p class="admonition-title">Mixing Schemes for Self-Consistent Schrödinger-Poisson Runs</p>
+<p>To accelerate the convergence of the Schrödinger-Poisson loop one
+can choose from (adaptive) under-relaxation and DIIS-based mixing
+schemes via the <a href="../../parameters/scsp/#mixer">mixing parameters</a></p>
+</div>
+<h2 id="non-linear-poisson-equation">Non-linear Poisson Equation<a class="headerlink" href="#non-linear-poisson-equation" title="Permanent link">#</a></h2>
+<p>Since the excess charge density is a non-linear functional of the
+electrostatic potential, <span class="arithmatex">\(\rho[\phi(\mathbf{r})]\)</span>, the Poisson
+problem we solve has a nonlinear (or more precisely a <em>semilinear</em>) form</p>
+<div class="arithmatex">\[
+\nabla \cdot \left (\varepsilon(\mathbf{r}) \nabla
+\phi(\mathbf{r})\right) = -\rho[\phi(\mathbf{r})].
+\]</div>
+<p>To tackle this nonlinearity, we employ a <strong>Root-Finding approach</strong> (i.e.
+Newton-Raphson, or also <em>predictor-corrector</em> scheme in this context).
+We look for the roots of the functional</p>
+<div class="arithmatex">\[
+F[\phi(\mathbf{r})] \equiv \nabla \cdot \left (\varepsilon(\mathbf{r}) \nabla
+\phi(\mathbf{r})\right) + \rho[\phi(\mathbf{r})]
+\]</div>
+<p>via the recursion relation</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\phi_{n+1}(\mathbf{r}) &amp;= \phi_{n}(\mathbf{r}) - \left( \frac{\delta
+F[\phi_{n}(\mathbf{r})]}{\delta \phi_{n}(\mathbf{r})} \right) ^{-1}
+F[\phi_{n}(\mathbf{r})] \\
+&amp;= \phi_{n}(\mathbf{r}) - \underbrace{ \left( \nabla \cdot
+\left(\varepsilon(\mathbf{r}) \nabla (\cdot) \right) + \frac{\delta
+\rho[\phi_{n}(\mathbf{r})]}{\delta \phi_{n}(\mathbf{r})}\right) ^{-1}
+F[\phi_{n}(\mathbf{r})] }_{ \Delta \phi_{n}(\mathbf{r}) }.
+\end{aligned}
+\]</div>
+<div class="admonition info">
+<p class="admonition-title">Electrostatics Solving Scheme</p>
+<p>The solution scheme for the electrostatics can be controlled through
+the <a href="../../parameters/electrostatics/#solving_scheme"><code>solving_scheme</code></a>
+parameter. However, the <code>"direct"</code> method (no inner Newton-Raphson)
+is typically unstable and is intended mainly for testing purposes.</p>
+</div>
+<p>At every step of this scheme we need to evaluate
+<span class="arithmatex">\(\rho[\phi_n(\mathbf{r})]\)</span> and <span class="arithmatex">\(\frac{\delta
+\rho[\phi_{n}(\mathbf{r})]}{\delta \phi_{n}(\mathbf{r})}\)</span>. Since
+evaluating this accurately using the coupled transport formalism would
+be <em>very</em> costly, we opt to model the charge density's response to
+potential variations by making a few approximations.</p>
+<h3 id="density-response-models">Density Response Models<a class="headerlink" href="#density-response-models" title="Permanent link">#</a></h3>
+<p>By approximating the electronic structure around our charge neutrality
+level by <em>single parabolic bands</em> (one each for electrons and for holes)
+we can write</p>
+<div class="arithmatex">\[
+n(\mathbf{r}) = N_{ND}(\mathbf{r}) \mathcal{F}_{k}(\eta_{n}(\mathbf{r})).
+\]</div>
+<p>Here <span class="arithmatex">\(N_{ND}(\mathbf{r})\)</span> is the <em>effective density of states</em> of an
+<span class="arithmatex">\(N\)</span>-dimensional system, <span class="arithmatex">\(\eta_{n}(\mathbf{r})\)</span> is a reduced
+electrochemical potential describing the distance between the band onset
+and the CNL, and <span class="arithmatex">\(\mathcal{F}_{k}(\eta)\)</span> is the <em>complete Fermi-Dirac
+integral</em> of order <span class="arithmatex">\(k = N / 2 - 1\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{F}_{k}(\eta) = \frac{1}{\Gamma(k+1)} \int_{0}^{\infty}
+\frac{x^{k}}{1 + \exp(x - \eta)} dx
+\]</div>
+<p>See also the very useful <em>"Notes on Fermi-Dirac
+Integrals"</em><sup id="fnref:fermi-integrals"><a class="footnote-ref" href="#fn:fermi-integrals">1</a></sup>.</p>
+<!-- NOTE: Included as snippet for dynamic coloring -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<figure id="density-model">
+<p><svg version="1.2" viewBox="795 9862 12818 6818" preserveAspectRatio="xMidYMid" fill-rule="evenodd" stroke-width="28.222" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" xmlns:ooo="http://xml.openoffice.org/svg/export" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:presentation="http://sun.com/xmlns/staroffice/presentation" xmlns:smil="http://www.w3.org/2001/SMIL20/" xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xml:space="preserve">
+ <defs>
+  <font id="EmbeddedFont_1" horiz-adv-x="2048">
+   <font-face font-family="Arial embedded" units-per-em="2048" font-weight="normal" font-style="italic" ascent="1852" descent="423"/>
+   <missing-glyph horiz-adv-x="2048" d="M 0,0 L 2047,0 2047,2047 0,2047 0,0 Z "/>
+   <glyph unicode="n" horiz-adv-x="1009" d="M 717,0 L 843,645 C 855,704 861,754 861,795 861,906 801,962 682,962 598,962 524,930 460,866 396,802 353,715 332,606 L 214,0 34,0 200,851 C 213,914 226,991 239,1082 L 409,1082 C 409,1075 406,1049 399,1005 392,960 386,924 381,897 L 384,897 C 439,974 495,1027 551,1057 606,1086 672,1101 749,1101 848,1101 922,1077 972,1028 1021,979 1046,909 1046,817 1046,774 1039,720 1025,653 L 898,0 717,0 Z "/>
+   <glyph unicode=")" horiz-adv-x="757" d="M -199,-424 C 186,-85 379,323 379,798 379,1057 310,1286 172,1484 L 346,1484 C 489,1287 560,1053 560,782 560,534 510,308 410,103 310,-102 165,-277 -25,-424 L -199,-424 Z "/>
+   <glyph unicode="(" horiz-adv-x="757" d="M 855,1484 C 470,1145 277,737 277,262 277,3 346,-226 484,-424 L 310,-424 C 167,-227 96,7 96,278 96,526 146,752 246,957 346,1162 491,1337 681,1484 L 855,1484 Z "/>
+  </font>
+ </defs>
+ <defs>
+  <font id="EmbeddedFont_2" horiz-adv-x="2048">
+   <font-face font-family="Arial embedded" units-per-em="2048" font-weight="bold" font-style="normal" ascent="1852" descent="423"/>
+   <missing-glyph horiz-adv-x="2048" d="M 0,0 L 2047,0 2047,2047 0,2047 0,0 Z "/>
+   <glyph unicode="r" horiz-adv-x="629" d="M 143,0 L 143,828 C 143,887 142,937 141,977 139,1016 137,1051 135,1082 L 403,1082 C 405,1070 408,1034 411,973 414,912 416,871 416,851 L 420,851 C 447,927 472,981 493,1012 514,1043 540,1066 569,1081 598,1096 635,1103 679,1103 715,1103 744,1098 766,1088 L 766,853 C 721,863 681,868 646,868 576,868 522,840 483,783 444,726 424,642 424,531 L 424,0 143,0 Z "/>
+   <glyph unicode="p" horiz-adv-x="1028" d="M 1167,546 C 1167,365 1131,226 1059,128 986,29 884,-20 752,-20 676,-20 610,-3 554,30 497,63 454,110 424,172 L 418,172 C 422,152 424,91 424,-10 L 424,-425 143,-425 143,833 C 143,935 140,1018 135,1082 L 408,1082 C 411,1070 414,1046 417,1011 419,976 420,941 420,906 L 424,906 C 487,1039 603,1105 770,1105 896,1105 994,1057 1063,960 1132,863 1167,725 1167,546 Z M 874,546 C 874,789 800,910 651,910 576,910 519,877 480,812 440,747 420,655 420,538 420,421 440,331 480,268 519,204 576,172 649,172 799,172 874,297 874,546 Z "/>
+   <glyph unicode="o" horiz-adv-x="1087" d="M 1171,542 C 1171,367 1122,229 1025,130 928,30 793,-20 621,-20 452,-20 320,30 224,130 128,230 80,367 80,542 80,716 128,853 224,953 320,1052 454,1102 627,1102 804,1102 939,1054 1032,958 1125,861 1171,723 1171,542 Z M 877,542 C 877,671 856,764 814,822 772,880 711,909 631,909 460,909 375,787 375,542 375,421 396,330 438,267 479,204 539,172 618,172 791,172 877,295 877,542 Z "/>
+   <glyph unicode="n" horiz-adv-x="986" d="M 844,0 L 844,607 C 844,797 780,892 651,892 583,892 528,863 487,805 445,746 424,671 424,580 L 424,0 143,0 143,840 C 143,898 142,946 141,983 139,1020 137,1053 135,1082 L 403,1082 C 405,1069 408,1036 411,981 414,926 416,888 416,867 L 420,867 C 458,950 506,1010 563,1047 620,1084 689,1103 768,1103 883,1103 971,1068 1032,997 1093,926 1124,823 1124,687 L 1124,0 844,0 Z "/>
+   <glyph unicode="l" horiz-adv-x="281" d="M 143,0 L 143,1484 424,1484 424,0 143,0 Z "/>
+   <glyph unicode="i" horiz-adv-x="281" d="M 143,1277 L 143,1484 424,1484 424,1277 143,1277 Z M 143,0 L 143,1082 424,1082 424,0 143,0 Z "/>
+   <glyph unicode="g" horiz-adv-x="1027" d="M 596,-434 C 464,-434 358,-409 278,-359 197,-308 148,-236 129,-143 L 410,-110 C 420,-153 442,-187 475,-212 508,-237 551,-249 604,-249 682,-249 739,-225 775,-177 811,-129 829,-58 829,37 L 829,94 831,201 829,201 C 767,68 651,2 481,2 355,2 257,49 188,144 119,239 84,374 84,550 84,727 120,863 191,959 262,1055 366,1103 502,1103 659,1103 768,1038 829,908 L 834,908 C 834,931 836,963 839,1003 842,1043 845,1069 848,1082 L 1114,1082 C 1110,1010 1108,927 1108,832 L 1108,33 C 1108,-121 1064,-237 977,-316 890,-395 763,-434 596,-434 Z M 831,556 C 831,667 811,754 772,817 732,879 675,910 602,910 452,910 377,790 377,550 377,315 451,197 600,197 675,197 732,228 772,291 811,353 831,441 831,556 Z "/>
+   <glyph unicode="e" horiz-adv-x="986" d="M 586,-20 C 423,-20 298,28 211,125 124,221 80,361 80,546 80,725 124,862 213,958 302,1054 427,1102 590,1102 745,1102 864,1051 946,948 1028,845 1069,694 1069,495 L 1069,487 375,487 C 375,382 395,302 434,249 473,195 528,168 600,168 699,168 762,211 788,297 L 1053,274 C 976,78 821,-20 586,-20 Z M 586,925 C 520,925 469,902 434,856 398,810 379,746 377,663 L 797,663 C 792,750 771,816 734,860 697,903 648,925 586,925 Z "/>
+   <glyph unicode="d" horiz-adv-x="1029" d="M 844,0 C 841,10 838,35 835,76 831,116 829,149 829,176 L 825,176 C 764,45 649,-20 479,-20 353,-20 256,29 187,128 118,226 84,363 84,540 84,719 120,858 193,956 265,1053 367,1102 500,1102 577,1102 643,1086 699,1054 754,1022 797,974 827,911 L 829,911 827,1089 827,1484 1108,1484 1108,236 C 1108,169 1111,91 1116,0 L 844,0 Z M 831,547 C 831,664 812,754 773,817 734,880 676,911 600,911 525,911 469,881 432,820 395,759 377,665 377,540 377,295 451,172 598,172 672,172 729,205 770,270 811,335 831,427 831,547 Z "/>
+   <glyph unicode="c" horiz-adv-x="996" d="M 594,-20 C 430,-20 303,29 214,127 125,224 80,360 80,535 80,714 125,853 215,953 305,1052 433,1102 598,1102 725,1102 831,1070 914,1006 997,942 1050,854 1071,741 L 788,727 C 780,782 760,827 728,860 696,893 651,909 592,909 447,909 375,788 375,546 375,297 449,172 596,172 649,172 694,189 730,223 766,256 788,306 797,373 L 1079,360 C 1069,286 1043,220 1000,162 957,104 900,59 830,28 760,-4 681,-20 594,-20 Z "/>
+   <glyph unicode="b" horiz-adv-x="1028" d="M 1167,545 C 1167,366 1131,228 1060,129 988,30 885,-20 752,-20 675,-20 609,-3 553,30 497,63 454,111 424,174 L 422,174 C 422,151 421,119 418,78 415,37 411,11 408,0 L 135,0 C 140,62 143,144 143,247 L 143,1484 424,1484 424,1070 420,894 424,894 C 487,1033 603,1102 770,1102 898,1102 996,1054 1065,957 1133,860 1167,722 1167,545 Z M 874,545 C 874,668 856,759 820,818 784,877 728,907 653,907 577,907 519,875 480,812 440,748 420,656 420,536 420,421 440,332 479,268 518,204 575,172 651,172 800,172 874,296 874,545 Z "/>
+   <glyph unicode="a" horiz-adv-x="1088" d="M 393,-20 C 288,-20 207,9 148,66 89,123 60,203 60,306 60,418 97,503 170,562 243,621 348,651 487,652 L 720,656 720,711 C 720,782 708,834 683,869 658,903 618,920 562,920 510,920 472,908 448,885 423,861 408,822 402,767 L 109,781 C 127,886 175,966 254,1021 332,1075 439,1102 574,1102 711,1102 816,1068 890,1001 964,934 1001,838 1001,714 L 1001,320 C 1001,259 1008,218 1022,195 1035,172 1058,160 1090,160 1111,160 1132,162 1152,166 L 1152,14 C 1135,10 1120,6 1107,3 1094,0 1080,-3 1067,-5 1054,-7 1040,-9 1025,-10 1010,-11 992,-12 972,-12 901,-12 849,5 816,40 782,75 762,126 755,193 L 749,193 C 670,51 552,-20 393,-20 Z M 720,501 L 576,499 C 511,496 464,489 437,478 410,466 389,448 375,424 360,400 353,368 353,328 353,277 365,239 389,214 412,189 444,176 483,176 527,176 567,188 604,212 640,236 668,269 689,312 710,354 720,399 720,446 L 720,501 Z "/>
+   <glyph unicode="S" horiz-adv-x="1223" d="M 1286,406 C 1286,268 1235,163 1133,90 1030,17 880,-20 682,-20 501,-20 360,12 257,76 154,140 88,237 59,367 L 344,414 C 363,339 401,285 457,252 513,218 591,201 690,201 896,201 999,264 999,389 999,429 987,462 964,488 940,514 907,536 864,553 821,570 738,591 616,616 511,641 437,661 396,676 355,691 317,708 284,729 251,749 222,773 199,802 176,831 158,864 145,903 132,942 125,986 125,1036 125,1163 173,1261 269,1329 364,1396 503,1430 686,1430 861,1430 992,1403 1080,1348 1167,1293 1224,1203 1249,1077 L 963,1038 C 948,1099 919,1144 874,1175 829,1206 764,1221 680,1221 501,1221 412,1165 412,1053 412,1016 422,986 441,963 460,940 488,920 525,904 562,887 638,867 752,842 887,813 984,787 1043,763 1101,738 1147,710 1181,678 1215,645 1241,607 1259,562 1277,517 1286,465 1286,406 Z "/>
+   <glyph unicode=" " horiz-adv-x="566"/>
+  </font>
+ </defs>
+ <defs>
+  <font id="EmbeddedFont_3" horiz-adv-x="2048">
+   <font-face font-family="Arial embedded" units-per-em="2048" font-weight="bold" font-style="italic" ascent="1852" descent="423"/>
+   <missing-glyph horiz-adv-x="2048" d="M 0,0 L 2047,0 2047,2047 0,2047 0,0 Z "/>
+   <glyph unicode="r" horiz-adv-x="853" d="M 844,853 C 798,863 760,868 730,868 648,868 581,839 530,781 478,723 440,634 417,514 L 316,0 35,0 196,830 C 212,910 226,994 238,1082 L 506,1082 484,910 476,861 480,861 C 529,950 577,1013 624,1049 671,1084 726,1102 787,1102 818,1102 853,1097 890,1088 L 844,853 Z "/>
+  </font>
+ </defs>
+ <defs class="EmbeddedBulletChars">
+  <g id="bullet-char-template-57356" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 580,1141 L 1163,571 580,0 -4,571 580,1141 Z"/>
+  </g>
+  <g id="bullet-char-template-57354" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 8,1128 L 1137,1128 1137,0 8,0 8,1128 Z"/>
+  </g>
+  <g id="bullet-char-template-10146" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 174,0 L 602,739 174,1481 1456,739 174,0 Z M 1358,739 L 309,1346 659,739 1358,739 Z"/>
+  </g>
+  <g id="bullet-char-template-10132" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 2015,739 L 1276,0 717,0 1260,543 174,543 174,936 1260,936 717,1481 1274,1481 2015,739 Z"/>
+  </g>
+  <g id="bullet-char-template-10007" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 0,-2 C -7,14 -16,27 -25,37 L 356,567 C 262,823 215,952 215,954 215,979 228,992 255,992 264,992 276,990 289,987 310,991 331,999 354,1012 L 381,999 492,748 772,1049 836,1024 860,1049 C 881,1039 901,1025 922,1006 886,937 835,863 770,784 769,783 710,716 594,584 L 774,223 C 774,196 753,168 711,139 L 727,119 C 717,90 699,76 672,76 641,76 570,178 457,381 L 164,-76 C 142,-110 111,-127 72,-127 30,-127 9,-110 8,-76 1,-67 -2,-52 -2,-32 -2,-23 -1,-13 0,-2 Z"/>
+  </g>
+  <g id="bullet-char-template-10004" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 285,-33 C 182,-33 111,30 74,156 52,228 41,333 41,471 41,549 55,616 82,672 116,743 169,778 240,778 293,778 328,747 346,684 L 369,508 C 377,444 397,411 428,410 L 1163,1116 C 1174,1127 1196,1133 1229,1133 1271,1133 1292,1118 1292,1087 L 1292,965 C 1292,929 1282,901 1262,881 L 442,47 C 390,-6 338,-33 285,-33 Z"/>
+  </g>
+  <g id="bullet-char-template-9679" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 813,0 C 632,0 489,54 383,161 276,268 223,411 223,592 223,773 276,916 383,1023 489,1130 632,1184 813,1184 992,1184 1136,1130 1245,1023 1353,916 1407,772 1407,592 1407,412 1353,268 1245,161 1136,54 992,0 813,0 Z"/>
+  </g>
+  <g id="bullet-char-template-8226" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 346,457 C 273,457 209,483 155,535 101,586 74,649 74,723 74,796 101,859 155,911 209,963 273,989 346,989 419,989 480,963 531,910 582,859 608,796 608,723 608,648 583,586 532,535 482,483 420,457 346,457 Z"/>
+  </g>
+  <g id="bullet-char-template-8211" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M -4,459 L 1135,459 1135,606 -4,606 -4,459 Z"/>
+  </g>
+  <g id="bullet-char-template-61548" transform="scale(0.00048828125,-0.00048828125)">
+   <path d="M 173,740 C 173,903 231,1043 346,1159 462,1274 601,1332 765,1332 928,1332 1067,1274 1183,1159 1299,1043 1357,903 1357,740 1357,577 1299,437 1183,322 1067,206 928,148 765,148 601,148 462,206 346,322 231,437 173,577 173,740 Z"/>
+  </g>
+ </defs>
+ <g ooo:name="Slide25" class="Page">
+  <g class="Group">
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id3">
+     <rect class="BoundingBox" stroke="none" fill="none" x="11108" y="15941" width="328" height="453"/>
+     <path fill="currentcolor" stroke="none" d="M 11429,16054 C 11433,16042 11435,16033 11435,16014 11435,15970 11407,15941 11355,15941 11299,15941 11263,15976 11246,16000 11243,15961 11213,15941 11182,15941 11149,15941 11136,15967 11130,15980 11117,16003 11108,16044 11108,16046 11108,16053 11115,16053 11117,16053 11124,16053 11124,16053 11128,16038 11140,15989 11154,15956 11180,15956 11191,15956 11201,15961 11201,15987 11201,16002 11199,16009 11190,16045 L 11149,16204 C 11147,16214 11143,16230 11143,16233 11143,16246 11153,16252 11163,16252 11172,16252 11184,16246 11189,16233 11190,16231 11198,16199 11203,16182 L 11218,16120 C 11222,16105 11226,16090 11230,16074 11231,16070 11237,16047 11238,16043 11240,16037 11261,15998 11285,15980 11301,15969 11322,15956 11352,15956 11383,15956 11390,15979 11390,16004 11390,16007 11390,16020 11383,16047 L 11303,16363 C 11301,16371 11301,16373 11301,16374 11301,16384 11309,16393 11321,16393 11343,16393 11348,16373 11350,16365 L 11429,16054 11429,16054 Z "/>
+    </g>
+   </g>
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id4">
+     <rect class="BoundingBox" stroke="none" fill="none" x="11692" y="15993" width="469" height="162"/>
+     <path fill="currentcolor" stroke="none" d="M 12159,16015 C 12159,16000 12155,15993 12149,15993 12146,15993 12140,15998 12140,16011 12137,16077 12091,16115 12041,16115 11997,16115 11964,16086 11929,16056 11894,16024 11857,15993 11810,15993 11733,15993 11692,16068 11692,16131 11692,16153 11701,16153 11702,16153 11710,16153 11712,16139 11712,16137 11715,16062 11767,16031 11810,16031 11854,16031 11887,16061 11922,16090 11957,16122 11994,16154 12041,16154 12118,16154 12159,16078 12159,16015 L 12159,16015 Z "/>
+    </g>
+   </g>
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id5">
+     <rect class="BoundingBox" stroke="none" fill="none" x="12425" y="15768" width="368" height="619"/>
+     <path fill="currentcolor" stroke="none" d="M 12697,15785 C 12697,15784 12699,15776 12699,15776 12699,15775 12699,15769 12691,15769 12684,15769 12683,15771 12680,15782 L 12639,15941 C 12528,15944 12425,16036 12425,16129 12425,16194 12474,16248 12560,16253 12554,16275 12549,16296 12544,16318 12535,16350 12528,16376 12528,16378 12528,16385 12533,16386 12537,16386 12540,16386 12541,16385 12544,16383 12545,16382 12549,16365 12551,16356 L 12578,16253 C 12691,16250 12792,16157 12792,16065 12792,16011 12755,15948 12658,15941 L 12697,15785 12697,15785 Z M 12563,16238 C 12521,16236 12471,16212 12471,16143 12471,16061 12531,15965 12635,15956 L 12563,16238 12563,16238 Z M 12653,15956 C 12707,15959 12747,15990 12747,16051 12747,16132 12686,16230 12581,16238 L 12653,15956 12653,15956 Z "/>
+    </g>
+   </g>
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id6">
+     <rect class="BoundingBox" stroke="none" fill="none" x="12876" y="15730" width="165" height="687"/>
+     <path fill="currentcolor" stroke="none" d="M 13039,16409 C 13039,16407 13039,16405 13027,16394 12939,16307 12917,16178 12917,16073 12917,15953 12944,15834 13030,15748 13039,15740 13039,15739 13039,15737 13039,15732 13036,15730 13032,15730 13025,15730 12962,15776 12920,15863 12885,15939 12876,16015 12876,16073 12876,16126 12884,16209 12923,16287 12965,16371 13025,16416 13032,16416 13036,16416 13039,16414 13039,16409 L 13039,16409 Z "/>
+    </g>
+   </g>
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id7">
+     <rect class="BoundingBox" stroke="none" fill="none" x="13103" y="15936" width="286" height="310"/>
+     <path fill="currentcolor" stroke="none" d="M 13220,16013 L 13220,15936 13103,15941 13103,15973 C 13147,15973 13152,15973 13152,16000 L 13152,16212 13103,16212 13103,16245 C 13128,16244 13159,16243 13192,16243 13218,16243 13263,16243 13288,16245 L 13288,16212 13227,16212 13227,16092 C 13227,16044 13245,15960 13315,15960 13314,15961 13302,15972 13302,15992 13302,16020 13324,16034 13344,16034 13365,16034 13387,16019 13387,15992 13387,15956 13349,15936 13313,15936 13264,15936 13236,15970 13220,16013 L 13220,16013 Z "/>
+    </g>
+   </g>
+   <g class="com.sun.star.drawing.CustomShape">
+    <g id="id8">
+     <rect class="BoundingBox" stroke="none" fill="none" x="13449" y="15730" width="164" height="687"/>
+     <path fill="currentcolor" stroke="none" d="M 13612,16073 C 13612,16019 13604,15936 13566,15859 13524,15774 13463,15730 13456,15730 13452,15730 13449,15732 13449,15737 13449,15739 13449,15740 13463,15752 13531,15820 13571,15929 13571,16073 13571,16190 13545,16311 13458,16397 13449,16405 13449,16407 13449,16409 13449,16413 13452,16416 13456,16416 13463,16416 13526,16369 13568,16282 13604,16206 13612,16130 13612,16073 L 13612,16073 Z "/>
+    </g>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id9">
+    <rect class="BoundingBox" stroke="none" fill="none" x="10456" y="15471" width="201" height="991"/>
+    <path fill="none" stroke="currentcolor" stroke-width="35" stroke-linejoin="miter" d="M 10556,15758 L 10556,16174 "/>
+    <path fill="currentcolor" stroke="none" d="M 10556,15471 L 10456,15771 10656,15771 10556,15471 Z "/>
+    <path fill="currentcolor" stroke="none" d="M 10556,16461 L 10656,16161 10456,16161 10556,16461 Z "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.ConnectorShape">
+   <g id="id10">
+    <rect class="BoundingBox" stroke="none" fill="none" x="10454" y="13292" width="201" height="1949"/>
+    <path fill="none" stroke="currentcolor" stroke-width="35" stroke-linejoin="miter" d="M 10554,13579 L 10554,15240 "/>
+    <path fill="currentcolor" stroke="none" d="M 10554,13292 L 10454,13592 10654,13592 10554,13292 Z "/>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id11">
+    <rect class="BoundingBox" stroke="none" fill="none" x="10900" y="14041" width="257" height="378"/>
+    <path fill="currentcolor" stroke="none" d="M 10973,14220 C 10994,14231 11013,14231 11028,14231 11044,14231 11079,14231 11079,14207 11079,14188 11057,14185 11033,14185 11020,14185 10997,14187 10974,14200 10959,14191 10948,14176 10948,14154 10948,14106 11011,14077 11068,14077 11078,14077 11101,14077 11126,14099 11133,14106 11135,14107 11139,14107 11147,14107 11156,14097 11156,14086 11156,14071 11117,14041 11074,14041 11001,14041 10933,14094 10933,14154 10933,14188 10955,14208 10958,14211 10920,14237 10900,14281 10900,14318 10900,14369 10936,14418 11004,14418 11088,14418 11123,14348 11123,14336 11123,14331 11120,14328 11116,14328 11113,14328 11111,14331 11110,14334 11101,14352 11086,14381 11009,14381 10971,14381 10917,14369 10917,14313 10917,14286 10934,14244 10973,14220 L 10973,14220 Z M 10994,14210 C 11009,14203 11022,14203 11033,14203 11049,14203 11051,14203 11063,14207 11053,14213 11052,14214 11028,14214 11014,14214 11006,14214 10994,14210 L 10994,14210 Z "/>
+   </g>
+  </g>
+  <g class="Graphic">
+   <g id="id12">
+    <rect class="BoundingBox" stroke="none" fill="none" x="988" y="12442" width="10270" height="4238"/>
+    <defs>
+     <clipPath id="clip_path_1" clipPathUnits="userSpaceOnUse">
+      <path d="M 988,12442 L 11257,12442 11257,16679 988,16679 988,12442 Z "/>
+     </clipPath>
+    </defs>
+    <g clip-path="url(#clip_path_1)"/>
+    <defs>
+     <clipPath id="clip_path_2" clipPathUnits="userSpaceOnUse">
+      <path d="M 1047,13679 L 1016,13480 C 1162,13458 1308,13435 1467,13418 1629,13400 1805,13388 2007,13388 2173,13388 2357,13396 2566,13415 2772,13434 3004,13463 3269,13507 L 3269,13507 3269,13507 C 4417,13697 6643,14399 7965,14620 8526,14713 9021,14766 9477,14795 9935,14825 10355,14830 10766,14830 10900,14830 11034,14830 11168,14829 L 11169,15030 11170,15231 C 11035,15232 10901,15232 10766,15232 10347,15232 9919,15226 9452,15197 8983,15167 8475,15113 7899,15016 6577,14796 4351,14094 3203,13904 2950,13862 2728,13834 2529,13816 2334,13798 2162,13791 2007,13791 1821,13791 1659,13801 1510,13817 1357,13834 1218,13856 1078,13878 L 1047,13679 Z "/>
+     </clipPath>
+    </defs>
+    <g clip-path="url(#clip_path_2)">
+     <image x="900" y="12012" width="10398" height="4683" preserveAspectRatio="none" xlink:href="data:image/png;base64,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"/>
+    </g>
+    <g clip-path="url(#clip_path_1)">
+     <path fill="none" stroke="currentcolor" stroke-width="98" stroke-linejoin="miter" d="M 1120,13898 C 1641,13818 2162,13738 3310,13924 4457,14110 6684,14798 8006,15014 9328,15230 10285,15226 11242,15221 "/>
+     <path fill="none" stroke="rgb(0,176,80)" stroke-width="59" stroke-linejoin="miter" stroke-dasharray="235.392550143266,176.54441260745" d="M 1106,15297 C 1627,15216 2147,15134 3295,15324 4443,15514 6669,16216 7991,16436 9313,16657 10270,16653 11228,16648 "/>
+     <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="4973" y="13741"><tspan font-family="Arial, sans-serif" font-size="706px" font-style="italic" font-weight="400" fill="currentcolor" stroke="none" style="white-space: pre">n(</tspan></tspan></tspan></text>
+     <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="5591" y="13741"><tspan font-family="Arial, sans-serif" font-size="706px" font-style="italic" font-weight="700" fill="currentcolor" stroke="none" style="white-space: pre">r</tspan></tspan></tspan></text>
+     <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="5885" y="13741"><tspan font-family="Arial, sans-serif" font-size="706px" font-style="italic" font-weight="400" fill="currentcolor" stroke="none" style="white-space: pre">)</tspan></tspan></tspan></text>
+     <path fill="rgb(0,176,80)" stroke="none" d="M 6574,16077 L 6574,15841 6495,15841 6495,16077 6574,16077 Z M 6574,15763 L 6574,15528 6495,15528 6495,15763 6574,15763 Z M 6574,15449 L 6574,15214 6495,15214 6495,15449 6574,15449 Z M 6574,15135 L 6574,14900 6495,14900 6495,15135 6574,15135 Z M 6574,14821 L 6574,14586 6495,14586 6495,14821 6574,14821 Z M 6574,14507 L 6574,14272 6495,14272 6495,14507 6574,14507 Z M 6574,14194 L 6574,13958 6495,13958 6495,14194 6574,14194 Z M 6574,13880 L 6574,13644 6495,13644 6495,13880 6574,13880 Z M 6574,13566 L 6574,13331 6495,13331 6495,13566 6574,13566 Z M 6574,13252 L 6574,13017 6495,13017 6495,13252 6574,13252 Z M 6652,12957 L 6534,12722 6417,12957 6652,12957 Z "/>
+    </g>
+   </g>
+  </g>
+  <g ooo:text-adjust="left" class="TextShape">
+   <g id="id13">
+    <rect class="BoundingBox" stroke="none" fill="none" x="795" y="9862" width="6436" height="941"/>
+    <text class="SVGTextShape"><tspan class="TextParagraph"><tspan class="TextPosition" x="1049" y="10553"><tspan font-family="Arial, sans-serif" font-size="564px" font-weight="700" lengthAdjust="spacingAndGlyphs" textLength="5850" fill="currentcolor" stroke="none" style="white-space: pre">Single parabolic band</tspan></tspan></tspan></text>
+   </g>
+  </g>
+  <g class="com.sun.star.drawing.CustomShape">
+   <g id="id14">
+    <rect class="BoundingBox" stroke="none" fill="none" x="2122" y="10588" width="3157" height="3446"/>
+    <path fill="none" stroke="currentcolor" stroke-width="71" stroke-linejoin="miter" d="M 5243,11261 L 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5243,11261 5242,11261 5224,11428 5203,11594 5178,11757 5148,11917 5116,12074 5079,12227 5039,12375 4996,12520 4949,12659 4899,12793 4846,12921 4790,13044 4732,13160 4670,13269 4607,13372 4540,13468 4472,13556 4402,13637 4330,13710 4256,13775 4181,13832 4105,13881 4028,13921 3949,13953 3871,13976 3791,13991 3712,13997 3632,13994 3553,13983 3474,13963 3395,13934 3318,13897 3241,13851 3165,13797 3091,13735 3019,13665 2948,13587 2879,13502 2812,13409 2747,13308 2685,13201 2625,13087 2568,12967 2514,12841 2463,12709 2415,12572 2371,12429 2329,12282 2292,12131 2257,11976 2227,11817 2200,11655 2177,11490 2158,11323 "/>
+   </g>
+  </g>
+ </g>
+</svg></p>
+<figcaption>
+<p><span class="caption-prefix">Figure 2.</span> Illustration showing the relationship between the charge neutrality
+level, electrostatic potential, and the charge density. The electronic
+density of states is approximated by a single effective parabolic band,
+and the charge density is computed by evaluating a Fermi-Dirac integral
+of order <span class="arithmatex">\(k\)</span> (depends on system dimensionality).</p>
+</figcaption>
+</figure>
+<p>Evaluating the charge density and its derivative with respect to the
+potential in this picture boils down to evaluating Fermi-Dirac
+integrals:</p>
+<div class="arithmatex">\[
+\rho[\phi(\mathbf{r})] \sim \mathcal{F}_{k}(\eta[\phi(\mathbf{r})])
+\]</div>
+<div class="arithmatex">\[
+\frac{\delta \rho[\phi(\mathbf{r})]}{\delta \phi(\mathbf{r})} \sim
+\mathcal{F}_{k-1}(\eta[\phi(\mathbf{r})])
+\]</div>
+<p>where we can use the fact that the derivative of a Fermi-Dirac integral
+of order <span class="arithmatex">\(k\)</span> is another Fermi-Dirac integral of order <span class="arithmatex">\(k-1\)</span>.</p>
+<p>We also need to determine a CNL that is consistent with this model.
+Since the since the CNL directly depends on the potential, we can do so
+by inverting the relationship between density and potential:</p>
+<div class="arithmatex">\[
+\rho[\phi(\mathbf{r})] \sim \mathcal{F}_{k}(\eta[\phi(\mathbf{r})])
+\longleftrightarrow E_{CNL}(\mathbf{r}) \sim
+\mathcal{F}_{k}^{-1}(u[\rho(\mathbf{r})])
+\]</div>
+<p>While in two-dimensional systems (<span class="arithmatex">\(N=2\)</span>) the Fermi-Dirac integral, its
+derivative, and its inverse have an analytic form, they have to be
+evaluated numerically for density models with other dimensionalities.</p>
+<div class="admonition tip">
+<p class="admonition-title">Density Response Model Dimensionality</p>
+<p>The
+<a href="../../parameters/electrostatics/#density_model_dim"><code>density_model_dim</code></a>
+parameter controls the dimensionality of the density model. Note
+that this does not have to be the same as the actual dimensionality
+of the system, e.g., a 2D model can work very well for 1D systems.</p>
+</div>
+<div class="admonition info">
+<p class="admonition-title">Fermi-Dirac Integral Evaluation</p>
+<p>In <code>quatrex</code>, Fermi-Dirac integrals of orders <span class="arithmatex">\(k=0\)</span> and <span class="arithmatex">\(k=-1\)</span> are
+evaluated via their analytic form, while they are computed by
+quadrature for other orders. Evaluating inverses of Fermi-Dirac
+integrals without analytic representations would normally be more
+costly optimization problems, but in <code>quatrex</code> efficient piecewise
+rational approximation schemes for the relevant orders <span class="arithmatex">\(k=1/2\)</span>
+<sup id="fnref:plus-half"><a class="footnote-ref" href="#fn:plus-half">2</a></sup> and <span class="arithmatex">\(k=-1/2\)</span> <sup id="fnref:minus-half"><a class="footnote-ref" href="#fn:minus-half">3</a></sup> are implemented.</p>
+</div>
+<h2 id="contact-chemical-potentials">Contact Chemical Potentials<a class="headerlink" href="#contact-chemical-potentials" title="Permanent link">#</a></h2>
+<p>In quantum transport simulations, we exert control over the system
+through its contacts. In self-consistent Schrödinger-Poisson (SCSP)
+runs, determining appropriate and physically consistent contact chemical
+potentials is therefore very important.</p>
+<p>In <code>quatrex</code>, the most appropriate way of configuring contacts for SCSP
+runs, is to set a <a href="../../parameters/contact/#voltage">contact's bias
+voltage</a> <span class="arithmatex">\(V_b\)</span> and a <a href="../../parameters/contact/#mid_gap_energy">mid-gap
+energy</a> (this could, for
+instance, be the contacts DFT Fermi level) and then have <code>quatrex</code>
+compute the contact's Fermi level <span class="arithmatex">\(E_F\)</span> and in turn its chemical
+potential <span class="arithmatex">\(\mu = E_F - V_b\)</span> from this.</p>
+<details class="info">
+<summary>Automatic Fermi Level Calculation</summary>
+<p>In <code>quatrex</code>, a contact's Fermi level is automaticaly determined
+from its band structure, <span class="arithmatex">\(\epsilon_{\mathbf{k}}\)</span>, given by</p>
+<div class="arithmatex">\[
+\mathbf{h}(\mathbf{k}) \psi_{\mathbf{k}} = \epsilon_{\mathbf{k}}
+\mathbf{s}(\mathbf{k}) \psi_{\mathbf{k}}
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{h}(\mathbf{k})\)</span> and <span class="arithmatex">\(\mathbf{s}(\mathbf{k})\)</span> are the
+contact Hamiltonian and overlap matrices, on a grid of
+<span class="arithmatex">\(\mathbf{k}\)</span>-points both in transport direction and in the
+transverse periodic directions. The band structure is then separated
+into conduction and valence states
+<span class="arithmatex">\(\epsilon_\mathbf{k}^C\)</span>/<span class="arithmatex">\(\epsilon_\mathbf{k}^V\)</span> by comparing
+<span class="arithmatex">\(\epsilon_\mathbf{k}\)</span> to the provided mid-gap energy.</p>
+<p>The Fermi level is computed by minimizing</p>
+<div class="arithmatex">\[
+E_F = \underset{E}{\arg\min} \left( \frac{2_{spin}}{2\pi V}\int
+d\mathbf{k} \left[
+f_{FD}(\epsilon^C_{\mathbf{k}} - E )
+- f_{FD}(E - \epsilon^V_{\mathbf{k}}) \right] - N_{A/D} \right)
+\]</div>
+<p>where <span class="arithmatex">\(f_{FD}\)</span> is the Fermi-Dirac occupancy, <span class="arithmatex">\(V\)</span> the contact cell
+volume, and <span class="arithmatex">\(N_{A/D}\)</span> the doping density in the contact.</p>
+</details>
+<h2 id="connecting-real-space-and-localized-orbital-basis-sets">Connecting Real-Space and Localized Orbital Basis Sets<a class="headerlink" href="#connecting-real-space-and-localized-orbital-basis-sets" title="Permanent link">#</a></h2>
+<p>In the transport part of an SCSP run, we operate on quantities expressed
+in a basis of localized orbitals. The electrostatics, on the other hand
+are treated in (discretized) real-space. Taking the Green's function as
+an example, the transformation from real-space to a localized orbital
+basis <span class="arithmatex">\(\{\psi_i\}\)</span> is</p>
+<div class="arithmatex">\[
+G_{mn}(E) = \int d^{3}\mathbf{r} \int  d^{3}\mathbf{r'}
+\, \psi^{*}_{m}(\mathbf{r})G(\mathbf{r}, \mathbf{r'};
+E) \psi_{n}(\mathbf{r'})
+\]</div>
+<p>and the corresponding inverse projection is</p>
+<div class="arithmatex">\[
+G(\mathbf{r}, \mathbf{r'}; E) = \sum_{m,n} \hat{\psi}_{m}(\mathbf{r})
+G_{mn}(E) \hat{\psi}^{*}_{n}(\mathbf{r'}),
+\]</div>
+<p>where <span class="arithmatex">\(\hat{\psi}_{m} = \sum_k \left(\mathbf{S}^{-1}\right)_{mk}
+\psi_{k}\)</span> are the dual basis states for the general case of an
+non-orthonormal basis.</p>
+<div class="admonition warning">
+<p class="admonition-title">Proper Real-Space Projections Not Implemented Yet</p>
+<p>The real-space projections of the Green's functions and the charge
+density are not yet implemented in <code>quatrex</code>. For now, we use a
+Mulliken charge projection scheme to compute the charge density in
+real-space from the localized orbital basis.</p>
+</div>
+<h3 id="mulliken-charge-projection">Mulliken Charge Projection<a class="headerlink" href="#mulliken-charge-projection" title="Permanent link">#</a></h3>
+<p>We employ a Mulliken charge analysis to construct the real-space charge
+density. In the case of non-orthonormal basis sets this can be found by
+matrix multiplication of the density matrix <span class="arithmatex">\(\boldsymbol{\rho}\)</span> with the
+overlap matrix <span class="arithmatex">\(\mathbf{S}\)</span>.</p>
+<div class="arithmatex">\[
+n(\mathbf{r}) = \sum_m \left(\boldsymbol{\rho}\mathbf{S}\right)_{mm}
+\delta(\mathbf{r} - \mathbf{R}_{m})
+\]</div>
+<h3 id="finite-element-discretization">Finite Element Discretization<a class="headerlink" href="#finite-element-discretization" title="Permanent link">#</a></h3>
+<p>In <code>quatrex</code> we discretize the Laplacian using linear (first-order)
+tetrahedral finite elements as implemented in
+<a href="https://scikit-fem.readthedocs.io/en/latest/"><code>scikit-fem</code></a>. By default
+natural boundary conditions are used. Parameters concerning regions in
+the real-space simulation domain and the meshing process (using
+<a href="https://gmsh.info/"><code>gmsh</code></a>) are set in the
+<a href="../../parameters/geometry/"><code>[device.geometry]</code></a> section of the
+configuration.</p>
+<p>The <code>structure.xyz</code> input file containing the atom/orbital coordinates
+that make up the device, serves as a reference point for all defined
+geometry regions. This file also informs the periodicity in transverse
+directions through the <code>pbc="..."</code> entry on the second line in the
+extended <code>.xyz</code> file format. Setting <code>pbc="F F F"</code>, the real-space mesh
+will not enforce any periodicity, while <code>pbc="T F F"</code> will lead to
+periodic boundary conditions being enforced along <span class="arithmatex">\(x\)</span>-direction.</p>
+<p>Each <a href="../../parameters/volume_properties/">3D region</a> can define properties
+such as relative permittivity, and doping concentrations, while <a href="../../parameters/surface_properties">2D
+regions</a> in the simulation domain act
+as gates/ground planes with work functions and set voltages. Orbital
+sites are embedded into the mesh to accomodate the Mulliken charge
+projection.</p>
+<div class="admonition tip">
+<p class="admonition-title"><code>quatrex mesh</code> Command</p>
+<p>The <a href="../../cli/#quatrex-mesh"><code>quatrex mesh</code></a> command has to be invoked
+for the simulation configuration before starting an SCSP run. Using
+<code>gmsh</code>, this command sets up the real space simulation domain and
+meshes it, accounting for all defined regions and the periodicity in
+transverse directions. This command will also visualize the defined
+simulation domain (either interactive or off-screen, controlled via
+the <code>--off-screen</code> flag).</p>
+</div>
+<h3 id="dirichlet-boundary-conditions">Dirichlet Boundary Conditions<a class="headerlink" href="#dirichlet-boundary-conditions" title="Permanent link">#</a></h3>
+<p>We model electrostatic control from gates in the simulation by imposing
+Dirichlet boundary conditions. The actual Dirichlet boundary condition
+entering <code>quatrex</code>'s' Poisson solver is not directly the
+<a href="../../parameters/surface_properties/#voltage"><code>voltage</code></a> parameter
+<span class="arithmatex">\(V_{\mathrm{gate}}\)</span> set for that surface. Instead, we also have to
+consider the electrostatic alignment of semiconductor channel and the
+metallic gate contact. The actual Dirichlet boundary condition entering
+the Poisson problem is</p>
+<div class="arithmatex">\[
+\phi_\mathrm{gate} = -V_\mathrm{gate} + \Phi_\mathrm{gate} -
+\chi_\mathrm{channel} - \Delta E_{\mathrm{CB}-F},
+\]</div>
+<p>where <span class="arithmatex">\(\Phi_\mathrm{gate}\)</span> is the metal's
+<a href="../../parameters/surface_properties/#work_function"><code>work_function</code></a>,
+<span class="arithmatex">\(\chi_\mathrm{channel}\)</span> is the semiconductor channel's
+<a href="../..parameters/electrostatics/#electron_affinity"><code>electron_affinity</code></a>,
+and <span class="arithmatex">\(\Delta E_{\mathrm{CB}-F} = E_\mathrm{CB} - E_\mathrm{F}\)</span> is the
+distance between Fermi level and conduction band in the semiconductor.</p>
+<h3 id="multifreedom-constraints-for-periodic-boundaries">Multifreedom Constraints for Periodic Boundaries<a class="headerlink" href="#multifreedom-constraints-for-periodic-boundaries" title="Permanent link">#</a></h3>
+<p>Since <code>gmsh</code> supports the creation of periodic meshes, we can make use
+of multifreedom constraints (MFC)<sup id="fnref:mfc"><a class="footnote-ref" href="#fn:mfc">4</a></sup> to enforce periodic boundary
+conditions straightforwardly. We construct a map from one surface to its
+image and then assemble an MFC transformation matrix that couples the
+image degrees of freedom to the authoritative ones.</p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:fermi-integrals">
+<p>R. Kim et al., <em>Notes on Fermi-Dirac Integrals</em>.
+<a href="https://arxiv.org/abs/0811.0116">https://arxiv.org/abs/0811.0116</a>&#160;<a class="footnote-backref" href="#fnref:fermi-integrals" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+</li>
+<li id="fn:plus-half">
+<p>T. Fukushima, <em>Precise and fast computation of inverse
+Fermi-Dirac integral of order &frac12; by minimax rational function
+approximation</em>. <a href="https://doi.org/10.1016/j.amc.2015.03.015">https://doi.org/10.1016/j.amc.2015.03.015</a>&#160;<a class="footnote-backref" href="#fnref:plus-half" title="Jump back to footnote 2 in the text">&#8617;</a></p>
+</li>
+<li id="fn:minus-half">
+<p>T. Fukushima, <em>Analytical computation of inverse
+Fermi-Dirac integral of order -&frac12; by piecewise rational function
+approximation</em>. <a href="https://doi.org/10.13140/RG.2.2.15176.88325">https://doi.org/10.13140/RG.2.2.15176.88325</a>&#160;<a class="footnote-backref" href="#fnref:minus-half" title="Jump back to footnote 3 in the text">&#8617;</a></p>
+</li>
+<li id="fn:mfc">
+<p>Section 8 in C. A. Felippa, <em>Introduction to Finite Element
+Methods</em>.&#160;<a class="footnote-backref" href="#fnref:mfc" title="Jump back to footnote 4 in the text">&#8617;</a></p>
+</li>
+</ol>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../negf/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Non-Equilibrium Green&#x27;s Functions">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Non-Equilibrium Green's Functions
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../../contributing/" class="md-footer__link md-footer__link--next" aria-label="Next: Contributing">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Contributing
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2024-2026 ETH Zürich and the authors of the quatrex package.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["navigation.footer","navigation.indexes","navigation.sections","navigation.tabs","navigation.top","navigation.tracking","content.code.copy","content.code.annotate"],"search":"../../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"provider":"mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.69c251d7.min.js"></script>
+      
+        <script src="../../../javascript/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+        <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+      
+        <script src="https://3Dmol.org/build/3Dmol.ui-min.js"></script>
+      
+    
+  </body>
+</html>

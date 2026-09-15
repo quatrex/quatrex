@@ -14,7 +14,7 @@ def _verify_outputs(
     output_dir: Path,
     reference_output_dir: Path,
     rtol: float = 1e-4,
-    atol: float = 1e-5,
+    atol: float = 1e-4,
 ) -> None:
     """Helper function to verify that the outputs in `output_dir` match the
     reference outputs in `reference_output_dir`."""

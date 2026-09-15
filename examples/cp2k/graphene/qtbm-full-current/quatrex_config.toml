@@ -19,7 +19,7 @@ kpoint_shift = [0.0,0.1,0]
     lattice_vectors = [[2.461, 0, 0], [0,4.263 , 0], [0, 0, 10]]
     transport_direction = "a"
      fermi_level = -4
-     mid_gap_energy = -20
+     mid_gap_energy = -11
 
     [[device.contacts]]
     name = "right"
@@ -27,7 +27,7 @@ kpoint_shift = [0.0,0.1,0]
     lattice_vectors = [[-2.461, 0, 0], [0,4.263 , 0], [0, 0, 10]]
     transport_direction = "a"
     fermi_level = -10
-    mid_gap_energy = -20
+    mid_gap_energy = -11
 
 
 [electron]
@@ -46,3 +46,5 @@ kpoint_shift = [0.0,0.1,0]
     num_quad_points = 64
     min_decay = 1e-8
     max_decay = 10
+[pre_process]
+        compute_fermi_level = true 

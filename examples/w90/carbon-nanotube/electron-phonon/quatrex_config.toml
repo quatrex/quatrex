@@ -1,0 +1,71 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "negf" # "negf" or "wf"
+
+[device]
+transport_direction = "a"
+block_size = 32
+
+    [[device.contacts]]
+    name = "source"
+    origin = [0.1551, 0.0, 0.0]
+    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    fermi_level = -3.6
+
+    [[device.contacts]]
+    name = "drain"
+    origin = [102.694, 0.0, 0.0]
+    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    fermi_level = -3.8
+
+[scba] # ===============================================================
+max_iterations = 2
+mixing_factor = 1
+
+phonon = true
+
+symmetric = true
+
+[outputs] # Select which outputs to write.
+electron_ldos = true
+device_currents = true
+electron_density = false
+hole_density = false
+
+self_energy_density = true
+
+# If enabled, the profiling stats will take a bit of time to crunch the
+# numbers.
+save_profiling_results = true
+
+
+[electron] # ===========================================================
+# Energy grid.
+energy_window_min = -5.6
+energy_window_max = -1.6
+energy_window_num = 50
+
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+
+obc.max_decay = 15
+obc.min_decay = 1e-3
+
+obc.memoizer.mode = "off"
+
+[phonon]
+interaction_cutoff = 5.5  # Å
+model = "deformation-potential"
+temperature = 300  # K
+# Deformation potentials are of order 1 eV / 1 eV/Å:
+# https://journals.aps.org/prb/abstract/10.1103/PhysRevB.104.195201#s3
+acoustic_deformation_potential = 1  # eV
+optical_deformation_potential = 1  # eV / Å
+atom_mass_u = 12  # In the unified atomic mass unit
+lattice_constant = 4.26  # Å

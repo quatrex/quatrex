@@ -11,6 +11,7 @@ from qttools.fft import fft_circular_convolve
 from qttools.profiling import Profiler
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
 
@@ -36,7 +37,7 @@ class SigmaFock(ScatteringSelfEnergy):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
-        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        self.prefactor = 1j / (2 * xp.pi) * get_equal_spacing(self.energies)
         (
             coulomb_matrix.dtranspose()
             if coulomb_matrix.distribution_state != "nnz"

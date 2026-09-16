@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    FiniteFloat,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveFloat,
@@ -1162,7 +1163,6 @@ class ElectronConfig(BaseModel):
             or self.energy_window_num is not None
             or self.energy_window_num_per_rank is not None
         ):
-
             if (self.energy_window_min is None) and (self.energy_window_max is None):
                 raise ValueError(
                     "When the energy grid is not read from file, should set both `energy_window_min` and `energy_window_max`."
@@ -1379,10 +1379,9 @@ class PhononConfig(BaseModel):
     self-energy.
 
     !!! note
-        Currently, only the `"pseudo-scattering"` model / deformation
-        potential interaction is implemented, which does not produce
-        any self-energy matrix elements besides the diagonal ones.
-
+        Currently, only the `"pseudo-scattering"` and `"deformation-potential"`
+        models / deformation potential interactions are implemented, which
+        do not take this variable into account.
     """
 
     solver: SolverConfig = SolverConfig()
@@ -1394,13 +1393,11 @@ class PhononConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
     """Parameters concerning the Lyapunov solver."""
 
-    model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
+    model: Literal["pseudo-scattering", "deformation-potential"] = "pseudo-scattering"
     r"""Which model to use for the electron-phonon interaction.
 
-    Currently, only a monochromatic `"pseudo-scattering"` model is
-    implemented.
-
-    In this model, the electron-phonon interaction is modeled as
+    In the monochromatic `"pseudo-scattering"` model, the electron-phonon interaction
+    is modeled as
 
     $$
     \Sigma^{\lessgtr}(E) = D^2 \left[ (N_{ph} + 1) G^{\lessgtr}(E - \hbar
@@ -1411,7 +1408,26 @@ class PhononConfig(BaseModel):
     $\hbar \omega$ is the [`phonon_energy`](#phonon_energy), and
     $N_{ph}$ is the phonon occupation number given by the Bose-Einstein
     distribution at the specified [`temperature`](#temperature).
+    Only the diagonal of $\Sigma^{\lessgtr}(E)$ is computed.
 
+    In the `"deformation-potential"` model, the self-energy is computed as
+
+    $$
+    \Sigma^\gtrless(E)
+    = \sum_{E_\mathrm{ph}}
+    V_{E_\mathrm{ph}}^\mathrm{em}
+    G^\gtrless(E\mp E_\mathrm{ph})
+    + V_{E_\mathrm{ph}}^\mathrm{abs}
+    G^\gtrless(E\pm E_\mathrm{ph}),
+    $$
+
+    where the prefactors $V_{E_\mathrm{ph}}^\mathrm{em}$ and
+    $V_{E_\mathrm{ph}}^\mathrm{abs}$ are derived from the phonon dispersion.
+    In order to calculate the prefactors, the deformation potential constants
+    [`acoustic_deformation_potential`](#acoustic_deformation_potential) and
+    [`optical_deformation_potential`](#optical_deformation_potential) as well as the
+    [`atom_mass_u`](#atom_mass_u) and the
+    [`lattice_constant`](#lattice_constant) are required.
     """
 
     phonon_energy: NonNegativeFloat | None = None
@@ -1423,6 +1439,19 @@ class PhononConfig(BaseModel):
     temperature: PositiveFloat = 300.0  # K
     """The temperature of the system in Kelvin."""
 
+    # Deformation potential approximation
+    acoustic_deformation_potential: FiniteFloat | None = None
+    """The deformation potential of the acoustic phonon modes in eV."""
+    optical_deformation_potential: FiniteFloat | None = None
+    """The deformation potential of the optical phonon modes in eV/Å."""
+    atom_mass_u: NonNegativeFloat | None = None
+    """
+    The mass of a single atom in the unified atomic mass unit.
+    All atoms are assumed to have the same mass.
+    """
+    lattice_constant: PositiveFloat | None = None
+    """The size of the unit cell along the transport direction in Å."""
+
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
         """Check if 'phonon_energy' and 'deformation_potential' are set."""
@@ -1430,6 +1459,25 @@ class PhononConfig(BaseModel):
             self.phonon_energy is None or self.deformation_potential is None
         ):
             raise ValueError("'phonon_energy' and 'deformation_potential' must be set.")
+
+        return self
+
+    @model_validator(mode="after")
+    def check_deformation_potential_properties_provided(self):
+        """Check whether all required deformation-potential properties are provided."""
+
+        if self.model != "deformation-potential":
+            return self
+
+        if (
+            self.acoustic_deformation_potential is None
+            or self.optical_deformation_potential is None
+            or self.atom_mass_u is None
+            or self.lattice_constant is None
+        ):
+            raise ValueError(
+                "'acoustic_deformation_potential', 'optical_deformation_potential', 'atom_mass_u', and 'lattice_constant' must be set."
+            )
 
         return self
 
@@ -2106,6 +2154,17 @@ class CommConfig(BaseModel):
     stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     """Communication backend to use for stack send-receive."""
 
+    global_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-to-all."""
+    global_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-gather."""
+    global_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-reduce."""
+    global_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack broadcast."""
+    global_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack send-receive."""
+
 
 class ComputeConfig(BaseModel):
     """Top level configuration for all performance and compute options."""
@@ -2331,7 +2390,13 @@ class QuatrexConfig(BaseModel):
                     f"Energy grid not specified and file '{(self.input_dir / 'electron_energies.npy').resolve()}' does not exist."
                 )
 
-        # TODO: extend this to other paths, not only energies
+        if self.scba.phonon and self.phonon.model == "deformation-potential":
+            if not (self.input_dir / "phonon_dispersion.npy").resolve().is_file():
+                raise ValueError(
+                    f"The phonon dispersion (file '{(self.input_dir / 'phonon_dispersion.npy').resolve()}') has not been provided."
+                )
+
+        # TODO: extend this to all possible input paths
 
         return self
 
@@ -2532,10 +2597,19 @@ def _setup_comm(comm_config: CommConfig) -> None:
         "send_recv": comm_config.stack_send_recv or default_backend,
     }
 
+    global_comm_config = {
+        "all_to_all": comm_config.global_all_to_all or default_backend,
+        "all_gather": comm_config.global_all_gather or default_backend,
+        "all_reduce": comm_config.global_all_reduce or default_backend,
+        "bcast": comm_config.global_bcast or default_backend,
+        "send_recv": comm_config.global_send_recv or default_backend,
+    }
+
     comm.configure(
         block_comm_size=comm_config.block_comm_size,
         block_comm_config=block_comm_config,
         stack_comm_config=stack_comm_config,
+        global_comm_config=global_comm_config,
         override=True,
     )
 

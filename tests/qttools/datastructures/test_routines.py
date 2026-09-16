@@ -5,6 +5,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.comm.comm import _default_config
 from qttools.datastructures import DSDBSparse, bd_matmul, bd_sandwich
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -44,26 +45,19 @@ class TestNonDistr:
     @classmethod
     def setup_class(cls):
         """setup any state specific to the execution of the given module."""
-        if xp.__name__ == "cupy":
-            _default_config = {
-                "all_to_all": "host_mpi",
-                "all_gather": "host_mpi",
-                "all_reduce": "host_mpi",
-                "bcast": "host_mpi",
-            }
-        elif xp.__name__ == "numpy":
-            _default_config = {
-                "all_to_all": "device_mpi",
-                "all_gather": "device_mpi",
-                "all_reduce": "device_mpi",
-                "bcast": "device_mpi",
-            }
+
+        if global_comm.size % cls.block_comm_size != 0:
+            pytest.skip(
+                f"Global communicator size {global_comm.size}"
+                f" is not divisible by block communicator size {cls.block_comm_size}."
+            )
 
         # Configure the comm singleton.
         comm.configure(
             block_comm_size=cls.block_comm_size,
             block_comm_config=_default_config,
             stack_comm_config=_default_config,
+            global_comm_config=_default_config,
             override=True,
         )
 

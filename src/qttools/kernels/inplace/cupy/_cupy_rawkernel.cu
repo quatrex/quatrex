@@ -73,3 +73,57 @@ _scatter_add_scaled_obc(complex<double> *M, const complex<double> *S,
     M[ind[i]] += S[s_idx] * phase_factor * alpha;
   }
 }
+
+template <typename T1, typename T2, typename IndexType>
+__global__ void _add_bond_resolved_current_csr(
+    IndexType *indptr, IndexType *indices, double *current, T1 *system_matrix,
+    IndexType nnz, IndexType N, complex<double> *phi, IndexType m,
+    IndexType stridex, IndexType stridey, T2 alpha) {
+  IndexType global_block_offset = (IndexType)blockDim.x * blockIdx.x;
+  IndexType idx = global_block_offset + threadIdx.x;
+
+  // One threads per row
+  for (IndexType i = idx; i < N; i += (IndexType)blockDim.x * gridDim.x) {
+
+    for (IndexType j = indptr[i]; j < indptr[i + 1]; j++) {
+      IndexType row = i;
+      IndexType col = indices[j];
+      T1 system_matrix_ab = system_matrix[j];
+      double current_ab = current[j];
+      complex<double> out = complex<double>(0.0);
+
+      for (IndexType k = 0; k < m; k++) {
+        complex<double> phi_a = phi[row * stridex + k * stridey];
+        complex<double> phi_b = phi[col * stridex + k * stridey];
+
+        out += conj(phi_a) * phi_b * system_matrix_ab;
+      }
+      current[j] = current_ab + imag(alpha * out);
+    }
+  }
+}
+
+template <typename T1, typename T2, typename IndexType>
+__global__ void _add_bond_resolved_current_coo(
+    IndexType *rows, IndexType *cols, double *current, T1 *system_matrix,
+    IndexType nnz, IndexType N, complex<double> *phi, IndexType m,
+    IndexType stridex, IndexType stridey, T2 alpha) {
+  IndexType global_block_offset = (IndexType)blockDim.x * blockIdx.x;
+  IndexType idx = global_block_offset + threadIdx.x;
+
+  for (IndexType i = idx; i < nnz; i += (IndexType)blockDim.x * gridDim.x) {
+    IndexType row = rows[i];
+    IndexType col = cols[i];
+    T1 system_matrix_ab = system_matrix[i];
+    double current_ab = current[i];
+    complex<double> out = complex<double>(0.0);
+
+    for (IndexType j = 0; j < m; j++) {
+      complex<double> phi_a = phi[row * stridex + j * stridey];
+      complex<double> phi_b = phi[col * stridex + j * stridey];
+
+      out += conj(phi_a) * phi_b * system_matrix_ab;
+    }
+    current[i] = current_ab + imag(alpha * out);
+  }
+}

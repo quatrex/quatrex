@@ -178,6 +178,9 @@ class QTBMConfig(BaseModel):
     """Whether to output atomic-resolved observables instead of
     orbital-resolved observables"""
 
+    full_current: bool = False
+    """Whether to compute the bond resolved transmission/current between neighbor atoms"""
+
 
 class SCBAConfig(BaseModel):
     """Parameters for the self-consistent Born approximation (SCBA)

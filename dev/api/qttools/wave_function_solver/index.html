@@ -6626,7 +6626,7 @@
 
 
 <a href="#qttools.wave_function_solver.cuDSS" class="headerlink" title="Permanent link">#</a></h2>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">cuDSS</span><span class="p">(</span><span class="n">matrix_type</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">matrix_view</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">cuDSS</span><span class="p">(</span><span class="n">matrix_type</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">matrix_view</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">comm</span><span class="p">:</span> <span class="n"><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">local_rows</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -6637,6 +6637,17 @@
 
         <p>Wavefunction solver using NVIDIA's cuDSS library for sparse
 direct solves on GPUs.</p>
+<p>For distributed solves, the user must provide a communicator and the
+local row distribution. The communicator must be compatible with the
+cuDSS communication layer, which can be set via the CUDSS_COMM_LIB
+environment variable. The local row distribution is specified as a
+tuple of the form (<code>start_row</code>, <code>end_row</code>) for each process.</p>
+<p>Note that even though cuDSS MGMN mode takes end_row to be inclusive,
+we use the exclusive convention in this solver to be consistent with
+Python slicing.</p>
+<p>The solver also supports multithreading via the cuDSS threading
+layer, which can be set via the CUDSS_THREADING_LIB environment
+variable.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -6663,6 +6674,29 @@ general matrix type.</p>
             <p>The view of the system matrix sparsity. This solver supports
 'full', 'upper', and 'lower' views. If None, the solver will use
 the 'full' view.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>comm</code></b>
+              (<code><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The communicator for distributed solves. If None, the solver
+will assume a single-GPU solve. This must be provided together
+with local_rows.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>local_rows</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>A tuple specifying the local row distribution for distributed
+solves. If None, the solver will assume a single-GPU solve.</p>
           </div>
         </li>
     </ul>

@@ -15,6 +15,7 @@ particle_type = "boson"
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     transport_direction = "a"
     temperature = 301
+    mid_gap_energy = 0.0
 
     [[device.contacts]]
     name = "right"
@@ -22,6 +23,7 @@ particle_type = "boson"
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     transport_direction = "a"
     temperature = 300
+    mid_gap_energy = 0.0
 
 [qtbm] # ===============================================================
 max_batch_size = 2000

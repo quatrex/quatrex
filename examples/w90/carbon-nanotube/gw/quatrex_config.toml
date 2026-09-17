@@ -1,8 +1,6 @@
 simulation_dir = "."
 input_dir = "../inputs"
 
-formalism = "negf" # "negf" or "wf"
-
 formalism = "negf" # "negf" or "qtbm"
 
 [device]

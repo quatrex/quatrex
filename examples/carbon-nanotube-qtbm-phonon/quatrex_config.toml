@@ -1,26 +1,27 @@
 simulation_dir = "."
+input_dir = "../w90/carbon-nanotube/inputs"
 
-formalism = "qtbm" # "negf" or "qtbm"
+formalism = "wf" # "negf" or "wf"
 
 [device]
-transport_direction = "x"
+transport_direction = "a"
 kpoint_grid = [1, 1, 1]
 num_orbitals_per_atom = { "C" = 3 }
-particle_type='boson'
+particle_type = "boson"
 
     [[device.contacts]]
     name = "left"
     origin = [0.012479, 0.0, 0.0]
-    size = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
-    temperature=301
+    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    temperature = 301
 
     [[device.contacts]]
     name = "right"
     origin = [102.55062666, 0.0, 0.0]
-    size = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    direction = "a"
-    temperature=300
+    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    transport_direction = "a"
+    temperature = 300
 
 [qtbm] # ===============================================================
 max_batch_size = 2000
@@ -28,17 +29,12 @@ max_batch_size = 2000
 
 [outputs] # Select which outputs to write.
 electron_ldos = true
-contact_currents = true
 device_currents = true
 electron_density = true
 hole_density = true
 
 
 [electron] # ===========================================================
-# 0.2 V Potential difference.
-left_fermi_level = 0.0  # eV
-right_fermi_level = 0.0 # eV
-
 # Energy grid.
 energy_window_min = 4e-5
 energy_window_max = 0.2018

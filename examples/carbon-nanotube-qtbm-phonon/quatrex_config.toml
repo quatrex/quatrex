@@ -11,7 +11,7 @@ particle_type = "boson"
 
     [[device.contacts]]
     name = "left"
-    origin = [0.012479, 0.0, 0.0]
+    origin = [0.1551, 0.0, 0.0]
     lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     transport_direction = "a"
     temperature = 301
@@ -19,7 +19,7 @@ particle_type = "boson"
 
     [[device.contacts]]
     name = "right"
-    origin = [102.55062666, 0.0, 0.0]
+    origin = [102.694, 0.0, 0.0]
     lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     transport_direction = "a"
     temperature = 300

@@ -33,6 +33,50 @@ from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
 
+def spin_current(
+    out: NDArray, spin_matrix: DSDBSparse
+) -> Callable[[BackSubstitutionContext], None]:
+
+    def callback(ctx: BackSubstitutionContext):
+        """Computes the spin-polarized contact currents along x,y or z."""
+        # non-contact layers are set to xp.nan
+        if (
+            comm.block.size == 1
+            and 0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
+            and 0 <= ctx.j <= len(ctx.obc_blocks.retarded) - 1
+        ):
+            out[ctx.stack_slice, ..., ctx.j] = xp.nan
+
+        # The contact (lead) spin-currents from the boundary self-energies
+        # and the spin matrix.
+
+        if comm.block.rank == 0 and ctx.j == 0:
+            sigma_00 = spin_matrix.blocks[ctx.j,ctx.j]
+
+            out[ctx.stack_slice, ..., 0] = xp.trace( sigma_00 @
+                (ctx.obc_blocks.greater[0][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[0][ctx.stack_slice]),
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+        if (
+            comm.block.rank == comm.block.size - 1
+            and ctx.j == len(ctx.obc_blocks.retarded) - 1
+        ):
+            sigma_NN = spin_matrix.blocks[ctx.j, ctx.j]
+            # NOTE: Negative sign is needed to get the current flowing
+            # in the correct direction (positive from left to right).
+
+            out[ctx.stack_slice, ..., -1] = -xp.trace( sigma_NN @
+                (ctx.obc_blocks.greater[-1][ctx.stack_slice] @ ctx.xl_jj
+                - ctx.xg_jj @ ctx.obc_blocks.lesser[-1][ctx.stack_slice]),
+                axis1=-2,
+                axis2=-1,
+            ).real
+
+    return callback
+
 
 def meir_wingreen_current(
     out: NDArray,
@@ -649,7 +693,22 @@ class ElectronSolver(SubsystemSolver):
             print("Flatband conditions detected", flush=True)
 
         self.compute_meir_wingreen_current = config.outputs.meir_wingreen_currents
+        self.compute_spin_current = config.outputs.spin_currents
         self.compute_device_current = config.outputs.device_currents
+
+        if self.compute_spin_current:
+            self.spin_polarization_up_z, __ = assemble_matrix(
+                config=config,
+                matrix_name="spin_polarization_z_up",
+                sparsity_pattern=None,
+                shift_kpoints=False
+            )
+            self.spin_polarization_down_z, __ = assemble_matrix(
+                config=config,
+                matrix_name="spin_polarization_z_down",
+                sparsity_pattern=None,
+                shift_kpoints=False
+            )
 
         self.dos_peak_limit = config.electron.dos_peak_limit
 
@@ -1229,6 +1288,16 @@ class ElectronSolver(SubsystemSolver):
                 (*sse_lesser.local_stack_shape, sse_lesser.num_blocks + 1),
                 dtype=xp.float64,
             )
+        if self.compute_spin_current:
+            self.spin_z_up = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks + 1),
+                dtype=xp.float64
+            )
+            self.spin_z_down = xp.zeros(
+                (*sse_lesser.local_stack_shape, sse_lesser.num_blocks + 1),
+                dtype=xp.float64
+            )
+
         if self.compute_device_current:
             self.device_current = xp.zeros(
                 (*sse_lesser.local_stack_shape, sse_lesser.num_blocks - 1),
@@ -1237,6 +1306,11 @@ class ElectronSolver(SubsystemSolver):
 
         domain_distributed = comm.block.size > 1
         solver = self.solver_dist if domain_distributed else self.solver
+
+        if self.compute_spin_current and domain_distributed:
+            raise NotImplementedError(
+                "spin current calculations are not yet available in the distributed case!"
+            )
 
         for i in range(len(batch_sizes)):
             batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
@@ -1267,6 +1341,13 @@ class ElectronSolver(SubsystemSolver):
                 if self.compute_meir_wingreen_current:
                     callback_list.append(
                         meir_wingreen_current(self.meir_wingreen_current[batch_slice])
+                    )
+                if self.compute_spin_current:
+                    callback_list.append(
+                        spin_current(self.spin_z_up[batch_slice], self.spin_polarization_up_z)
+                    )
+                    callback_list.append(
+                        spin_current(self.spin_z_down[batch_slice], self.spin_polarization_down_z)
                     )
                 if self.compute_device_current:
                     callback_list.append(

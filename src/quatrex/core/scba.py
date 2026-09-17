@@ -199,6 +199,7 @@ class Observables:
     electron_density: NDArray = None
     hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
+    spin_current: dict = field(default_factory=dict)
 
     valence_band_edges: NDArray = None
     conduction_band_edges: NDArray = None
@@ -280,6 +281,9 @@ class SCBA(TransportSolver):
             )
             print(
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
+            )
+            print(
+                f"Spin-orbit: {config.outputs.spin_currents}"
             )
 
         self.electron_solver = ElectronSolver(
@@ -546,18 +550,24 @@ class SCBA(TransportSolver):
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.electron_ldos *= 2  # Spin
+            if self.config.outputs.spin_currents:
+                self.observables.electron_ldos /= 2
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.electron_density *= 2  # Spin
+            if self.config.outputs.spin_currents:
+                self.observables.electron_density /= 2
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.hole_density *= 2  # Spin
+            if self.config.outputs.spin_currents:
+                self.observables.hole_density /= 2
 
         if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = comm.stack.all_gather_v(
@@ -575,6 +585,25 @@ class SCBA(TransportSolver):
             )
 
             self.observables.electron_current["meir-wingreen"] = meir_wingreen_current
+
+        if self.config.outputs.spin_currents:
+            # I^{z}_{\uparrow}
+            local_current = self.electron_solver.spin_z_up
+            spin_current = comm.stack.all_gather_v(
+                local_current,
+                axis=0,
+                mask=self.data.g_lesser._stack_padding_mask,
+            )
+            self.observables.spin_current["spin-current-z-up"] = spin_current
+
+            # I^{z}_{\downarrow}
+            local_current = self.electron_solver.spin_z_down
+            spin_current = comm.stack.all_gather_v(
+                local_current,
+                axis=0,
+                mask=self.data.g_lesser._stack_padding_mask,
+            )
+            self.observables.spin_current["spin-current-z-down"] = spin_current
 
         if self.config.outputs.self_energy_density:
             self.observables.sigma_lesser_density = density(
@@ -631,6 +660,13 @@ class SCBA(TransportSolver):
         if self.config.outputs.meir_wingreen_currents:
             outputs[f"meir_wingreen_current_{iteration}.npy"] = (
                 self.observables.electron_current["meir-wingreen"]
+            )
+        if self.config.outputs.spin_currents:
+            outputs[f"spin_current_z_down_{iteration}.npy"] = (
+                self.observables.spin_current["spin-current-z-down"]
+            )
+            outputs[f"spin_current_z_up_{iteration}.npy"] = (
+                self.observables.spin_current["spin-current-z-up"]
             )
 
         if self.config.scba.coulomb_screening:

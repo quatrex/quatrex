@@ -1574,6 +1574,8 @@ class OutputConfig(BaseModel):
 
     """
 
+    spin_currents: bool = False
+
     potential: bool = False
     """Whether to save the potential.
 

@@ -1,19 +1,18 @@
 simulation_dir = "."
-input_dir = "../inputs"
 
 formalism = "negf"
 
 [device] # ==========================================================
 kpoint_grid = [1, 1, 1]
 construct_from_unit_cell = true
-transport_direction = "x"
+transport_direction = "a"
 
 neighbor_cell_cutoff = [2, 2, 0]
 
 num_transport_cells = 4
 
 [scba] # =============================================================
-max_iterations = 20
+max_iterations = 100
 mixing_factor = 0.5
 symmetric = true
 
@@ -25,22 +24,26 @@ align_self_energy_to_complex_axes = false
 [outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
+meir_wingreen_currents = true
+spin_currents = true # use only with spin-orbit hamiltonian
 electron_density = true
 hole_density = true
-self_energy_density = true
+self_energy_density = false
 
-polarization_density = true
-coulomb_screening_density = true
+polarization_density = false
+coulomb_screening_density = false
 
 
 [electron] # =========================================================
-left_contact.name = "source"
-left_contact.fermi_level = -0.031537969 # eV
-left_contact.mid_gap_energy = -1        # eV
+left_contact.name = "left"
+left_contact.fermi_level = -2 # eV
+left_contact.mid_gap_energy = -1.5524       # eV
+left_contact.temperature = 300 # K 
 
-right_contact.name = "drain"
-right_contact.fermi_level = -0.031537969 # eV
-right_contact.mid_gap_energy = -1        # eV
+right_contact.name = "right"
+right_contact.fermi_level = -2.2 # eV
+right_contact.mid_gap_energy = -1.5524        # eV
+right_contact.temperature = 300 # K
 
 band_edge_tracking = true
 
@@ -48,14 +51,13 @@ flatband = false
 
 energy_window_min = -10.0 # eV
 energy_window_max = 5     # eV
-energy_window_num = 10
+energy_window_num = 1000
 
 eta = 1e-5
 
 max_batch_size = 15
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
-solver.compute_current = true # Compute Meir-Wingreen current.
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"

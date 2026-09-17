@@ -1,24 +1,20 @@
-# Copyright (c) 2024-2025 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
+import sys
 import time
+import traceback
 from pathlib import Path
-from typing import Optional
-
-import numpy as np
-import os
+from typing import NoReturn, Optional
 
 import typer
-from click import BadArgumentUsage
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
 from typing_extensions import Annotated
 
 import quatrex
-from quatrex.examples import ALLOWED_EXAMPLES, get_example_dir
-from quatrex.examples import load as load_example
 
 HEADER = rf"""
                    _                 
@@ -50,196 +46,312 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-def _run_qtbm(quatrex_config, compute_config):
+def _run_wf(config, device):
     """Runs quatrex with the given configuration.
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The main quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
 
     """
-    from quatrex.core.device import Device
     from quatrex.core.qtbm import QTBM
 
-    with threadpool_limits(
-        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
-    ):
-        pprint(threadpool_info()) if comm.rank == 0 else None
+    qtbm = QTBM(config, device)
 
-        device = Device(quatrex_config)
-        qtbm = QTBM(device, quatrex_config, compute_config)
+    tic = time.perf_counter()
+    qtbm.run()
+    toc = time.perf_counter()
 
-        tic = time.perf_counter()
-        qtbm.run()
-        toc = time.perf_counter()
-
-        if comm.rank == 0:
-            typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
-        
-        if comm.rank == 0:
-            # Save all the results to the output directory.
-
-            output_dir = quatrex_config.output_dir
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-
-            for n in range(qtbm.num_transmissions):
-                np.save(
-                    f"{output_dir}/transmission_{qtbm.observables.electron_transmission_contacts_labels[n]}.npy",
-                    qtbm.observables.electron_transmission_contacts[:, n, :],
-                )
-
-            for n in range(qtbm.num_contacts):
-                np.save(
-                    f"{output_dir}/electron_ldos_{device.contacts[n].name[0]}.npy",
-                    qtbm.observables.electron_dos_orb[:, n, :, :],
-                )
+    if comm.rank == 0:
+        typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
-def _run_negf(quatrex_config, compute_config):
+def _run_negf(config, device):
     """Runs quatrex with the given configuration using SCBA.
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The main quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
 
     """
 
     from quatrex.core.scba import SCBA
 
-    with threadpool_limits(
-        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
-    ):
-        pprint(threadpool_info()) if comm.rank == 0 else None
+    scba = SCBA(config, device)
 
-        scba = SCBA(quatrex_config, compute_config)
+    tic = time.perf_counter()
+    scba.run()
+    toc = time.perf_counter()
 
-        tic = time.perf_counter()
-        scba.run()
-        toc = time.perf_counter()
+    if comm.rank == 0:
+        typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
-        if comm.rank == 0:
-            typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
+
+def _run_scsp(config, device):
+    """Runs the self-consistent Schrödinger-Poisson solver.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
+
+    """
+    from quatrex.core.scsp import SCSP
+
+    scsp = SCSP(config, device)
+
+    tic = time.perf_counter()
+    scsp.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving SCSP after: {(toc - tic):.2f} s")
+
+
+def _resolve_config_path(
+    config: Optional[Path],
+) -> Path:
+    """Resolves the configuration file path based on the provided argument.
+
+    Parameters
+    ----------
+    config : Optional[Path]
+        The user-provided configuration path, which can be:
+        - None: No argument provided, look for default config in working directory.
+        - A file path: Use this as the config file.
+        - A directory path: Look for 'quatrex_config.toml' inside this directory.
+
+    Returns
+    -------
+    Path
+        The resolved path to the configuration file.
+
+    """
+    # No arguments provided, check for the default config file in the
+    # working directory.
+    if config is None:
+        config = Path("./quatrex_config.toml")
+        if not config.exists():
+            raise typer.BadParameter(
+                "No quatrex configuration file provided and default "
+                "'./quatrex_config.toml' does not exist."
+            )
+
+    # If a directory is provided, look for the config file inside.
+    if config.is_dir():
+        config = config / "quatrex_config.toml"
+        if not config.exists():
+            raise typer.BadParameter(
+                f"No quatrex configuration file found in directory: {config.parent}"
+            )
+
+    return config.resolve()
+
+
+def _abort_quatrex(
+    e: Exception,
+) -> NoReturn:
+    """Handles exceptions by printing the error and aborting the MPI program.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception that was raised.
+
+    """
+
+    # Force MPI to abort in the case of an exception
+    # to avoid hanging processes.
+    try:
+        full_traceback = "".join(traceback.format_exception(e))
+
+        error_msg = (
+            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
+        )
+
+        sys.stderr.write(error_msg)
+    except Exception as traceback_exc:
+        fallback_msg = f"\n[RANK {comm.rank}] traceback formatting failed with exception: {traceback_exc}\n"
+
+        sys.stderr.write(fallback_msg)
+
+    try:
+        comm.Abort(1)
+    except Exception as abort_exc:
+        fallback_abort_msg = f"\n[RANK {comm.rank}] MPI abort failed while handling a fatal exception: {abort_exc}\n"
+        sys.stderr.write(fallback_abort_msg)
+
+    raise e
 
 
 @quatrex_cli.command()
 def run(
-    quatrex_config: Annotated[
+    config: Annotated[
         Optional[Path],
         typer.Argument(
             ...,
-            help="Path to the quatrex TOML configuration file, "
-            "or a directory containing the configuration file(s).",
+            help="Path to the quatrex TOML configuration file.",
             dir_okay=True,
             resolve_path=True,
             exists=True,
         ),
     ] = None,
-    compute_config: Annotated[
+    abort_on_exception: Annotated[
+        bool,
+        typer.Option(
+            "--abort-on-exception/--no-abort-on-exception",
+            help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
+        ),
+    ] = True,
+):
+    """Runs quatrex with the provided configuration."""
+
+    try:
+        config = _resolve_config_path(config)
+
+        from qttools.profiling import Profiler
+        from quatrex.core.config import parse_config, setup_context
+        from quatrex.device import create_device
+
+        profiler = Profiler()
+
+        config = parse_config(config)
+        setup_context(config)
+
+        secho_header()
+
+        # Dispatch to the appropriate runner based on the formalism.
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            pprint(threadpool_info()) if comm.rank == 0 else None
+
+            device = create_device(config)
+
+            if config.scsp is not None:
+                _run_scsp(config, device)
+            elif config.formalism == "wf":
+                _run_wf(config, device)
+            elif config.formalism == "negf":
+                _run_negf(config, device)
+            else:
+                raise NotImplementedError(
+                    f"Formalism '{config.formalism}' is not implemented."
+                )
+
+        if config.outputs.save_profiling_results:
+            profiler.dump_stats()
+
+    except Exception as e:
+        if abort_on_exception:
+            _abort_quatrex(e)
+        raise
+
+
+@quatrex_cli.command()
+def pre_process(
+    config: Annotated[
         Optional[Path],
         typer.Argument(
             ...,
-            help="Path to the compute TOML configuration file.",
-            dir_okay=False,
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
             resolve_path=True,
             exists=True,
         ),
     ] = None,
+    abort_on_exception: Annotated[
+        bool,
+        typer.Option(
+            "--abort-on-exception/--no-abort-on-exception",
+            help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
+        ),
+    ] = True,
 ):
-    """Runs quatrex with the provided configuration."""
-    # No arguments provided, use default paths.
-    if quatrex_config is None:
-        quatrex_config = Path("./quatrex_config.toml")
-        if not quatrex_config.exists():
-            raise BadArgumentUsage(
-                "No quatrex configuration file provided and default "
-                "'./quatrex_config.toml' does not exist."
-            )
-        compute_config = Path("./compute_config.toml")
-        if not compute_config.exists():
-            compute_config = None
+    """Run pre-processing tasks for the provided configuration."""
 
-    # If a directory is provided, look for the config files inside.
-    if quatrex_config.is_dir():
-        if compute_config is not None:
-            raise BadArgumentUsage(
-                "If a directory is provided as quatrex_config, "
-                "compute_config must not be provided."
-            )
-        quatrex_config = quatrex_config / "quatrex_config.toml"
-        if not quatrex_config.exists():
-            raise BadArgumentUsage(
-                f"No quatrex configuration file found in directory: {quatrex_config.parent}"
-            )
-        compute_config = quatrex_config.parent / "compute_config.toml"
-        if not compute_config.exists():
-            compute_config = None
-
-    from quatrex.core.compute_config import ComputeConfig
-    from quatrex.core.compute_config import parse_config as parse_compute_config
-    from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-
-    quatrex_config = parse_quatrex_config(quatrex_config)
-
-    if compute_config is None:
-        compute_config = ComputeConfig()
-    else:
-        compute_config = parse_compute_config(compute_config)
-
-    secho_header()
-
-    # Dispatch to the appropriate runner based on the formalism.
-    if quatrex_config.formalism == "qtbm":
-        _run_qtbm(quatrex_config, compute_config)
-    elif quatrex_config.formalism == "negf":
-        _run_negf(quatrex_config, compute_config)
-    else:
-        raise NotImplementedError(
-            f"Formalism '{quatrex_config.formalism}' is not implemented."
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError(
+            "The 'pre-process' command can only be run on a single process."
         )
+
+    try:
+        config = _resolve_config_path(config)
+
+        from quatrex.core.config import parse_config, setup_context
+        from quatrex.pre_processsing import pre_process as main
+
+        config = parse_config(config)
+        setup_context(config)
+
+        secho_header()
+
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            pprint(threadpool_info()) if comm.rank == 0 else None
+            main(config)
+
+    except Exception as e:
+        if abort_on_exception:
+            _abort_quatrex(e)
+        raise
 
 
 @quatrex_cli.command()
-def fetch_example(
-    name: Annotated[
-        str,
+def mesh(
+    config: Annotated[
+        Path,
         typer.Argument(
             ...,
-            help="Name of the example to fetch. Allowed examples are:\n"
-            f"{'\n'.join([f'- `{ex}`' for ex in ALLOWED_EXAMPLES.keys()])}",
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
+            resolve_path=True,
+            exists=True,
         ),
     ],
-    force: Annotated[
+    off_screen: Annotated[
         bool,
         typer.Option(
-            "--force",
-            "-f",
-            help="Forces re-download even if the dataset already exists.",
+            "--off-screen",
+            is_flag=True,
+            help="Whether to use off-screen rendering.",
         ),
     ] = False,
 ):
-    """Fetches a preconfigured example by name."""
-    if comm.rank == 0:
-        if name not in ALLOWED_EXAMPLES.keys():
-            raise ValueError(
-                f"Unknown example: {name}. Current examples are: {list(ALLOWED_EXAMPLES.keys())}"
-            )
+    """Generates and visualizes the device mesh based on the provided configuration.
 
-        typer.secho(f"Fetching example: {name}")
-        device_key, __, target_dir = get_example_dir(name)
+    This can only be run on a single process.
 
-        for subname in ALLOWED_EXAMPLES[name]:
-            load_example(
-                device_key + "-" + subname,
-                target_dir=target_dir / "inputs",
-                force=force,
-            )
+    """
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError("The 'mesh' command can only be run on a single process.")
+
+    from quatrex.core.config import parse_config, setup_context
+
+    config = parse_config(config)
+    setup_context(config)
+
+    secho_header()
+
+    from quatrex.electrostatics.meshing import DeviceMesh
+
+    # Trigger mesh generation and visualization.
+    device_mesh = DeviceMesh(config)
+    device_mesh.generate_mesh()
+    device_mesh.visualize(off_screen=off_screen)
 
 
 @quatrex_cli.callback(no_args_is_help=True)
@@ -255,7 +367,7 @@ def main(
     ] = False,
 ):
     """Quantum Transport at the Exascale and Beyond."""
-    ...
+    pass
 
 
 def run_cli():

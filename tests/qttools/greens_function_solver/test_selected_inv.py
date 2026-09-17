@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import pytest
 
@@ -38,10 +38,9 @@ def test_selected_inv(
     bt_dense: NDArray,
     gfsolver_type: GFSolver,
     dsdbsparse_type: DSDBSparse,
-    out: bool,
     max_batch_size: int,
     block_sizes: NDArray,
-    global_stack_shape: int | tuple,
+    global_stack_shape: tuple,
 ):
     """Tests the selected inversion method of a Green's function solver."""
     bt_mask = bt_dense.astype(bool)
@@ -49,16 +48,15 @@ def test_selected_inv(
 
     coo = sparse.coo_matrix(bt_dense)
 
-    block_sizes = block_sizes
-    dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dsdbsparse = dsdbsparse_type.from_sparray(
+        sparray=coo, block_sizes=block_sizes, global_stack_shape=global_stack_shape
+    )
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
-    if out:
-        gf_inv = dsdbsparse_type.zeros_like(dsdbsparse)
-        solver.selected_inv(dsdbsparse, out=gf_inv)
-    else:
-        gf_inv = solver.selected_inv(dsdbsparse)
+    gf_inv = dsdbsparse_type.empty_like(dsdbsparse)
+    gf_inv.allocate_data()
+    solver.selected_inv(dsdbsparse, out=gf_inv)
 
     bt_mask_broadcasted = xp.broadcast_to(
         bt_mask, (*global_stack_shape, *bt_mask.shape)

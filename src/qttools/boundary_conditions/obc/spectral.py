@@ -1,0 +1,562 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes a spectral solver for the open boundary conditions."""
+
+import warnings
+
+from qttools import NDArray, xp
+from qttools.boundary_conditions.obc.obc import OBCSolver
+from qttools.kernels import linalg
+from qttools.nevp import NEVP
+from qttools.toeplitz.toeplitz import extract_layer, upscale_layer
+
+
+class Spectral(OBCSolver):
+    """Spectral open-boundary condition solver.
+
+    This technique of obtaining the surface Green's function is based on
+    the solution of a non-linear eigenvalue problem (NEVP), defined via
+    the system-matrix blocks in the semi-infinite contacts.
+
+    Those eigenvalues corresponding to reflected modes are filtered out,
+    so that only the ones that correspond to modes that propagate into
+    the leads or those that decay away from the system are retained.
+
+    The surface Green's function is then calculated from these filtered
+    eigenvalues and eigenvectors.
+
+    Parameters
+    ----------
+    nevp : NEVP
+        The non-linear eigenvalue problem solver to use.
+    block_sections : int | None, optional
+        The number of sections to split the periodic matrix layer into.
+        If None, the periodicity is determined from the lenght of the blocks.
+    min_decay : float, optional
+        The decay threshold after which modes are considered to be
+        evanescent.
+    max_decay : float, optional
+        The maximum decay to consider for evanescent modes.
+        The default is 6.9 which corresponds to 1000 in the eigenvalues.
+    num_ref_iterations : int, optional
+        The number of refinement iterations to perform on the surface
+        Green's function.
+    min_propagation : float, optional
+        The minimum ratio between the real and imaginary part of the
+        group velocity of a mode. This ratio is used to determine how
+        clearly a mode propagates.
+    residual_tolerance : float, optional
+        The tolerance for the residual of the NEVP.
+    residual_normalization : bool
+        If the residual should be normalized by the eigenvalue.
+    warning_threshold : float, optional
+        The threshold for the relative recursion error above which a warning is issued.
+        This is only used if `return_injected` is True. Otherwise,
+        the intend is that the memoizer wrapper handles the warning.
+    eta_decay : float, optional
+        Small value to separate very slow decaying modes from
+        non-decaying ones.
+
+        [^1]: S. Brück, et al., Efficient algorithms for large-scale
+        quantum transport calculations, The Journal of Chemical Physics,
+        2017.
+
+    """
+
+    def __init__(
+        self,
+        nevp: NEVP,
+        block_sections: int | None = None,
+        min_decay: float = 1e-3,
+        max_decay: float = 6.9,
+        num_ref_iterations: int = 2,
+        min_propagation: float = 0.01,
+        residual_tolerance: float = 1e-3,
+        residual_normalization: bool = True,
+        warning_threshold: float = 1e-1,
+        eta_decay: float = 1e-14,
+    ) -> None:
+        """Initializes the spectral OBC solver."""
+        self.nevp = nevp
+
+        self.min_decay = min_decay
+        self.max_decay = max_decay
+
+        self.num_ref_iterations = num_ref_iterations
+        self.block_sections = block_sections
+
+        self.min_propagation = min_propagation
+        self.residual_tolerance = residual_tolerance
+        self.residual_normalization = residual_normalization
+        self.warning_threshold = warning_threshold
+        self.eta_decay = eta_decay
+
+        if self.num_ref_iterations < 1:
+            raise ValueError("Number of refinement iterations must be at least 1.")
+
+    def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
+        """Computes the group velocity of the modes.
+
+        Parameters
+        ----------
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The right eigenvectors of the NEVP.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+
+        Returns
+        -------
+        dEk_dk : NDArray
+            The group velocity of the modes.
+
+        """
+
+        b = len(a_xx) // 2
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+
+            dEk_dk = -sum(
+                (1j * n)
+                * xp.diagonal(
+                    vs.conj().swapaxes(-1, -2) @ a_x @ vs,
+                    axis1=-2,
+                    axis2=-1,
+                )
+                * ws**n
+                for a_x, n in zip(a_xx, range(-b, b + 1))
+            )
+
+        return dEk_dk
+
+    def _find_reflected_modes(
+        self,
+        ws: NDArray,
+        vs: NDArray,
+        a_xx: tuple[NDArray, ...],
+        find_injected: bool = False,
+    ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
+        """Determines which eigenvalues correspond to reflected (and injected) modes.
+
+        For the computation of the surface Green's function, only the
+        eigenvalues corresponding to modes that propagate or decay into
+        the leads are retained.
+
+        Parameters
+        ----------
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The right eigenvectors of the NEVP.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        find_injected: bool, optional
+            Whether to find the injected eigenvector
+
+        Returns
+        -------
+        mask_reflected : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            reflected modes.
+        mask_injected : NDArray, optional
+            A boolean mask indicating which eigenvalues correspond to
+            injected modes.
+        dEk_dK_injected : NDArray, optional
+            List of dEk_dK values corresponding to injected modes
+
+        """
+
+        # Calculate the residual
+        with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
+
+            products = sum(
+                a_x @ vs * ws[..., xp.newaxis, :] ** (i - len(a_xx) // 2)
+                for i, a_x in enumerate(a_xx)
+            )
+
+            residuals = xp.linalg.norm(products, axis=-2)
+
+            # eigenvectors are not necessarily normalized
+            eigenvector_norm = xp.linalg.norm(vs, axis=-2)
+            residuals /= eigenvector_norm
+
+            if self.residual_normalization:
+                residuals /= xp.abs(ws)
+
+        # Calculate the group velocity to select propagation direction.
+        # The formula can be derived by taking the derivative of the
+        # polynomial eigenvalue equation with respect to k.
+        # NOTE: This is actually only correct if we have no overlap.
+
+        dEk_dk = self._compute_dE_dk(ws, vs, a_xx)
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore zero log and division by zero.
+            ks = -1j * xp.log(ws)
+
+        # replace nan and infs with 0 due to zero eigenvalues
+        dEk_dk = xp.nan_to_num(dEk_dk, nan=0, posinf=0, neginf=0)
+        ks = xp.nan_to_num(ks, nan=0, posinf=0, neginf=0)
+
+        # Find eigenvalues that correspond to reflected modes. These are
+        # modes that either propagate into the leads or decay away from
+        # the system.
+
+        # Determine (matched) modes that decay slow enough to be
+        # considered propagating.
+        mask_propagating = xp.abs(ks.imag) < self.min_decay
+
+        # fast enough propagation (group velocity)
+        eta = xp.finfo(dEk_dk.dtype).eps
+        mask_propagating &= self.min_propagation < abs(dEk_dk.real) / (
+            abs(dEk_dk.imag) + eta
+        )
+        # propgation direction
+        mask_propagating &= dEk_dk.real < 0
+
+        # Make sure decaying modes decay fast enough.
+        mask_decaying = ks.imag < -self.min_decay
+
+        # capture slow decaying modes
+        # modes that arent clearly propagating
+        mask_decaying |= (
+            self.min_propagation >= abs(dEk_dk.real) / (abs(dEk_dk.imag) + eta)
+        ) & (ks.imag < -self.eta_decay)
+
+        # ingore modes that decay incredibly fast
+        mask_decaying &= ks.imag > -self.max_decay
+
+        mask_reflected = (mask_propagating | mask_decaying) & (
+            residuals < self.residual_tolerance
+        )
+
+        # Calulate injecting modes
+        if find_injected:
+
+            mask_injected = dEk_dk.real > 0
+            mask_injected &= xp.abs(ks.imag) < self.min_decay
+            mask_injected &= self.min_propagation < abs(dEk_dk.real) / (
+                abs(dEk_dk.imag) + eta
+            )
+
+            return mask_reflected, mask_injected, dEk_dk
+
+        return mask_reflected
+
+    def _upscale_eigenmodes(
+        self, ws: NDArray, vs: NDArray, block_sections: int
+    ) -> tuple[NDArray, NDArray]:
+        """Upscales the eigenvectors to the full periodic matrix layer.
+
+        The extraction of subblocks and hence the solution of a higher-
+        ordere, but smaller, NEVP leads to eigenvectors that are only
+        defined on the reduced matrix layer. This function upscales the
+        eigenvectors back to the full periodic matrix layer.
+
+        Parameters
+        ----------
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The eigenvectors of the (potentially) higher order NEVP.
+        block_sections : int
+            The number of sections to split the periodic matrix layer into.
+
+        Returns
+        -------
+        ws : NDArray
+            The upscaled eigenvalues.
+        vs : NDArray
+            The upscaled eigenvectors.
+
+        """
+        if block_sections == 1:
+            with warnings.catch_warnings(
+                action="ignore", category=RuntimeWarning
+            ):  # Ignore division by zero.
+                return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
+
+        # batchsize, subblock_size, num_modes = vs.shape
+        batchsize = vs.shape[:-2]
+        ndim_batch = len(batchsize)
+        subblock_size = vs.shape[-2]
+        num_modes = vs.shape[-1]
+        block_size = subblock_size * block_sections
+
+        ws_upscaled = xp.moveaxis(
+            xp.array([ws**n for n in range(block_sections)]), 0, ndim_batch
+        )
+
+        vs_upscaled = (
+            ws_upscaled[..., :, xp.newaxis, :] * vs[..., xp.newaxis, :, :]
+        ).reshape(*batchsize, block_size, num_modes)
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+            vs_upscaled = vs_upscaled / xp.linalg.norm(
+                vs_upscaled, axis=-2, keepdims=True
+            )
+
+        return ws**block_sections, vs_upscaled
+
+    def _compute_x_ii(
+        self,
+        a_xx: tuple[NDArray, ...],
+        ws: NDArray,
+        vs: NDArray,
+        mask: NDArray,
+    ) -> NDArray:
+        """Computes the surface Green's function.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The right eigenvectors of the NEVP.
+        mask : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            reflected modes.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The surface Green's function.
+
+        """
+        a_ji, a_ii, a_ij = a_xx
+
+        # Equation (13.1).
+        x_ii_a_ij = xp.zeros(mask.shape[:-1] + a_ij.shape[-2:], dtype=a_ij.dtype)
+        for i in xp.ndindex(mask.shape[:-1]):
+            m = mask[i]
+            vr = vs[i][:, m]
+            w = ws[i][m]
+            # Moore-Penrose pseudoinverse.
+            v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
+            x_ii_a_ij[i] = vr / w @ v_inv
+
+        # Calculate the surface Green's function.
+        return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
+
+    def _compute_pseudo_inverse(
+        self,
+        a_xx: tuple[NDArray, ...],
+        ws: NDArray,
+        vs: NDArray,
+        mask: NDArray,
+    ) -> NDArray:
+        r"""Computes reflected modes and pseudo_inverses.
+
+        A symmetric pseudo inverse of $\phi$ is computed by
+        $$
+        \phi a_{ij}^H a_{ij} \phi)^-1 \phi^H a_{ij}^H a_{ij},
+        $$
+        where $\phi$ are the reflected modes. It preserves the sparsity
+        pattern of $a_{ij}$.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The right eigenvectors of the NEVP.
+        mask : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            reflected modes.
+
+        Returns
+        -------
+        phi_inv_reflected : NDArray
+            The pseudoinverse of the reflected modes.
+
+        """
+        phi_inv_reflected = []
+        _, _, a_ij = a_xx
+
+        for i in xp.ndindex(mask.shape[:-1]):
+            m = mask[i]
+            vr = vs[i][:, m]
+            # Moore-Penrose pseudoinverse.
+            a_ij_i = a_ij[i, :, :].squeeze()
+            v_inv = (
+                linalg.inv(vr.conj().T @ a_ij_i.conj().T @ a_ij_i @ vr)
+                @ vr.conj().T
+                @ a_ij_i.conj().T
+                @ a_ij_i
+            )
+            phi_inv_reflected.append(v_inv)
+
+        return phi_inv_reflected
+
+    def __call__(
+        self,
+        a_xx: tuple[NDArray, ...],
+        contact: str,
+        return_injected: bool = False,
+        return_modes_only: bool = False,
+    ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
+        """Returns the surface Green's function.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, NDArray, NDArray]
+            The blocks of the contact.
+        return_injected: bool, optional
+            Whether to return the injection vector. If True, the
+            function returns a tuple of the surface Green's function and
+            the injection vector. False by default.
+        return_modes_only: bool, optional
+            Whether to return the reflected modes without computing the
+            surface Green's function. If True, the function returns a
+            tuple of None, the injection vector, the reflected modes,
+            their eigenvalues, and their pseudoinverses. False by
+            default.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function. If return_modes_only
+            is True, this is None.
+        b_injected: NDArray
+            The injected b. Returned only if return_injected is True.
+        phi_reflected: NDArray
+            The reflected modes. Returned only if return_modes_only is
+            True.
+        eig_reflected: NDArray
+            The eigenvalues corresponding to the reflected modes.
+            Returned only if return_modes_only is True.
+        phi_inv_reflected: NDArray
+            The pseudoinverse of the reflected modes. Returned only if
+            return_modes_only is True.
+
+        """
+
+        if a_xx[0].ndim == 2:
+            a_xx = tuple([a_x[xp.newaxis, :, :] for a_x in a_xx])
+
+        if self.block_sections is None:
+            blocks = a_xx
+            block_sections = (len(a_xx) - 1) // 2
+            a_xx = upscale_layer(blocks, block_sections)
+
+        else:
+            if len(a_xx) != 3:
+                raise ValueError(
+                    f"Spectral OBC requires exactly 3 boundary blocks "
+                    f"if block_sections is not None, but {len(a_xx)} were provided."
+                )
+            block_sections = self.block_sections
+            blocks = extract_layer(a_xx, block_sections)
+
+        a_ji, a_ii, a_ij = a_xx
+
+        if return_modes_only and not return_injected:
+            raise NotImplementedError(
+                "Returning only reflected modes is not implemented yet."
+            )
+
+        ws, vs = self.nevp(blocks)
+
+        ws, vs = self._upscale_eigenmodes(ws, vs, block_sections)
+
+        if return_injected:
+            mask_reflected, mask_injected, dEk_dk = self._find_reflected_modes(
+                ws,
+                vs,
+                a_xx=a_xx,
+                find_injected=return_injected,
+            )
+        else:
+            mask_reflected = self._find_reflected_modes(
+                ws,
+                vs,
+                a_xx=a_xx,
+            )
+
+        if return_modes_only:
+            phi_inv_reflected = self._compute_pseudo_inverse(
+                a_xx, ws, vs, mask_reflected
+            )
+        else:
+            x_ii = self._compute_x_ii(a_xx, ws, vs, mask_reflected)
+
+            # Perform a number of refinement iterations.
+            for __ in range(self.num_ref_iterations - 1):
+                x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+            if return_injected:
+                x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+                # Check the batch average recursion error.
+                recursion_error = xp.max(
+                    xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+                    / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+                )
+                if recursion_error > self.warning_threshold:
+                    warnings.warn(
+                        f"High relative recursion error: {recursion_error:.2e}",
+                        RuntimeWarning,
+                    )
+
+        # Calculate the injection vector and return it together with the
+        # boundary self-energy and the injected eigenvalues
+
+        if return_injected:
+            b_injected = []
+
+            if not return_modes_only:
+                # Compute the bloch matrix
+                x_ii_a_ij = -x_ii_ref @ a_ij
+            else:
+                phi_reflected = []
+                eig_reflected = []
+
+            for i in range(a_ii.shape[0]):
+                mask_injected_i = mask_injected[i, :]
+
+                vrs_injected = vs[i][:, mask_injected_i]
+                wrs_injected = ws[i, mask_injected_i]
+                dE_dk_injected = dEk_dk[i, mask_injected_i]
+
+                # Flux normalization
+                vrs_injected = vrs_injected / xp.sqrt(
+                    xp.real(dE_dk_injected[xp.newaxis, :])
+                )
+
+                if not return_modes_only:
+                    # Compute surface phi
+                    b_injected.append(
+                        vrs_injected / wrs_injected[xp.newaxis, :]
+                        - x_ii_a_ij[i] @ vrs_injected
+                    )
+                else:
+                    vrs_reflected = vs[i][:, mask_reflected[i, :]]
+                    wrs_reflected = ws[i, mask_reflected[i, :]]
+                    phi_reflected.append(vrs_reflected)
+                    eig_reflected.append(wrs_reflected)
+                    b_injected.append(
+                        vrs_injected / wrs_injected[xp.newaxis, :]
+                        - vrs_reflected
+                        @ xp.diag(1 / wrs_reflected)
+                        @ phi_inv_reflected[i]
+                        @ vrs_injected
+                    )
+
+            if return_modes_only:
+                return None, b_injected, phi_reflected, eig_reflected, phi_inv_reflected
+
+            return x_ii_ref, b_injected
+
+        x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+        return x_ii

@@ -1,13 +1,11 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import os
 import warnings
-from typing import Any, TypeAlias, TypeVar
+from typing import Any
 
 from mpi4py.MPI import COMM_WORLD as global_comm
 from numpy.typing import ArrayLike
-
-from qttools.__about__ import __version__
 
 
 def strtobool(s: str | None, default: bool | None = None) -> bool:
@@ -34,6 +32,7 @@ if global_comm.rank != 0:
         module=r".*jit",
     )
 
+QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Allows user to specify the array module via an environment variable.
 QTX_ARRAY_MODULE = os.getenv("QTX_ARRAY_MODULE", "cupy")
@@ -51,6 +50,16 @@ elif QTX_ARRAY_MODULE == "cupy":
         # a cudaErrorInsufficientDriver error or something.
         xp.abs(1)
 
+        if xp.cuda.runtime.is_hip:
+            # TODO: investigate this again
+            # this was a previous fix for AMD on Frontier
+            # NOTE: This will be done when running on AMD GPUs again.
+            if QTX_USE_CUPY_JIT and global_comm.rank == 0:
+                warnings.warn(
+                    "Disabling JIT compilation for AMD GPUs, as it was not supported.",
+                )
+            QTX_USE_CUPY_JIT = False
+
     except Exception as e:
         if global_comm.rank == 0:
             warnings.warn(
@@ -62,12 +71,8 @@ elif QTX_ARRAY_MODULE == "cupy":
 else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{QTX_ARRAY_MODULE}'")
 
-# TODO: adapt testing suite to test both JIT and non-JIT versions
-QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Some type aliases for the array module.
-_ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
-_DType = xp.dtype[_ScalarType]
-NDArray: TypeAlias = xp.ndarray[Any, _DType]
+type NDArray[ScalarType: xp.generic] = xp.ndarray[tuple[Any, ...], xp.dtype[ScalarType]]
 
-__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]
+__all__ = ["xp", "sparse", "NDArray", "ArrayLike"]

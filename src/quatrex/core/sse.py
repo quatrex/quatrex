@@ -1,8 +1,8 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes the abstract base class for scattering self-energy calculations."""
 
 from abc import ABC, abstractmethod
-
-from qttools.datastructures import DSDBSparse
 
 
 class ScatteringSelfEnergy(ABC):
@@ -11,6 +11,6 @@ class ScatteringSelfEnergy(ABC):
         self,
         *args,
         **kwargs,
-    ) -> DSDBSparse:
+    ) -> None:
         """Computes the scattering self-energy."""
         ...

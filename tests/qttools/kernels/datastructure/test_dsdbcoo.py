@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
 import pytest
@@ -94,26 +94,6 @@ def _reference_compute_block_slice(rows, cols, block_offsets, row, col):
     return inds[0], inds[-1] + 1
 
 
-@pytest.mark.usefixtures("shape", "num_inds")
-def test_find_inds(shape: tuple[int, int], num_inds: int):
-    """Tests that the indices are found correctly."""
-    coo = sparse.random(*shape, density=0.25, format="coo")
-    rows = xp.random.choice(shape[0], size=num_inds, replace=False)
-    cols = xp.random.choice(shape[1], size=num_inds, replace=False)
-
-    reference_inds, reference_value_inds = xp.nonzero(
-        (coo.row[:, xp.newaxis] == rows) & (coo.col[:, xp.newaxis] == cols)
-    )
-    inds, value_inds, max_count = dsdbcoo_kernels.find_inds(
-        coo.row, coo.col, rows, cols
-    )
-
-    assert max_count in (0, 1)
-    assert xp.all(inds == reference_inds)
-    assert xp.all(value_inds == reference_value_inds)
-
-
-@pytest.mark.usefixtures("shape", "num_blocks", "block_coords")
 def test_compute_block_slice(
     shape: tuple[int, int], num_blocks: int, block_coords: tuple[int, int]
 ):
@@ -132,6 +112,8 @@ def test_compute_block_slice(
     reference_block_slice = _reference_compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
+
+    block_offsets = block_offsets.astype(rows.dtype)
     block_slice = dsdbcoo_kernels.compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
@@ -139,7 +121,6 @@ def test_compute_block_slice(
     assert block_slice == reference_block_slice
 
 
-@pytest.mark.usefixtures("shape")
 @pytest.mark.parametrize("use_kernel", [True, False])
 def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     """Tests that the block gets densified correctly."""
@@ -168,7 +149,6 @@ def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     assert xp.allclose(block, reference_block)
 
 
-@pytest.mark.usefixtures("shape")
 def test_sparsify_block(shape: tuple[int, int]):
     """Tests that the block gets sparsified correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
@@ -180,7 +160,6 @@ def test_sparsify_block(shape: tuple[int, int]):
     assert xp.allclose(data, coo.data)
 
 
-@pytest.mark.usefixtures("shape", "num_blocks")
 def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     """Tests that the block sort is computed correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
@@ -197,9 +176,3 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     sort_index = dsdbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
 
     assert xp.all(sort_index == reference_sort_index)
-
-
-if __name__ == "__main__":
-    # pytest.main([__file__])
-    for i in range(10):
-        test_find_inds((2000, 2000), 2000)

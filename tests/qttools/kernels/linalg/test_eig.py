@@ -1,3 +1,4 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 import numpy as np
 import pytest
 from numba.typed import List
@@ -11,7 +12,6 @@ if xp.__name__ == "cupy":
     import cupy as cp
 
 
-@pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
     """Tests the _eig_numba function with array input."""
 
@@ -31,7 +31,6 @@ def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
             assert xp.allclose(A[b] @ v[b][:, i], w[b][i] * v[b][:, i])
 
 
-@pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
     """Tests the _eig_numba function with array input."""
 
@@ -61,9 +60,6 @@ def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
             assert xp.allclose(A[b] @ v[b][:, i], w[b][i] * v[b][:, i])
 
 
-@pytest.mark.usefixtures(
-    "n", "eig_compute_module", "input_module", "output_module", "use_pinned_memory"
-)
 @pytest.mark.parametrize("if_list", [False, True])
 def test_eig(
     n: int,
@@ -121,14 +117,6 @@ def test_eig(
         assert xp.allclose(A @ v[:, i], w[i] * v[:, i])
 
 
-@pytest.mark.usefixtures(
-    "n",
-    "batch_shape",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 @pytest.mark.parametrize("if_list", [False, True])
 def test_eig_batched(
     n: int,

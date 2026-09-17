@@ -1,16 +1,16 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes the contour integral kernels."""
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, xp
-from qttools.profiling import Profiler
-
-profiler = Profiler()
+from qttools.kernels import linalg
 
 if xp.__name__ == "cupy":
-    import cupyx as cpx
+    from cupyx import jit
 
     if QTX_USE_CUPY_JIT:
 
-        @cpx.jit.rawkernel()
+        @jit.rawkernel()
         def _contour_operator(
             output: NDArray,
             a_xx: NDArray,
@@ -22,7 +22,7 @@ if xp.__name__ == "cupy":
         ):
             # assumes c order of output and a_xx
 
-            idx = int(cpx.jit.blockIdx.x * cpx.jit.blockDim.x + cpx.jit.threadIdx.x)
+            idx = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
             if idx < batchsize * num_quatrature_points * blocksize * blocksize:
 
                 # batch index
@@ -112,7 +112,6 @@ if xp.__name__ == "cupy":
         )
 
 
-@profiler.profile(level="debug")
 def operator_inverse(
     a_xx: tuple[NDArray, ...],
     z: NDArray,
@@ -179,4 +178,4 @@ def operator_inverse(
             ),
         )
 
-    return xp.linalg.inv(operator.astype(contour_type)).astype(in_type)
+    return linalg.inv(operator.astype(contour_type)).astype(in_type)

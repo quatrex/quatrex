@@ -1,0 +1,688 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes the methods to load and parse the input data."""
+
+import warnings
+from pathlib import Path
+
+import numpy as np
+import scipy.sparse as sps
+from mpi4py.MPI import COMM_WORLD as comm_world
+
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
+from qttools.datastructures import DSDBSparse
+from qttools.toeplitz.toeplitz import construct_transport_cell
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from quatrex.core.config import QuatrexConfig
+from quatrex.grid.kpoints import monkhorst_pack
+
+
+def get_block_sizes(
+    config: QuatrexConfig,
+    orbital_coordinates: NDArray,
+) -> NDArray:
+    """Determines the block sizes for the device.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The Quatrex configuration.
+    orbital_coordinates : NDArray
+        The coordinates of the orbital centers.
+
+    Returns
+    -------
+    NDArray
+        The block sizes for the device.
+
+    """
+
+    if config.device.construct_from_unit_cell:
+        # The neighbor cell cutoff along the transport direction
+        # determines the size of the transport cell.
+        # which is implicit in the orbital coordinates.
+        block_sizes = np.full(
+            shape=config.device.num_transport_cells,
+            fill_value=orbital_coordinates.shape[0]
+            // config.device.num_transport_cells,
+        )
+
+    else:
+        block_sizes = config.device.block_size
+        if isinstance(block_sizes, int):
+            num_blocks, remainder = divmod(orbital_coordinates.shape[0], block_sizes)
+            if remainder != 0:
+                raise ValueError(
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {orbital_coordinates.shape[0]}."
+                )
+            block_sizes = [block_sizes] * num_blocks
+
+        block_sizes = np.array(block_sizes)
+
+        if block_sizes.sum() != orbital_coordinates.shape[0]:
+            raise ValueError(
+                f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {orbital_coordinates.shape[0]}."
+            )
+
+    return block_sizes
+
+
+def create_coordinate_grid(
+    unit_cell_coords: NDArray,
+    num_unit_cells: int,
+    transport_ind: int,
+    lattice_vectors: NDArray,
+) -> NDArray:
+    """Creates a grid of coordinates for orbital centers in a supercell.
+
+    This takes an array of coordinates and repeats them `num_unit_cells`
+    times along the transport direction, by shifting them by the lattice
+    vector in that direction.
+
+    Parameters
+    ----------
+    unit_cell_coords : NDArray
+        Coordinates of the orbital centers in a unit cell.
+    num_unit_cells : int
+        Number of unit cells in the transport direction that make up the transport cell.
+    transport_ind : int
+        Index of the transport direction (0, 1, or 2).
+    lattice_vectors : NDArray
+        Lattice vectors of the system.
+
+    Returns
+    -------
+    NDArray
+        The grid of coordinates for the orbital centers in the
+        transport cell.
+
+    """
+    num_coords = unit_cell_coords.shape[0]
+    grid = xp.zeros((num_unit_cells * num_coords, 3), dtype=xp.float64)
+    for i in range(num_unit_cells):
+        grid[i * num_coords : (i + 1) * num_coords, :] = (
+            unit_cell_coords + i * lattice_vectors[transport_ind]
+        )
+    return grid
+
+
+def _expand_tight_binding_matrix(
+    matrix_dict: dict,
+    num_transport_cells: int,
+    transport_ind: int,
+    block_start: int | None = None,
+    block_end: int | None = None,
+    transverse_shift: tuple = (0, 0),
+) -> sparse.csr_matrix:
+    """Creates a full block-tridiagonal matrix from tight-binding matrix / Wannier Centers.
+
+    The transport cell (same as supercell) is the cell that is repeated
+    in the transport direction, and is only connected to nearest-neighboring cells.
+    NOTE: interactions outside nearest neighbors are not included
+    in the block-tridiagonal Hamiltonian (see below).
+
+    Example for a tight-binding matrix with 3 cells in transport direction,
+
+      ------- -------
+     | o o o | o x x | x
+     | x o o | o o x | x x
+     | x x o | o o o | x x x
+      ------- ------- -------
+     | x x x | o o o | o x x |
+     | x x x | x o o | o o x |
+     | x x x | x x o | o o o |
+      ------- ------- -------
+       x x x | x x x | o o o |
+         x x | x x x | x o o |
+           x | x x x | x x o |
+              ------- -------
+
+    only the upper diagonal part is expanded.
+
+    Parameters
+    ----------
+    matrix_dict : dict
+        Wannier unit cells.
+    num_transport_cells : int
+        Number of transport cells.
+    transport_ind : int or str
+        Direction of transport. Can be 0, 1, 2.
+    block_start : int | None, optional
+        Starting block index for arrow shape partition. Defaults to
+        `None`.
+    block_end : int | None, optional
+        Ending block index for arrow shape partition. Defaults to
+        `None`.
+    transverse_shift : tuple, optional
+        Shift in the transverse directions. The shift means for which
+        real space coordinate the block should be constructed. The
+        default is (0, 0).
+
+    Returns
+    -------
+    sparse.csr_matrix
+        The block-tridiagonal Hamiltonian matrix.
+
+    """
+
+    if isinstance(transport_ind, str):
+        transport_ind = "abc".index(transport_ind)
+
+    transport_keys = np.array(list(matrix_dict.keys()))[:, transport_ind]
+    transport_cell_size = np.max(np.abs(transport_keys))
+
+    block_start = block_start or 0
+    block_end = block_end or num_transport_cells
+    if block_start >= block_end:
+        raise ValueError("block_start must be smaller than block_end.")
+    if block_end > num_transport_cells:
+        raise ValueError("block_end must be smaller than num_transport_cells.")
+    if block_start < 0:
+        raise ValueError("block_start must be greater than or equal to 0.")
+
+    if len(transverse_shift) != 2:
+        raise ValueError("transverse_shift must have length 3.")
+
+    # Expand and convert to sparse matrices.
+    # TODO: assumes matrices are dense for now
+    blocks = [
+        construct_transport_cell(
+            matrix_dict=matrix_dict,
+            transport_cell_size=transport_cell_size,
+            transport_ind=transport_ind,
+            block_index=block_index,
+            transverse_shift=transverse_shift,
+            key_assumption="upper",
+        )
+        for block_index in [0, 1]
+    ]
+    blocks = [
+        xp.triu(blocks[block_index]) if block_index == 0 else blocks[block_index]
+        for block_index in [0, 1]
+    ]
+    blocks = [sparse.coo_matrix(block) for block in blocks]
+
+    # Canoncialize the sparse matrices.
+    for block in blocks:
+        if block.has_canonical_format is False:
+            block.sum_duplicates()
+
+    # Create the block-tridiagonal matrix.
+    num_blocks = block_end - block_start
+    block_size = blocks[0].shape[0]
+    offsets = xp.arange(block_start, block_end) * blocks[0].shape[0]
+
+    full_rows = []
+    full_cols = []
+    full_data = []
+    for block, (row_shift, col_shift) in zip(blocks, [(0, 0), (0, 1)]):
+        rows = xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz)
+        cols = xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz)
+        data = xp.tile(block.data, num_blocks)
+
+        # Shift rows and columns for off-diagonal blocks
+        rows += row_shift * block_size
+        cols += col_shift * block_size
+
+        full_rows.append(rows)
+        full_cols.append(cols)
+        full_data.append(data)
+
+    full_rows = xp.hstack(full_rows)
+    full_cols = xp.hstack(full_cols)
+    full_data = xp.hstack(full_data)
+
+    # Remove the fishtail at the end of the matrix.
+    matrix_shape = num_transport_cells * block_size
+    valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
+    full_rows = full_rows[valid_mask]
+    full_cols = full_cols[valid_mask]
+    full_data = full_data[valid_mask]
+
+    return sparse.csr_matrix(
+        (full_data, (full_rows, full_cols)),
+        shape=(matrix_shape, matrix_shape),
+    )
+
+
+def _sum_operator(
+    matrix_dict: dict[tuple, sparse.csr_matrix],
+    symmetry: str | None = None,
+    phases: dict | None = None,
+) -> sparse.csr_matrix:
+    """Sums up periodic image contributions for a specific k-point.
+
+    This takes a Hermitian operator (e.g., Hamiltonian, overlap) and performs a weighted
+    sum to construct a matrix for a specific k-point.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix]
+        The dictionary of matrices corresponding to different periodic
+        repetitions. It is assumed that only the upper parts are present.
+    symmetry : str | None, optional
+        The symmetry of the resulting matrix. If `None`, the matrix is not symmetric.
+    phases : dict, optional
+        A dictionary mapping the different image indices to their weight.
+        If not provided, this performs an unweighted sum.
+
+    Returns
+    -------
+    sparse.csr_matrix
+        The summed matrix for the specific k-point.
+
+    """
+
+    if phases is None:
+        phases = {coord: 1.0 for coord in matrix_dict}
+
+    # NOTE: Sparse matrix addition is slow
+    # but unavoidable due to memory constraints.
+    # TODO: Could still be optimized
+    summed_matrix = sum(phases[coord] * matrix for coord, matrix in matrix_dict.items())
+
+    if symmetry is None:
+        summed_matrix = summed_matrix + summed_matrix.T.conj()
+        summed_matrix.setdiag(summed_matrix.diagonal() / 2)
+
+    return summed_matrix
+
+
+def _assemble_kpoint(
+    out_matrix: DSDBSparse,
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    kpoint_grid: NDArray,
+    kpoint_shift: NDArray,
+    kshift: int | NDArray,
+) -> None:
+    """Assembles a DSBSparse from a dictionary of sparse matrices
+    corresponding to different periodic repetitions.
+
+    Parameters
+    ----------
+    out_matrix : DSDBSparse
+        The matrix to assemble into.
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions. It is assumed that only the upper parts are present.
+    kpoint_grid : NDArray
+        The k-point grid.
+    kshift : int | NDArray
+        The k-point shift to apply.
+
+    """
+
+    num_dimensions = len(kpoint_grid)
+
+    if isinstance(kshift, int):
+        kshift = np.array([kshift for _ in range(num_dimensions)])
+
+    if not matrix_dict:
+        raise ValueError("No matrices found in matrix_dict.")
+
+    for cell in matrix_dict:
+        if len(cell) != num_dimensions:
+            raise ValueError(
+                f"Cell {cell} has incorrect dimensionality. "
+                f"Expected {num_dimensions}, got {len(cell)}."
+            )
+
+    if all(kpoint_grid == 1):
+        out_matrix.data += _sum_operator(matrix_dict, out_matrix.symmetry)[
+            out_matrix.spy()
+        ]
+    else:
+
+        kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
+            tuple(kpoint_grid) + (-1,)
+        )
+        kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
+
+        index = np.argwhere(kpoint_grid > 1)[0]
+        for stack_index in np.ndindex(kpoints.shape[:-1]):
+            kpoint = kpoints[stack_index]
+            stack_index = np.array(stack_index)
+            stack_index = tuple(stack_index[index])
+
+            phases = {
+                coord: xp.exp(2j * np.pi * (np.asarray(coord) @ kpoint))
+                for coord in matrix_dict
+            }
+
+            out_matrix.data[(...,) + stack_index + (slice(None),)] += _sum_operator(
+                matrix_dict, out_matrix.symmetry, phases=phases
+            )[out_matrix.spy()]
+
+
+def _create_matrix_from_unit_cells(
+    config: QuatrexConfig,
+    matrix_dict: dict,
+) -> dict:
+    """Creates a matrix from unit cells with periodic shifts.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex simulation configuration.
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions. It is assumed that only the upper parts are present.
+
+    Returns
+    -------
+    dict
+        The expanded matrices
+
+    """
+    # Determine the local slice of the data.
+    # NOTE: This is arrow-wise partitioning.
+    # TODO: Allow more options, e.g., block row-wise partitioning.
+    section_sizes, __ = get_section_sizes(
+        config.device.num_transport_cells, comm.block.size
+    )
+    section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+    start_block = section_offsets[comm.block.rank]
+    end_block = section_offsets[comm.block.rank + 1]
+
+    # Create a matrix for each connecting layer along the transverse
+    # directions.
+    out_matrix_dict = {}
+
+    transport_ind = "abc".index(config.device.transport_direction)
+    for coord in matrix_dict:
+
+        # Do not expand multiple time in
+        # transport direction
+        if coord[transport_ind] != 0:
+            continue
+
+        transverse_shift = coord[:transport_ind] + coord[transport_ind + 1 :]
+
+        matrix_sparray = _expand_tight_binding_matrix(
+            matrix_dict=matrix_dict,
+            num_transport_cells=config.device.num_transport_cells,
+            transport_ind=transport_ind,
+            block_start=start_block,
+            block_end=end_block,
+            transverse_shift=transverse_shift,
+        )
+        out_matrix_dict[coord] = matrix_sparray.astype(xp.complex128)
+
+    return out_matrix_dict
+
+
+def load_matrices(
+    config: QuatrexConfig,
+    matrix_name: str,
+    force_complex: bool = True,
+):
+    """Loads a Hermitian matrix from file
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex configuration.
+    matrix_name : str
+        The name of the matrix ('hamiltonian', 'overlap', etc.).
+    force_complex : bool
+        Whether to force the loaded matrices to be complex. If `True`,
+        the loaded matrices will be cast to `xp.complex128`.
+
+    Returns
+    -------
+    dict
+        The dict of sparse matrices corresponding to different periodic repetitions.
+        It is assumed that only the upper parts are stored.
+
+    """
+
+    # load the matrices
+    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
+
+    if (0, 0, 0) not in matrix_dict:
+        raise ValueError(
+            f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
+            f"Available keys: {list(matrix_dict.keys())}"
+        )
+
+    # assert that the keys form a complete grid,
+    keys = np.array(list(matrix_dict.keys()))
+    max_coords = keys.max(axis=0)
+    min_coords = keys.min(axis=0)
+
+    if not np.all(np.abs(min_coords) == max_coords):
+        raise ValueError(
+            f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
+            f"but found min_coords={min_coords} and max_coords={max_coords}."
+        )
+
+    expected_size = np.prod(max_coords - min_coords + 1)
+    actual_size = len(matrix_dict)
+    if expected_size != actual_size:
+        raise ValueError(
+            f"Expected {expected_size} unit cells based on the detected grid shape, "
+            f"but found {actual_size} unit cells in the matrix file."
+        )
+
+    # assert that more than the neighbor cell cutoff is available if the cutoff is requested
+    if config.device.neighbor_cell_cutoff is not None and any(
+        max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)
+    ):
+        raise ValueError(
+            "Matrix contains fewer neighbor cells than requested."
+            f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
+        )
+
+    # drop half the matrices
+    # NOTE: this is done on the CPU
+    matrix_dict = {
+        coord: np.triu(matrix) if isinstance(matrix, np.ndarray) else sps.triu(matrix)
+        for coord, matrix in matrix_dict.items()
+    }
+
+    # assert that the matrix_dict have the same shape
+    matrix_shape = matrix_dict[(0, 0, 0)].shape
+    matrix_type = type(matrix_dict[(0, 0, 0)])
+    for coord, matrix in matrix_dict.items():
+        if matrix.shape != matrix_shape:
+            raise ValueError(
+                f"Matrix at coordinate {coord} has shape {matrix.shape}, "
+                f"but expected shape is {matrix_shape}."
+            )
+        if not isinstance(matrix, matrix_type):
+            raise TypeError(
+                f"Matrix at coordinate {coord} has type {type(matrix)}, "
+                f"but expected type is {matrix_type}."
+            )
+
+    # drop keys outside the neighbor cell cutoff if requested
+    if config.device.neighbor_cell_cutoff is not None:
+        matrix_dict = {
+            coord: matrix
+            for coord, matrix in matrix_dict.items()
+            if all(
+                abs(c) <= config.device.neighbor_cell_cutoff[i]
+                for i, c in enumerate(coord)
+            )
+        }
+
+    # transfer the matrix_dict to the GPU
+    if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
+        matrix_dict = {
+            coord: xp.asarray(matrix) for coord, matrix in matrix_dict.items()
+        }
+    elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
+        matrix_dict = {
+            coord: sparse.csr_matrix(matrix) for coord, matrix in matrix_dict.items()
+        }
+
+    if force_complex:
+        matrix_dict = {
+            coord: matrix.astype(xp.complex128) for coord, matrix in matrix_dict.items()
+        }
+
+    # expand potentially if the system is periodic
+    # and given bz unit cell matrix_dict
+    if config.device.construct_from_unit_cell:
+        matrix_dict = _create_matrix_from_unit_cells(config, matrix_dict)
+
+    # NOTE: for closed systems,
+    # transport direction will be None
+    transport_ind = "abc".index(config.device.transport_direction)
+
+    # drop keys which are bigger than zero in the transport direction
+    matrix_dict = {
+        coord: matrix
+        for coord, matrix in matrix_dict.items()
+        if coord[transport_ind] == 0
+    }
+
+    # make sure that the matrices are canonical
+    for key, matrix in matrix_dict.items():
+        if isinstance(matrix, xp.ndarray):
+            if comm.rank == 0:
+                warnings.warn(
+                    f"Matrix {matrix_name} at coordinate {key} is a dense array."
+                )
+            matrix = sparse.csr_matrix(matrix)
+            matrix_dict[key] = matrix
+
+        if not matrix.has_canonical_format:
+            matrix.sum_duplicates()
+            matrix.sort_indices()
+
+    return matrix_dict
+
+
+def assemble_matrix(
+    config: QuatrexConfig,
+    matrix_name: str,
+    sparsity_pattern: sparse.coo_matrix | None = None,
+    shift_kpoints: bool = False,
+) -> tuple[DSDBSparse, sparse.coo_matrix]:
+    """Loads a Hermitian matrix from file and optionally
+    applies a provided sparsity pattern.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex configuration.
+    matrix_name : str
+        The name of the matrix ('hamiltonian', 'overlap', etc.).
+    sparsity_pattern : sparse.coo_matrix | None
+        The sparsity pattern to enforce. If None, the sparsity of the
+        loaded matrix is used.
+    shift_kpoints : bool
+        Whether to "shift"/"center" the kpoints in the allocated
+        DSDBSparse.
+
+    Returns
+    -------
+    matrix : DSDBSparse
+        The loaded matrix.
+    sparsity_pattern : sparse.coo_matrix
+        The sparsity pattern of the returned matrix.
+
+    """
+
+    matrix_dict = load_matrices(config, matrix_name)
+
+    # load or construct the block sizes for the DSDBSparse
+    if config.device.construct_from_unit_cell:
+        expanded_shape = matrix_dict[(0, 0, 0)].shape
+        block_sizes = [
+            expanded_shape[0] // config.device.num_transport_cells
+        ] * config.device.num_transport_cells
+    else:
+        block_sizes = config.device.block_size
+        if isinstance(block_sizes, int):
+            num_blocks, remainder = divmod(matrix_dict[(0, 0, 0)].shape[0], block_sizes)
+            if remainder != 0:
+                raise ValueError(
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {matrix_dict[(0,0,0)].shape[0]}."
+                )
+            block_sizes = [block_sizes] * num_blocks
+
+    block_sizes = np.array(block_sizes)
+
+    if sparsity_pattern is None:
+        # TODO: This could lead to cancelations
+        # and then the sparsity pattern is not the true union
+        matrix_sparray = _sum_operator(matrix_dict, config.scba.symmetric)
+        sparsity_pattern = matrix_sparray.copy()
+        sparsity_pattern.data[:] = 1
+        sparsity_pattern = sparsity_pattern + sparsity_pattern.T
+
+    matrix = config.compute.dsdbsparse_type.from_sparray(
+        sparray=sparsity_pattern.astype(xp.complex128),
+        block_sizes=block_sizes,
+        global_stack_shape=(comm.stack.size,)
+        + tuple([k for k in config.device.kpoint_grid if k > 1]),
+        symmetry="hermitian" if config.scba.symmetric else None,
+    )
+    matrix.data[:] = 0.0  # Initialize to zero.
+
+    # Shift the k-points if requested
+    # Needed for the coulomb matrix
+    _assemble_kpoint(
+        out_matrix=matrix,
+        matrix_dict=matrix_dict,
+        kpoint_grid=np.array(config.device.kpoint_grid),
+        kpoint_shift=np.array(config.device.kpoint_shift),
+        kshift=-(np.array(config.device.kpoint_grid) // 2) if shift_kpoints else 0,
+    )
+
+    return matrix, sparsity_pattern
+
+
+def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
+    """Reads atomic structure data from an XYZ file.
+
+    Parameters
+    ----------
+    filename : Path
+        Path to the XYZ file containing the atomic structure. The file
+        should have the standard XYZ format with lattice parameters on
+        the second line.
+
+    Returns
+    -------
+    lattice : NDArray
+        3x3 array containing the lattice vectors (in rows).
+    atom_coordinates : NDArray
+        (N_atoms, 3) array containing atomic coordinates.
+    atom_types : NDArray
+        (N_atoms,) array containing atom symbol for each atom.
+
+    """
+
+    lattice_vectors = None
+    atom_coordinates = None
+    atom_types = None
+
+    if comm_world.rank == 0:
+        # Read only the second line of the file (this contains the
+        # lattice parameters)
+        with open(filename, "r") as f:
+            __ = f.readline()
+            lattice_line = f.readline().strip()
+
+        if not lattice_line.startswith("Lattice="):
+            raise ValueError(
+                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
+            )
+
+        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
+        lattice_vectors = np.fromstring(
+            lattice_vectors, dtype=np.float64, sep=" "
+        ).reshape(3, 3)
+        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
+        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
+
+    # Broadcast the data to all the ranks
+    lattice_vectors = comm_world.bcast(lattice_vectors, root=0)
+    atom_coordinates = comm_world.bcast(atom_coordinates, root=0)
+    atom_types = comm_world.bcast(atom_types, root=0)
+
+    return lattice_vectors, atom_coordinates, atom_types

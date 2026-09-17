@@ -1,16 +1,20 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-from qttools import NDArray, xp
+"""Includes the selected inversion solver."""
+
+from collections.abc import Callable
+
+from qttools import NDArray
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
-from qttools.kernels.linalg import inv
-from qttools.profiling import Profiler, decorate_methods
+from qttools.greens_function_solver.solver import (
+    BackSubstitutionContext,
+    GFSolver,
+    OBCBlocks,
+)
+from qttools.kernels import linalg
 from qttools.utils.solvers_utils import get_batches
 
-profiler = Profiler()
 
-
-@decorate_methods(profiler.profile(level="api"), exclude=["__init__"])
 class RGF(GFSolver):
     """Selected inversion solver based on the Schur complement.
 
@@ -29,26 +33,20 @@ class RGF(GFSolver):
     def selected_inv(
         self,
         a: DSDBSparse,
+        out: DSDBSparse,
         obc_blocks: OBCBlocks | None = None,
-        out: DSDBSparse | None = None,
-    ) -> None | DSDBSparse:
+    ) -> None:
         """Performs selected inversion of a block-tridiagonal matrix.
 
         Parameters
         ----------
         a : DSDBSparse
             Matrix to invert.
+        out : DSDBSparse
+            Preallocated output matrix.
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : DSDBSparse, optional
-            Preallocated output matrix, by default None.
-
-        Returns
-        -------
-        None | DSDBSparse
-            If `out` is None, returns None. Otherwise, returns the
-            inverted matrix as a DSDBSparse object.
 
         """
         # Initialize dense temporary buffers for the diagonal blocks.
@@ -60,10 +58,7 @@ class RGF(GFSolver):
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
-        if out is not None:
-            x = out
-        else:
-            x = a.__class__.zeros_like(a)
+        x = out
 
         for b in range(len(batches_sizes)):
             stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
@@ -77,7 +72,7 @@ class RGF(GFSolver):
                 a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc[stack_slice]
             )
 
-            x_diag_blocks[0] = inv(a_00)
+            x_diag_blocks[0] = linalg.inv(a_00)
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -91,7 +86,7 @@ class RGF(GFSolver):
                     else a_.blocks[j, j] - obc[stack_slice]
                 )
 
-                x_diag_blocks[j] = inv(
+                x_diag_blocks[j] = linalg.inv(
                     a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
                 )
 
@@ -113,19 +108,16 @@ class RGF(GFSolver):
                 # NOTE: Cursed Python multiple assignment syntax.
                 x_.blocks[i, i] = x_diag_blocks[i] = x_ii - x_ii @ a_ij @ x_ji
 
-        if out is None:
-            return x
-
     def selected_solve(
         self,
         a: DSDBSparse,
         sigma_lesser: DSDBSparse,
         sigma_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
-        out: tuple[DSDBSparse, ...] | None = None,
         return_retarded: bool = False,
-        return_current: bool = False,
-    ) -> None | tuple | NDArray:
+        callbacks: list[Callable] | None = None,
+    ) -> None:
         r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
@@ -140,64 +132,60 @@ class RGF(GFSolver):
         a : DSDBSparse
             Matrix to invert.
         sigma_lesser : DSDBSparse
-            Lesser matrix. This matrix is expected to be
-            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+            Lesser matrix. This matrix is expected to be skew-hermitian,
+            i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        out : tuple[DSDBSparse, ...]
+            Preallocated output matrices.
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : tuple[DSDBSparse, ...] | None, optional
-            Preallocated output matrices, by default None
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-        return_current : bool, optional
-            Whether to compute and return the current for each layer via
-            the Meir-Wingreen formula. By default False.
-
-        Returns
-        -------
-        None | tuple | NDArray
-            If `out` is None, returns None. Otherwise, the solutions are
-            returned as DSBParse matrices. If `return_retarded` is True,
-            returns a tuple with the retarded Green's function as the
-            last element. If `return_current` is True, returns the
-            current for each layer.
+        callbacks : list[Callable], optional
+            List of callback functions to be called during the back
+            substitution step. Each callback function should accept a
+            single argument of type `BackwardSubstitutionContext`, by
+            default None.
 
         """
         # Initialize empty lists for the dense diagonal blocks.
-        xr_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
-        xl_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
-        xg_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+        xr_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
+        xl_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
+        xg_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
 
         if obc_blocks is None:
-            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
-
-        if return_current:
-            # Allocate a buffer for the current.
-            current = xp.zeros((a.shape[0], a.num_blocks - 1), dtype=a.dtype)
+            obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_blocks)
 
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+        batches_sizes, batches_slices = get_batches(
+            sigma_lesser.local_stack_shape[0], self.max_batch_size
+        )
 
-        # If out is not none, xr will be the third element of the tuple.
-        if out is not None:
-            xl, xg, *xr = out
-            if return_retarded:
-                if len(xr) != 1:
-                    raise ValueError("Invalid number of output matrices.")
-                xr = xr[0]
-        else:
-            xl = a.__class__.zeros_like(a)
-            xg = a.__class__.zeros_like(a)
-            if return_retarded:
-                xr = a.__class__.zeros_like(a)
+        # xr will be the third element of the tuple.
+        xl, xg, *xr = out
+        if return_retarded:
+            if len(xr) != 1:
+                raise ValueError("Invalid number of output matrices.")
+            xr = xr[0]
+
+        if xl.symmetry not in [None, "skew-hermitian"]:
+            raise ValueError(
+                "Invalid symmetry for lesser Green's function. "
+                "Expected None or 'skew-hermitian'."
+            )
+        if xg.symmetry not in [None, "skew-hermitian"]:
+            raise ValueError(
+                "Invalid symmetry for greater Green's function. "
+                "Expected None or 'skew-hermitian'."
+            )
 
         # Perform the selected solve by batches.
-        for i in range(len(batches_sizes)):
-            stack_slice = slice(int(batches_slices[i]), int(batches_slices[i + 1]), 1)
+        for b in range(len(batches_sizes)):
+            stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
 
             a_ = a.stack[stack_slice]
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
@@ -228,7 +216,7 @@ class RGF(GFSolver):
                 else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             )
 
-            xr_jj = inv(a_jj)
+            xr_jj = linalg.inv(a_jj)
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_jj
             xl_diag_blocks[0] = xr_jj @ sl_jj @ xr_jj_dagger
@@ -268,7 +256,7 @@ class RGF(GFSolver):
                 # Precompute some terms that are used multiple times.
                 a_ji_xr_ii = a_ji @ xr_ii
 
-                xr_jj = inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
+                xr_jj = linalg.inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 
@@ -352,7 +340,7 @@ class RGF(GFSolver):
                 )
 
                 xl_.blocks[i, j] = xl_ij
-                if not xl_.symmetry:
+                if xl_.symmetry is None:
                     xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
                 xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
@@ -374,7 +362,7 @@ class RGF(GFSolver):
                 )
 
                 xg_.blocks[i, j] = xg_ij
-                if not xg_.symmetry:
+                if xg_.symmetry is None:
                     xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
                 xg_diag_blocks[i] = xg_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
@@ -382,37 +370,41 @@ class RGF(GFSolver):
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                if return_current:
-                    a_ji_xr_ii = a_ji @ xr_ii
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
-                    sigma_lesser_tilde = (
-                        a_ji @ xl_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sx_ij
-                    )
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_ij
-                    sigma_greater_tilde = (
-                        a_ji @ xg_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sx_ij
-                    )
-                    current[stack_slice, i] = xp.trace(
-                        sigma_greater_tilde @ xl_diag_blocks[j]
-                        - xg_diag_blocks[j] @ sigma_lesser_tilde,
-                        axis1=-2,
-                        axis2=-1,
-                    )
-
                 xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 
-        if out is None:
-            if return_retarded:
-                if return_current:
-                    return xl, xg, xr, current
-                return xl, xg, xr
-            return xl, xg
+                if callbacks is not None:
+                    ctx = BackSubstitutionContext(
+                        i=i,
+                        j=j,
+                        stack_slice=stack_slice,
+                        a_ij=a_ij,
+                        a_ji=a_ji,
+                        obc_blocks=obc_blocks,
+                        xr_hat_ii=xr_ii,  # Before back substitution.
+                        xl_hat_ii=xl_ii,  # Before back substitution.
+                        xl_ij=xl_ij,
+                        xl_jj=xl_jj,
+                        xg_hat_ii=xg_ii,  # Before back substitution.
+                        xg_ij=xg_ij,
+                        xg_jj=xg_jj,
+                        sigma_lesser_ij=sigma_lesser_ij,
+                        sigma_greater_ij=sigma_greater_ij,
+                    )
 
-        if return_current:
-            return current
+                    for callback in callbacks:
+                        callback(ctx)
+
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=-1,
+                    j=0,
+                    xl_jj=xl_diag_blocks[0],
+                    xg_jj=xg_diag_blocks[0],
+                    stack_slice=stack_slice,
+                    obc_blocks=obc_blocks,
+                )
+
+                for callback in callbacks:
+                    callback(ctx)

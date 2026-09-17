@@ -1,4 +1,6 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes utility functions for MPI operations."""
 
 from pathlib import Path
 
@@ -8,13 +10,11 @@ from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.util import pkl5
 
 from qttools import NDArray, sparse, xp
-from qttools.profiling import Profiler
+from qttools.utils.hdf5_utils import load_hdf5_dict
 
-profiler = Profiler()
 comm = pkl5.Intracomm(comm)
 
 
-@profiler.profile(level="debug")
 def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
@@ -46,7 +46,7 @@ def get_section_sizes(
 
     Examples
     --------
-    >>> get_section_sizes(10, 3, "fair")
+    >>> get_section_sizes(10, 3, "balanced")
     ([4, 3, 3], 12)
     >>> get_section_sizes(10, 3, "greedy")
     ([4, 4, 2], 12)
@@ -69,9 +69,8 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-@profiler.profile(level="debug")
-def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
-    """Loads an array from disk and distributes it to all ranks.
+def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
+    """Loads an array from disk and broadcasts it to all ranks.
 
     Parameters
     ----------
@@ -80,8 +79,8 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
     Returns
     -------
-    sparse.spmatrix | NDArray
-        The loaded array.
+    sparse.spmatrix | NDArray | dict
+        The loaded array/s.
 
     Raises
     ------
@@ -91,16 +90,26 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix not in [".npz", ".npy"]:
+    if path.suffix not in [".npz", ".npy", ".h5", ".txt"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
     if comm.rank == 0:
         if path.suffix == ".npz":
+            # NOTE: cupyx.scipy.sparse.load_npz does not exist.
             arr = sps.load_npz(path)
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
-
+        elif path.suffix == ".h5":
+            arr = load_hdf5_dict(path)
+            arr = {
+                tuple(map(int, r.strip("[]").split(","))): h_r
+                for r, h_r in arr.items()
+                if r.startswith("[")
+            }
+        elif path.suffix == ".txt":
+            # Assumes the text file contains integers.
+            arr = xp.loadtxt(path, dtype=int)
     else:
         arr = None
 
@@ -109,7 +118,6 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     return arr
 
 
-@profiler.profile(level="debug")
 def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     """Returns the local slice of a distributed array.
 

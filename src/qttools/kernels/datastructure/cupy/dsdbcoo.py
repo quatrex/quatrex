@@ -1,4 +1,6 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our CUDA coo datastructure kernels."""
 
 import os
 
@@ -7,7 +9,6 @@ import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, strtobool
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
-from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
     from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
@@ -17,71 +18,9 @@ else:
 
 # NOTE: CUDA kernels are not profiled, as the jit-compiled kernels
 # cannot find the correct name of the function to profile.
-profiler = Profiler()
-
 QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK"), False)
 
 
-@profiler.profile(level="api")
-def find_inds(
-    self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
-) -> tuple[NDArray, NDArray, int]:
-    """Finds the corresponding indices of the given rows and columns.
-
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-
-    Returns
-    -------
-    inds : NDArray
-        The indices of the given rows and columns.
-    value_inds : NDArray
-        The matching indices of this matrix.
-    max_counts : int
-        The maximum number of matches found.
-
-    """
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
-    full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32)
-    counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
-    THREADS_PER_BLOCK
-    blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    cupy_backend._find_inds(
-        (blocks_per_grid,),
-        (THREADS_PER_BLOCK,),
-        (
-            self_rows,
-            self_cols,
-            rows,
-            cols,
-            full_inds,
-            counts,
-            self_rows.shape[0],
-            rows.shape[0],
-        ),
-    )
-
-    # Find the valid indices.
-    inds = cp.nonzero(counts)[0]
-    value_inds = full_inds[inds]
-
-    if counts.size == 0:
-        # No data in this block, return an empty slice.
-        return inds, value_inds, 0
-
-    return inds, value_inds, int(cp.max(counts))
-
-
-@profiler.profile(level="api")
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
 ) -> slice:
@@ -108,12 +47,16 @@ def compute_block_slice(
         The stop index of the block.
 
     """
-    mask = cp.zeros(rows.shape[0], dtype=cp.int32)
-    row_start, row_stop = np.int32(block_offsets[row]), np.int32(block_offsets[row + 1])
-    col_start, col_stop = np.int32(block_offsets[col]), np.int32(block_offsets[col + 1])
+    mask = cp.zeros_like(rows, dtype=cp.bool_)
 
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
+    dtype = rows.dtype.type
+    if block_offsets.dtype.type != dtype or cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {rows.dtype}, {cols.dtype}, {block_offsets.dtype}."
+        )
+
+    row_start, row_stop = dtype(block_offsets[row]), dtype(block_offsets[row + 1])
+    col_start, col_stop = dtype(block_offsets[col]), dtype(block_offsets[col + 1])
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._compute_coo_block_mask(
@@ -127,7 +70,7 @@ def compute_block_slice(
             col_start,
             col_stop,
             mask,
-            np.int32(rows.shape[0]),
+            dtype(rows.shape[0]),
         ),
     )
     if cp.sum(mask) == 0:
@@ -142,7 +85,6 @@ def compute_block_slice(
     return int(inds[0]), int(inds[-1] + 1)
 
 
-@profiler.profile(level="api")
 def densify_block(
     block: NDArray,
     rows: NDArray,
@@ -179,6 +121,12 @@ def densify_block(
 
     """
 
+    dtype = rows.dtype.type
+    if cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {rows.dtype}, {cols.dtype}."
+        )
+
     # TODO: Needs profilig to see if this is faster than the raw kernel.
     if not use_kernel:
         block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
@@ -201,19 +149,18 @@ def densify_block(
                 rows,
                 cols,
                 data.reshape(-1),
-                np.int32(stack_size),
-                np.int32(stack_stride),
-                np.int32(nnz_per_block),
-                np.int32(block.shape[-2]),
-                np.int32(block.shape[-1]),
-                np.int32(block_start),
-                np.int32(row_offset),
-                np.int32(col_offset),
+                dtype(stack_size),
+                dtype(stack_stride),
+                dtype(nnz_per_block),
+                dtype(block.shape[-2]),
+                dtype(block.shape[-1]),
+                dtype(block_start),
+                dtype(row_offset),
+                dtype(col_offset),
             ),
         )
 
 
-@profiler.profile(level="api")
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
 
@@ -238,7 +185,6 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     data[:] = block[..., rows, cols]
 
 
-@profiler.profile(level="api")
 def compute_block_sort_index(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> NDArray:
@@ -264,13 +210,17 @@ def compute_block_sort_index(
         The indexing that sorts the data by block-row and -column.
 
     """
-    num_blocks = block_sizes.shape[0]
-    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=np.int32)
+    dtype = coo_rows.dtype.type
+    if coo_cols.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {coo_rows.dtype}, {coo_cols.dtype}."
+        )
 
-    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
-    mask = cp.zeros(len(coo_cols), dtype=cp.int32)
-    coo_rows = coo_rows.astype(cp.int32)
-    coo_cols = coo_cols.astype(cp.int32)
+    num_blocks = block_sizes.shape[0]
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=dtype)
+
+    sort_index = cp.zeros_like(coo_cols)
+    mask = cp.zeros_like(coo_cols, dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
@@ -282,20 +232,29 @@ def compute_block_sort_index(
             (
                 coo_rows,
                 coo_cols,
-                np.int32(block_offsets[i]),
-                np.int32(block_offsets[i + 1]),
-                np.int32(block_offsets[j]),
-                np.int32(block_offsets[j + 1]),
+                dtype(block_offsets[i]),
+                dtype(block_offsets[i + 1]),
+                dtype(block_offsets[j]),
+                dtype(block_offsets[j + 1]),
                 mask,
-                np.int32(len(coo_cols)),
+                dtype(len(coo_cols)),
             ),
         )
 
         # NOTE: Fix for AMD cupy where cub was not used
-        if QTX_USE_CUPY_JIT:
-            bnnz = cp.sum(mask)
-        else:
+        if cp.cuda.runtime.is_hip:
+            if QTX_USE_CUPY_JIT:
+                # TODO: investigate this again
+                # this was a previous fix for AMD on Frontier
+                # remove the custom reduction if not needed anymore
+                # CUPY_ACCELERATORS still seems to be "" on AMD GPUs
+                raise RuntimeError(
+                    "AMD cupy does not support cub, custom reduction had to be used."
+                )
+
             bnnz = cupy_backend.reduction(mask)
+        else:
+            bnnz = cp.sum(mask)
 
         if bnnz != 0:
             # Sort the data by block-row and -column.

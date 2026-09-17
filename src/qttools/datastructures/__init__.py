@@ -1,25 +1,16 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes data structures for distributed block-accessible sparse matrices and related routines."""
 
 from qttools.datastructures.dsdbcoo import DSDBCOO
 from qttools.datastructures.dsdbcsr import DSDBCSR
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.datastructures.routines import (
-    bd_matmul,
-    bd_matmul_distr,
-    bd_sandwich,
-    bd_sandwich_distr,
-    btd_matmul,
-    btd_sandwich,
-)
+from qttools.datastructures.routines import bd_matmul, bd_sandwich
 
 __all__ = [
     "DSDBCOO",
     "DSDBCSR",
     "DSDBSparse",
-    "btd_matmul",
-    "btd_sandwich",
     "bd_matmul",
     "bd_sandwich",
-    "bd_matmul_distr",
-    "bd_sandwich_distr",
 ]

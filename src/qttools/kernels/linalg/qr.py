@@ -1,16 +1,14 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our `qr` bindings."""
 
 import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
-profiler = Profiler()
 
-
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def _qr_numba(
     A: NDArray,
@@ -50,7 +48,6 @@ def _qr_numba(
     return q, r
 
 
-@profiler.profile(level="api")
 def qr(
     A: NDArray,
     compute_module: str = "numpy",

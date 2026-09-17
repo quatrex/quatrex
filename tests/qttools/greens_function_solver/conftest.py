@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
 import pytest
@@ -23,11 +23,6 @@ BATCHING_TYPE = [
     pytest.param(100, id="all-batching"),
 ]
 
-OUT = [
-    pytest.param(True, id="out_true"),
-    pytest.param(False, id="out_false"),
-]
-
 RETURN_RETARDED = [
     pytest.param(True, id="return_retarded"),
     pytest.param(False, id="not_return_retarded"),
@@ -40,17 +35,17 @@ GLOBAL_STACK_SHAPES = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
+@pytest.fixture(params=GFSOLVERS_TYPE)
 def gfsolver_type(request: pytest.FixtureRequest) -> GFSolver:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+@pytest.fixture(params=DSBSPARSE_TYPES)
 def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
@@ -62,7 +57,7 @@ def _random_block(m: int, n: int) -> NDArray:
     return coo.toarray()
 
 
-@pytest.fixture(scope="function", autouse=False)
+@pytest.fixture(scope="function")
 def bt_dense(block_sizes: NDArray) -> NDArray:
     """Generates a random block-tridiagonal matrix."""
     block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
@@ -104,21 +99,16 @@ def bt_dense(block_sizes: NDArray) -> NDArray:
     return arr
 
 
-@pytest.fixture(params=BATCHING_TYPE, autouse=True)
+@pytest.fixture(params=BATCHING_TYPE)
 def max_batch_size(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=OUT, autouse=True)
-def out(request: pytest.FixtureRequest) -> bool:
-    return request.param
-
-
-@pytest.fixture(params=RETURN_RETARDED, autouse=True)
+@pytest.fixture(params=RETURN_RETARDED)
 def return_retarded(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+@pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param

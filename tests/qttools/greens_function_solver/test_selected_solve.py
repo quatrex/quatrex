@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import pytest
 
@@ -38,11 +38,10 @@ def test_selected_solve(
     bt_dense: NDArray,
     gfsolver_type: GFSolver,
     dsdbsparse_type: DSDBSparse,
-    out: bool,
     return_retarded: bool,
     max_batch_size: int,
     block_sizes: NDArray,
-    global_stack_shape: int | tuple,
+    global_stack_shape: tuple,
 ):
     """Tests the selected solve method of a Green's function solver."""
     coo_A = sparse.coo_matrix(bt_dense)
@@ -63,41 +62,37 @@ def test_selected_solve(
     # (3) A * Xg * A^T = Bg
     ref_Xg = ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T
 
-    block_sizes = block_sizes
-
-    A = dsdbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
-    Bl = dsdbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
-    Bg = dsdbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
+    A = dsdbsparse_type.from_sparray(
+        sparray=coo_A, block_sizes=block_sizes, global_stack_shape=global_stack_shape
+    )
+    Bl = dsdbsparse_type.from_sparray(
+        sparray=coo_Bl, block_sizes=block_sizes, global_stack_shape=global_stack_shape
+    )
+    Bg = dsdbsparse_type.from_sparray(
+        sparray=coo_Bg, block_sizes=block_sizes, global_stack_shape=global_stack_shape
+    )
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
-    if out:
-        Xr = dsdbsparse_type.zeros_like(A)
-        Xl = dsdbsparse_type.zeros_like(A)
-        Xg = dsdbsparse_type.zeros_like(A)
+    Xr = dsdbsparse_type.empty_like(A)
+    Xl = dsdbsparse_type.empty_like(A)
+    Xg = dsdbsparse_type.empty_like(A)
+    Xr.allocate_data()
+    Xl.allocate_data()
+    Xg.allocate_data()
 
-        solver.selected_solve(
-            A,
-            Bl,
-            Bg,
-            out=[Xl, Xg, Xr],
-            return_retarded=return_retarded,
-        )
-    else:
-        if return_retarded:
-            Xl, Xg, Xr = solver.selected_solve(
-                A,
-                Bl,
-                Bg,
-                return_retarded=return_retarded,
-            )
-        else:
-            Xl, Xg = solver.selected_solve(
-                A,
-                Bl,
-                Bg,
-                return_retarded=return_retarded,
-            )
+    # NOTE: This is set to zero since later the non-zero values are used
+    # for the masked. Otherwise, the off-diagonal values would be tested
+    # as well while they are not computed.
+    Xr.data = 0.0
+
+    solver.selected_solve(
+        A,
+        Bl,
+        Bg,
+        out=[Xl, Xg, Xr],
+        return_retarded=return_retarded,
+    )
 
     if return_retarded:
         xr_mask = Xr.to_dense().astype(bool)

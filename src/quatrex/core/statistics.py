@@ -1,4 +1,6 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes the methods for fermi-dirac and bose-einstein distributions."""
 
 from qttools import NDArray, xp
 from quatrex.core.constants import k_B

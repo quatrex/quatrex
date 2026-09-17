@@ -1,4 +1,6 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes post processing functions."""
 
 from quatrex.post_processing.plot_ldos import get_averages, spectral_plot
 

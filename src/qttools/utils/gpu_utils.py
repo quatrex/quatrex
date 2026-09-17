@@ -1,17 +1,15 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes utility functions for GPU operations."""
 
 import inspect
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 if xp.__name__ == "cupy":
     import cupyx
 
 
-@profiler.profile(level="debug")
 def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
 
@@ -32,7 +30,6 @@ def get_array_module_name(arr: NDArray) -> str:
     return submodule.__name__.split(".")[0]
 
 
-@profiler.profile(level="debug")
 def get_host(arr: NDArray, out: None | NDArray = None) -> NDArray:
     """Returns the host array of the given array.
 
@@ -61,7 +58,6 @@ def get_host(arr: NDArray, out: None | NDArray = None) -> NDArray:
     return xp.asnumpy(arr, out=out)
 
 
-@profiler.profile(level="debug")
 def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
     """Returns the device array of the given array.
 
@@ -95,7 +91,6 @@ def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
     return out
 
 
-@profiler.profile(level="debug")
 def get_any_location(
     arr: NDArray,
     output_module: str,
@@ -161,7 +156,6 @@ def get_any_location(
         raise ValueError(f"Invalid output location: {output_module}")
 
 
-@profiler.profile(level="debug")
 def empty_pinned(
     shape: int | tuple[int, ...],
     dtype: xp.dtype = float,
@@ -196,7 +190,6 @@ def empty_pinned(
         return xp.empty(shape, dtype=dtype, order=order)
 
 
-@profiler.profile(level="debug")
 def zeros_pinned(
     shape: int | tuple[int, ...],
     dtype: xp.dtype = float,
@@ -231,7 +224,6 @@ def zeros_pinned(
         return xp.zeros(shape, dtype=dtype, order=order)
 
 
-@profiler.profile(level="debug")
 def empty_like_pinned(
     a: NDArray,
     dtype: xp.dtype = None,
@@ -271,7 +263,6 @@ def empty_like_pinned(
         return xp.empty_like(a, dtype=dtype, order=order, shape=shape)
 
 
-@profiler.profile(level="debug")
 def zeros_like_pinned(
     a: NDArray,
     dtype: xp.dtype = None,
@@ -311,7 +302,6 @@ def zeros_like_pinned(
         return xp.zeros_like(a, dtype=dtype, order=order, shape=shape)
 
 
-@profiler.profile(level="debug")
 def synchronize_current_stream():
     """Synchronizes the current stream if using cupy.
 
@@ -322,7 +312,6 @@ def synchronize_current_stream():
         xp.cuda.get_current_stream().synchronize()
 
 
-@profiler.profile(level="debug")
 def synchronize_device():
     """Synchronizes the device if using cupy.
 

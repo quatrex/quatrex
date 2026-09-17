@@ -1,15 +1,12 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our Numba general datastructure kernels."""
 
 import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from qttools.profiling import Profiler
 
-profiler = Profiler()
-
-
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Find the ranks of the indices in the offsets.
@@ -28,7 +25,8 @@ def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
         The ranks of the indices in the offsets.
 
     """
-    ranks = np.zeros(inds.shape[0], dtype=np.int16)
+    dtype = inds.dtype
+    ranks = np.zeros(inds.shape[0], dtype=dtype)
     for i in nb.prange(inds.shape[0]):
         for j in range(nnz_section_offsets.shape[0]):
             cond = int(nnz_section_offsets[j] <= inds[i])

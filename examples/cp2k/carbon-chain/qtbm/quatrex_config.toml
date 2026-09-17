@@ -1,0 +1,50 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "wf" # Compute transport using the wavefunction formalism.
+
+[device]
+# Transport is along the x-axis.
+transport_direction = "a"
+# Number of orbitals per atom type. DZVP-MOLOPT basis set has 13
+# orbitals for carbon atoms.
+num_orbitals_per_atom = { "C" = 13 }
+
+    [[device.contacts]]
+    name = "left"
+    origin = [0.65, 0, 0]
+    lattice_vectors = [[2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
+    # Electrons enter the device along the first lattice vector.
+    transport_direction = "a"
+    fermi_level = -4.5
+    mid_gap_energy = -4.5
+
+    [[device.contacts]]
+    name = "right"
+    origin = [256.4, -0.001, -0.001]
+    lattice_vectors = [[-2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
+    # Electrons enter the device along the first lattice vector.
+    transport_direction = "a"
+    fermi_level = -4.501
+    mid_gap_energy = -4.5
+
+
+[electron]
+solver.direct_solver = "superlu"
+
+# Compute the transport in an energy window [-5, -4] eV at a total of 10
+# energy points. This is just a toy example. Typically, energy
+# resolutions of 5 meV or better are required for accurate transport
+# calculations.
+energy_window_min = -5
+energy_window_max = -4
+energy_window_num = 10
+
+    [electron.obc]
+    # Use the "spectral" method with the "full" NEVP solver to compute
+    # the open boundary self-energies.
+    algorithm = "spectral"
+    nevp_solver = "full"
+    min_decay = 1e-8
+    max_decay = 10
+    num_ref_iterations = 10

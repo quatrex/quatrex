@@ -1,65 +1,12 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our Numba coo datastructure kernels."""
 
 import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from qttools.profiling import Profiler
 
-profiler = Profiler()
-
-
-@profiler.profile(level="api")
-@nb.njit(parallel=True, cache=True, no_rewrites=True)
-def find_inds(
-    self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
-) -> tuple[NDArray, NDArray, int]:
-    """Finds the corresponding indices of the given rows and columns.
-
-    This also counts the number of matches found, which is used to check
-    if the indices contain duplicates.
-
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-
-    Returns
-    -------
-    inds : NDArray
-        The indices of the given rows and columns.
-    value_inds : NDArray
-        The matching indices of this matrix.
-    max_counts : int
-        The maximum number of matches found.
-
-    """
-    full_inds = np.zeros(self_rows.shape[0], dtype=np.int32)
-    counts = np.zeros(self_rows.shape[0], dtype=np.int16)
-    for i in nb.prange(self_rows.shape[0]):
-        for j in range(rows.shape[0]):
-            cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
-            full_inds[i] = full_inds[i] * (1 - cond) + j * cond
-            counts[i] += cond
-
-    # Find the valid indices.
-    inds = np.nonzero(counts)[0]
-    value_inds = full_inds[inds]
-
-    if counts.size == 0:
-        # No data in this block, return an empty slice.
-        return inds, value_inds, 0
-
-    return inds, value_inds, np.max(counts)
-
-
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
@@ -108,7 +55,6 @@ def compute_block_slice(
     return inds[0], inds[-1] + 1
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def densify_block(
     block: NDArray,
@@ -156,7 +102,6 @@ def densify_block(
         block[..., row_idx, col_idx] = data[..., idx]
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
@@ -177,7 +122,6 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
         data[..., i] = block[..., rows[i], cols[i]]
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def compute_block_sort_index(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
@@ -205,18 +149,19 @@ def compute_block_sort_index(
         The indexing that sorts the data by block-row and -column.
 
     """
+    dtype = coo_rows.dtype
     num_blocks = block_sizes.shape[0]
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
-    sort_index = np.zeros(len(coo_cols), dtype=np.int32)
+    sort_index = np.zeros(len(coo_cols), dtype=dtype)
 
     # NOTE: This is a very generous estimate of the number of
     # nonzeros in each row of blocks. No assumption on the sparsity
     # pattern of the matrix is made here.
     nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
-    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=dtype)
 
-    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    block_nnz = np.zeros(num_blocks, dtype=dtype)
     nnz_offset = 0
     for i in range(num_blocks):
         # Precompute the row mask.

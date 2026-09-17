@@ -1,9 +1,10 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes the Phonon solver class."""
 
 import numpy as np
 
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
 
 
@@ -12,11 +13,10 @@ class PhononSolver(SubsystemSolver):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
+        config: QuatrexConfig,
         energies: np.ndarray,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(quatrex_config)
+        super().__init__(config)
 
         ...

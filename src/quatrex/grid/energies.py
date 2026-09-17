@@ -1,0 +1,78 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
+"""Includes function to get electron energies based on the configuration."""
+
+import os
+
+from qttools import NDArray, xp
+from qttools.comm import comm
+from qttools.utils.mpi_utils import distributed_load
+from quatrex.core.config import QuatrexConfig
+
+
+def get_electron_energies(config: QuatrexConfig) -> NDArray:
+    """Get the electron energies based on the configuration.
+    If an energy window is specified in the configuration, it generates
+    the energies using linspace. Otherwise, it attempts to load the energies
+    from a file named 'electron_energies.npy' in the input directory.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The Quatrex configuration.
+
+    Returns
+    -------
+    electron_energies : NDArray
+        Array of electron energies.
+
+    Raises
+    -------
+    ValueError
+        If both or neither of `energy_window_num` and `energy_window_num_per_rank` are set.
+    FileNotFoundError
+        If the energies file is not found and no energy window is specified.
+
+    """
+
+    if (config.electron.energy_window_max is not None) and (
+        config.electron.energy_window_min is not None
+    ):
+        if config.electron.energy_window_num is not None:
+            if config.electron.energy_window_num_per_rank is not None:
+                raise ValueError(
+                    "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                )
+            electron_energies = xp.linspace(
+                config.electron.energy_window_min,
+                config.electron.energy_window_max,
+                config.electron.energy_window_num,
+            )
+        elif config.electron.energy_window_num_per_rank is not None:
+            energy_window_num = (
+                config.electron.energy_window_num_per_rank * comm.stack.size
+            )
+            electron_energies = xp.linspace(
+                config.electron.energy_window_min,
+                config.electron.energy_window_max,
+                energy_window_num,
+            )
+        else:
+            raise ValueError(
+                "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+            )
+    else:
+        energies_path = config.input_dir / "electron_energies.npy"
+        if os.path.isfile(energies_path):
+            electron_energies = distributed_load(energies_path)
+        else:
+            raise FileNotFoundError(
+                f"Could not find electron energies file at {energies_path}. Please provide an energy window in the config."
+            )
+
+    if comm.rank == 0:
+        if not os.path.exists(config.output_dir):
+            os.mkdir(config.output_dir)
+        xp.save(config.output_dir / "electron_energies.npy", electron_energies)
+
+    return electron_energies

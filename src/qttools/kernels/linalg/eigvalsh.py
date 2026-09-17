@@ -1,14 +1,14 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our `eigvalsh` bindings."""
+
 import numpy as np
 
 from qttools import NDArray, xp
 from qttools.kernels import linalg
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
-profiler = Profiler()
 
-
-@profiler.profile(level="debug")
 def _eigvalsh(
     A: NDArray,
     B: NDArray,
@@ -46,7 +46,6 @@ def _eigvalsh(
     return w
 
 
-@profiler.profile(level="api")
 def eigvalsh(
     A: NDArray,
     B: NDArray | None = None,

@@ -1,169 +1,109 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the quatrex package.
-
-import subprocess
-import tomllib
-from importlib.resources import files
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pytest
+from mpi4py.MPI import COMM_WORLD as comm
 
-from quatrex.cli.main import fetch_example, run
-from quatrex.examples import get_example_dir, load
-
-REFERENCE_OBSERVABLES = {
-    "carbon-nanotube:": [
-        "i_meir-wingreen_1",
-        "electron_ldos_1",
-    ],
-    "carbon-nanotube:dist": [
-        "electron_density_1",
-        "i_device_1",
-    ],
-}
-
-assert len(REFERENCE_OBSERVABLES) == len(set(REFERENCE_OBSERVABLES.keys()))
-
-# Load manifest containing example dataset info.
-with open(files("quatrex.examples") / "_manifest.toml", "rb") as f:
-    MANIFEST = tomllib.load(f)
+from quatrex.cli.main import run as cli_run
 
 
-for key, subnames in REFERENCE_OBSERVABLES.items():
-    key, config = key.split(":")
-    for subname in subnames:
-        name = f"{key}-{subname}-{config}"
-        # check exists in manifest
-        if name not in MANIFEST:
-            raise ValueError(f"Example '{name}' not found in manifest.")
+def _verify_outputs(
+    output_dir: Path,
+    reference_output_dir: Path,
+    rtol: float = 1e-4,
+    atol: float = 1e-4,
+) -> None:
+    """Helper function to verify that the outputs in `output_dir` match the
+    reference outputs in `reference_output_dir`."""
+    test_failed = False
+
+    # NOTE: We loop through all output files without asserting immediately. This
+    # allows us to report all mismatches at once, rather than stopping at the
+    # first failure.
+    for output_file in output_dir.glob("*.npy"):
+
+        reference = np.load(reference_output_dir / output_file.name)
+        test = np.load(output_file)
+        shape_match = reference.shape == test.shape
+        if not shape_match:
+            print(
+                f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
+            )
+
+        value_match = np.allclose(reference, test, rtol=rtol, atol=atol, equal_nan=True)
+        if not value_match:
+            print(f"Value mismatch for '{output_file.name}':")
+            print(
+                f"    Relative error: {np.linalg.norm(reference - test) / np.linalg.norm(reference)}"
+            )
+            print(f"    Absolute error: {np.linalg.norm(reference - test)}")
+            print(f"    Reference norm: {np.linalg.norm(reference)}")
+
+        test_failed |= not shape_match or not value_match
+
+    assert not test_failed, "One or more output files did not match the reference."
 
 
-@pytest.mark.usefixtures("non_distributed_example")
-def test_non_distributed(non_distributed_example: str):
+# NOTE: Skip this if running in an MPI environment. These should be run
+# in a single process only.
+@pytest.mark.mpi_skip()
+def test_single_rank(
+    example: tuple[Path, bool],
+    tmp_path: Path,
+    adjust_config_paths: Callable,
+):
+    """Tests that the example runs and matches reference observables."""
 
-    if len(REFERENCE_OBSERVABLES[non_distributed_example]) == 0:
-        pytest.skip(
-            f"No reference observables defined for example '{non_distributed_example}'"
-        )
+    example_path, distributed = example
 
-    try:
-        fetch_example(non_distributed_example)
-    except Exception as e:
-        pytest.fail(f"fetch-example failed: {e}")
+    if distributed:
+        pytest.skip("Skipping single-rank test for distributed example.")
 
-    device_key, config_key, example_path = get_example_dir(non_distributed_example)
-
+    # Set up reference and temporary configs.
     quatrex_config_path = example_path / "quatrex_config.toml"
-    compute_config_path = example_path / "compute_config.toml"
+    tmp_config_path = tmp_path / "quatrex_config.toml"
+    adjust_config_paths(quatrex_config_path, tmp_config_path)
 
-    if not compute_config_path.exists():
-        compute_config_path = None
+    # Run the example using the CLI.
+    cli_run(tmp_config_path, abort_on_exception=False)
 
-    run(
-        quatrex_config_path,
-        compute_config_path,
-    )
+    output_dir = tmp_path / "outputs"
+    reference_output_dir = example_path / "reference-outputs"
 
-    for observable in REFERENCE_OBSERVABLES[non_distributed_example]:
-
-        # fetch reference solution
-        load(
-            device_key + "-" + observable + "-" + config_key,
-            target_dir=example_path / "outputs",
-        )
-
-        reference_path = (
-            example_path / "outputs" / (observable + "_" + config_key + ".npy")
-        )
-        test_path = example_path / "outputs" / (observable + ".npy")
-
-        if not reference_path.exists():
-            pytest.fail(f"Reference solution '{reference_path}' not found.")
-        if not test_path.exists():
-            pytest.fail(f"Test solution '{test_path}' not found.")
-
-        reference = np.load(reference_path)
-        test = np.load(test_path)
-
-        assert (
-            reference.shape == test.shape
-        ), f"Shape mismatch for '{observable}': {reference.shape} vs {test.shape}"
-        assert np.allclose(
-            reference, test, rtol=1e-4, atol=1e-6
-        ), f"Value mismatch for '{observable}'"
+    _verify_outputs(output_dir, reference_output_dir)
 
 
-@pytest.mark.usefixtures("domain_distributed_example")
-def test_distributed(domain_distributed_example: str):
+# NOTE: The distributed test will fail if the number of ranks is not a
+# multiple of three.
+@pytest.mark.mpi(min_size=3)
+def test_distributed(
+    example: tuple[Path, bool],
+    mpi_tmp_path: Path,
+    adjust_config_paths: Callable,
+):
+    """Tests that the distributed example runs and matches reference observables."""
 
-    if len(REFERENCE_OBSERVABLES[domain_distributed_example]) == 0:
-        pytest.skip(
-            f"No reference observables defined for example '{domain_distributed_example}'"
-        )
+    example_path, distributed = example
 
-    try:
-        fetch_example(domain_distributed_example)
-    except Exception as e:
-        pytest.fail(f"fetch-example failed: {e}")
+    # Set up reference and temporary configs.
+    tmp_config_path = mpi_tmp_path / "quatrex_config.toml"
+    if comm.rank == 0:
+        quatrex_config_path = example_path / "quatrex_config.toml"
+        adjust_config_paths(quatrex_config_path, tmp_config_path)
 
-    device_key, config_key, example_path = get_example_dir(domain_distributed_example)
+    comm.barrier()  # Ensure all ranks wait until the config is set up.
 
-    quatrex_config_path = example_path / "quatrex_config.toml"
-    compute_config_path = example_path / "compute_config.toml"
+    # Run the example using the CLI.
+    cli_run(tmp_config_path, abort_on_exception=False)
 
-    if not compute_config_path.exists():
-        subprocess.run(
-            [
-                "mpiexec",
-                "-n",
-                "6",
-                "quatrex",
-                "run",
-                str(quatrex_config_path),
-            ],
-            check=True,
-            stdout=None,
-            stderr=None,
-        )
-    else:
-        subprocess.run(
-            [
-                "mpiexec",
-                "-n",
-                "6",
-                "quatrex",
-                "run",
-                str(quatrex_config_path),
-                str(compute_config_path),
-            ],
-            check=True,
-            stdout=None,
-            stderr=None,
-        )
+    comm.barrier()  # Ensure all ranks wait until the run is complete.
 
-    for observable in REFERENCE_OBSERVABLES[domain_distributed_example]:
+    if comm.rank != 0:
+        return  # Only rank 0 will check the outputs.
 
-        # fetch reference solution
-        load(
-            device_key + "-" + observable + "-" + config_key,
-            target_dir=example_path / "outputs",
-        )
+    output_dir = mpi_tmp_path / "outputs"
+    reference_output_dir = example_path / "reference-outputs"
 
-        reference_path = (
-            example_path / "outputs" / (observable + "_" + config_key + ".npy")
-        )
-        test_path = example_path / "outputs" / (observable + ".npy")
-
-        if not reference_path.exists():
-            pytest.fail(f"Reference solution '{reference_path}' not found.")
-        if not test_path.exists():
-            pytest.fail(f"Test solution '{test_path}' not found.")
-
-        reference = np.load(reference_path)
-        test = np.load(test_path)
-
-        assert (
-            reference.shape == test.shape
-        ), f"Shape mismatch for '{observable}': {reference.shape} vs {test.shape}"
-        assert np.allclose(
-            reference, test, rtol=1e-4, atol=1e-6
-        ), f"Value mismatch for '{observable}'"
+    _verify_outputs(output_dir, reference_output_dir)

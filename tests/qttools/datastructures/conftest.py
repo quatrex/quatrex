@@ -1,10 +1,10 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
 import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, xp
+from qttools import NDArray
 from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 
 DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
@@ -58,14 +58,12 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(2.0, id="double-change"),
 ]
 
-OPS = [
-    pytest.param(xp.add, id="add"),
-    pytest.param(xp.subtract, id="subtract"),
-]
 
-SYMMETRY_TYPE = [
-    pytest.param((False, lambda x: x), id="non-symmetric"),
-    pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
+SYMMETRY = [
+    pytest.param(None, id="non-symmetric"),
+    pytest.param("skew-hermitian", id="skew-hermitian"),
+    pytest.param("hermitian", id="hermitian"),
+    pytest.param("symmetric", id="symmetric"),
 ]
 
 
@@ -114,11 +112,6 @@ def block_change_factor(request):
     return request.param
 
 
-@pytest.fixture(params=OPS)
-def op(request):
-    return request.param
-
-
-@pytest.fixture(params=SYMMETRY_TYPE)
-def symmetry_type(request: pytest.FixtureRequest) -> bool:
+@pytest.fixture(params=SYMMETRY)
+def symmetry(request: pytest.FixtureRequest) -> str | None:
     return request.param

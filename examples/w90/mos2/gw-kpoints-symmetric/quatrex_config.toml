@@ -1,0 +1,123 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "negf"
+
+[device] # ==========================================================
+kpoint_grid = [1, 3, 1]
+construct_from_unit_cell = true
+transport_direction = "a"
+
+neighbor_cell_cutoff = [2, 2, 0]
+
+num_transport_cells = 4
+
+    [[device.contacts]]
+    name = "left"
+    fermi_level = -0.031537969 # eV
+    mid_gap_energy = -1      # eV
+
+    [[device.contacts]]
+    name = "right"
+    fermi_level = -0.031537969 # eV
+    mid_gap_energy = -1      # eV
+
+[scba] # =============================================================
+max_iterations = 2
+mixing_factor = 0.5
+symmetric = true
+
+coulomb_screening = true
+phonon = true
+
+align_self_energy_to_complex_axes = false
+
+[outputs] # Select which outputs to write.
+electron_ldos = true
+device_currents = true
+meir_wingreen_currents = true
+electron_density = true
+hole_density = true
+self_energy_density = true
+
+polarization_density = true
+coulomb_screening_density = true
+
+
+[electron] # =========================================================
+
+band_edge_tracking = true
+
+flatband = false
+
+energy_window_min = -10.0 # eV
+energy_window_max = 5     # eV
+energy_window_num = 100
+
+eta = 1e-5
+
+max_batch_size = 15
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 2
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 31
+obc.num_quad_points = 31
+
+obc.memoizer.mode = "off"
+obc.memoizer.num_ref_iterations = 3
+obc.memoizer.relative_tol = 1e-2
+obc.memoizer.absolute_tol = 1e-8
+obc.residual_tolerance = 1e-4
+
+[coulomb_screening] # ===============================================
+align_polarization_to_complex_axes = false
+apply_hilbert_correction = true
+interaction_cutoff = 8                     #12 # Å
+
+epsilon_r = 100.0
+
+num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
+
+max_batch_size = 15
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 2
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 32
+obc.num_quad_points = 31
+obc.residual_tolerance = 1e-4
+
+obc.memoizer.mode = "off"
+obc.memoizer.num_ref_iterations = 3
+obc.memoizer.relative_tol = 1e-2
+obc.memoizer.absolute_tol = 1e-8
+
+lyapunov.algorithm = "spectral"
+lyapunov.num_ref_iterations = 1
+
+lyapunov.memoizer.mode = "off"
+lyapunov.memoizer.num_ref_iterations = 3
+lyapunov.memoizer.relative_tol = 2e-1
+lyapunov.memoizer.absolute_tol = 1e-6
+
+[phonon] # =============================================================
+model = "pseudo-scattering"
+phonon_energy = 40e-3         # eV
+deformation_potential = 75e-3 # eV

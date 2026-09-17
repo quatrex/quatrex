@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 """
 This backend implements the methods present in Serinv for the specific
@@ -8,12 +8,12 @@ For more information see https://github.com/vincent-maillou/serinv
 """
 
 import itertools
-from typing import Optional
+from collections.abc import Callable
 
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
-from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.greens_function_solver.solver import BackSubstitutionContext, OBCBlocks
 from qttools.kernels import linalg
 from qttools.utils.gpu_utils import synchronize_device
 
@@ -46,12 +46,10 @@ class ReducedSystem:
 
     Parameters
     ----------
-    solve_lesser : bool, optional
-        Whether to solve the quadratic system associated with the lesser
-        right-hand-side, by default False.
-    solve_greater : bool, optional
-        Whether to solve the quadratic system associated with the
-        greater right-hand-side, by default False.
+    selected_solve : bool, optional
+        Whether the ReducedSystem should also store blocks for solving
+        the quadratic systems associated with the lesser and greater
+        right-hand-sides, by default False.
 
     Attributes
     ----------
@@ -115,42 +113,55 @@ class ReducedSystem:
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
         sigma_lesser: DSDBSparse | _DStackView = None,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
         sigma_greater: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        **kwargs,
     ):
         """Gathers the reduced system across all ranks.
 
         Parameters
         ----------
         a : DSDBSparse
-            The system matrix A in A X A^T = I/B.
-        x_diag_blocks : list[NDArray]
-            The diagonal blocks of the system matrix.
-        buffer_upper : list[NDArray]
-            The upper off-diagonal blocks of the system matrix.
-        buffer_lower : list[NDArray]
-            The lower off-diagonal blocks of the system matrix.
-        bl : DSDBSparse, optional
-            The system matrix Bl in A X Bl A^T = I/Bl, by default None.
+            The system matrix.
+        xr_diag_blocks : list[NDArray]
+            The diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_upper : list[NDArray]
+            The super-diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_lower : list[NDArray]
+            The sub-diagonal blocks of the Schur factorization of the
+            retarded system.
+        sigma_lesser : DSDBSparse, optional
+            The self-energy matrix for the lesser Green's function, by
+            default None.
         xl_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the system matrix Bl, by default None.
-        bl_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the system matrix Bl, by default None.
-        bl_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the system matrix Bl, by default None.
-        bg : DSDBSparse, optional
-            The system matrix Bg in A X Bg A^T = I/Bg, by default None.
+            The diagonal blocks of the Schur factorization of the lesser
+            system, by default None.
+        xl_buffer_upper : list[NDArray], optional
+            The super-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
+        xl_buffer_lower : list[NDArray], optional
+            The sub-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
+        sigma_greater : DSDBSparse, optional
+            The self-energy matrix for the greater Green's function, by
+            default None.
         xg_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the system matrix Bg, by default None.
-        bg_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the system matrix Bg, by default None.
-        bg_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the system matrix Bg, by default None.
+            The diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+        xg_buffer_upper : list[NDArray], optional
+            The super-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+        xg_buffer_lower : list[NDArray], optional
+            The sub-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+
         """
 
         xr_diag_blocks, xr_upper_blocks, xr_lower_blocks = self._map_reduced_system(
@@ -207,42 +218,56 @@ class ReducedSystem:
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
         sigma_lesser: DSDBSparse | _DStackView = None,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
         sigma_greater: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        **kwargs,
     ):
         """Gathers the reduced system across all ranks.
 
         Parameters
         ----------
         a : DSDBSparse
-            The system matrix A in A X A^T = I/B.
-        x_diag_blocks : list[NDArray]
-            The diagonal blocks of the system matrix.
-        buffer_upper : list[NDArray]
-            The upper off-diagonal blocks of the system matrix.
-        buffer_lower : list[NDArray]
-            The lower off-diagonal blocks of the system matrix.
-        bl : DSDBSparse, optional
-            The system matrix Bl in A X Bl A^T = I/Bl, by default None.
+            The system matrix.
+        xr_diag_blocks : list[NDArray]
+            The diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_upper : list[NDArray]
+            The super-diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_lower : list[NDArray]
+            The sub-diagonal blocks of the Schur factorization of the
+            retarded system.
+        sigma_lesser : DSDBSparse, optional
+            The self-energy matrix for the lesser Green's function, by
+            default None.
         xl_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the system matrix Bl, by default None.
-        bl_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the system matrix Bl, by default None.
-        bl_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the system matrix Bl, by default None.
-        bg : DSDBSparse, optional
-            The system matrix Bg in A X Bg A^T = I/Bg, by default None.
+            The diagonal blocks of the Schur factorization of the lesser
+            system, by default None.
+        xl_buffer_upper : list[NDArray], optional
+            The super-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
+        xl_buffer_lower : list[NDArray], optional
+            The sub-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
+        sigma_greater : DSDBSparse, optional
+            The self-energy matrix for the greater Green's function, by
+            default None.
         xg_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the system matrix Bg, by default None.
-        bg_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the system matrix Bg, by default None.
-        bg_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the system matrix Bg, by default None.
+            The diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+        xg_buffer_upper : list[NDArray], optional
+            The super-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+        xg_buffer_lower : list[NDArray], optional
+            The sub-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+
+
         """
 
         xr_diag_blocks, xr_upper_blocks, xr_lower_blocks = (
@@ -254,9 +279,6 @@ class ReducedSystem:
                 is_retarded=True,
             )
         )
-
-        if comm.rank == 0:
-            print("Gathering reduced system.", flush=True)
 
         synchronize_device()
         comm.block.all_gather(
@@ -334,7 +356,7 @@ class ReducedSystem:
 
         Parameters
         ----------
-        a : DSDBSparse
+        a : DSDBSparse | _DStackView
             Local partition of the matrix to map.
         x_diag_blocks : list[NDArray]
             Local (densified) diagonal blocks of the matrix to map.
@@ -382,7 +404,7 @@ class ReducedSystem:
 
         Parameters
         ----------
-        a : DSDBSparse
+        a : DSDBSparse | _DStackView
             Local partition of the matrix to map.
         x_diag_blocks : list[NDArray]
             Local (densified) diagonal blocks of the matrix to map.
@@ -395,14 +417,10 @@ class ReducedSystem:
         i = a.num_local_blocks - 1
         j = i + 1
 
-        if isinstance(a, DSDBSparse):
-            stack_shape = a._data.shape[:-1]
-            block_size = a.block_sizes[0]
-            dtype = a.dtype
-        else:
-            stack_shape = a._block_indexer._arg.shape[:-1]
-            block_size = a._dsdbsparse.block_sizes[0]
-            dtype = a._dsdbsparse.dtype
+        # NOTE: This is the local shape of the stack.
+        stack_shape = a.local_stack_shape
+        block_size = a.block_sizes[0]
+        dtype = a.dtype
 
         diag_blocks = xp.empty(
             (2 * comm.block.size, *stack_shape, block_size, block_size), dtype=dtype
@@ -591,53 +609,59 @@ class ReducedSystem:
         xr_buffer_lower: list[NDArray],
         xr_out: DSDBSparse | _DStackView,
         return_retarded: bool = True,
-        xl_diag_blocks: list[NDArray] = None,
-        xl_buffer_lower: list[NDArray] = None,
-        xl_buffer_upper: list[NDArray] = None,
+        xl_diag_blocks: list[NDArray] | None = None,
+        xl_buffer_lower: list[NDArray] | None = None,
+        xl_buffer_upper: list[NDArray] | None = None,
         xl_out: DSDBSparse | _DStackView = None,
-        xg_diag_blocks: list[NDArray] = None,
-        xg_buffer_lower: list[NDArray] = None,
-        xg_buffer_upper: list[NDArray] = None,
+        xg_diag_blocks: list[NDArray] | None = None,
+        xg_buffer_lower: list[NDArray] | None = None,
+        xg_buffer_upper: list[NDArray] | None = None,
         xg_out: DSDBSparse | _DStackView = None,
+        stack_slice: slice | None = None,
+        obc_blocks: OBCBlocks | None = None,
+        callbacks: list[Callable[[BackSubstitutionContext], None]] | None = None,
+        **kwargs,
     ):
         """Scatters the reduced system across all ranks.
 
         Parameters
         ----------
-        x_diag_blocks : list[NDArray]
-            The diagonal blocks of the reduced system.
-        buffer_upper : list[NDArray]
-            The upper off-diagonal blocks of the reduced system.
-        buffer_lower : list[NDArray]
-            The lower off-diagonal blocks of the reduced system.
-        out : DSDBSparse
-            The distributed block-sparse matrix to scatter to.
+        xr_diag_blocks : list[NDArray]
+            The diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_upper : list[NDArray]
+            The super-diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_buffer_lower : list[NDArray]
+            The sub-diagonal blocks of the Schur factorization of the
+            retarded system.
+        xr_out : DSDBSparse | _DStackView
+            The output matrix for the retarded system.
+        return_retarded : bool, optional
+            Whether to write the retarded Green's function to the output
+            matrix, by default True.
         xl_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the reduced system associated with
-            the lesser right-hand-side, by default None.
+            The diagonal blocks of the Schur factorization of the lesser
+            system, by default None.
         xl_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the reduced system
-            associated with the lesser right-hand-side, by default None.
+            The sub-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
         xl_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the reduced system
-            associated with the lesser right-hand-side, by default None.
-        xl_out : DSDBSparse, optional
-            The distributed block-sparse matrix to scatter to associated
-            with the lesser right-hand-side, by default None.
+            The super-diagonal blocks of the Schur factorization of the
+            lesser system, by default None.
+        xl_out : DSDBSparse | _DStackView, optional
+            The output matrix for the lesser system, by default None.
         xg_diag_blocks : list[NDArray], optional
-            The diagonal blocks of the reduced system associated with
-            the greater right-hand-side, by default None.
+            The diagonal blocks of the Schur factorization of the
+            greater system, by default None.
         xg_buffer_lower : list[NDArray], optional
-            The lower off-diagonal blocks of the reduced system
-            associated with the greater right-hand-side, by default
-            None.
+            The sub-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
         xg_buffer_upper : list[NDArray], optional
-            The upper off-diagonal blocks of the reduced system
-            associated with the greater right-hand-side, by default
-            None.
-        xg_out : DSDBSparse, optional
-            The distributed block-sparse matrix to scatter to associated
-            with the greater right-hand-side, by default None.
+            The super-diagonal blocks of the Schur factorization of the
+            greater system, by default None.
+        xg_out : DSDBSparse | _DStackView, optional
+            The output matrix for the greater system, by default None.
 
         """
         self._mapback_reduced_system(
@@ -675,6 +699,20 @@ class ReducedSystem:
                 is_retarded=False,
             )
 
+            # NOTE: This is done here because it is the last time we
+            # have access to the dense off-diagonal blocks connecting
+            # partitions, since they are sparsified during the mapback.
+            if callbacks is not None and comm.block.rank != comm.block.size - 1:
+                ctx = BackSubstitutionContext(
+                    i=xr_out.num_local_blocks - 1,
+                    j=xr_out.num_local_blocks,
+                    xl_ij=self.xl_upper_blocks[2 * comm.block.rank],
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
     def _mapback_reduced_system(
         self,
         x_diag_blocks: list[NDArray],
@@ -684,7 +722,7 @@ class ReducedSystem:
         write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
-        lower_block_reduced_system: Optional[list[NDArray]] = None,
+        lower_block_reduced_system: list[NDArray] | None = None,
         is_retarded: bool = True,
     ):
         """Maps the reduced system back to the local partition.
@@ -714,7 +752,7 @@ class ReducedSystem:
             j = i + 1
             x_out.blocks[i, i] = diag_block_reduced_system[0]
 
-            if not x_out.symmetry:
+            if x_out.symmetry is None:
                 if is_retarded:
                     x_out.blocks[j, i] = lower_block_reduced_system[0]
                 else:
@@ -750,7 +788,7 @@ class ReducedSystem:
             x_out.blocks[0, 0] = x_diag_blocks[0]
             x_out.blocks[i, i] = x_diag_blocks[-1]
 
-            if not x_out.symmetry:
+            if x_out.symmetry is None:
                 if is_retarded:
                     x_out.blocks[j, i] = lower_block_reduced_system[2 * comm.block.rank]
                 else:
@@ -767,12 +805,13 @@ def downward_schur(
     xr_diag_blocks: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the downward Schur complement decomposition."""
     obc_r = obc_blocks.retarded[0]
@@ -869,12 +908,13 @@ def upward_schur(
     xr_diag_blocks: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the upward Schur complement decomposition."""
     n = a.num_local_blocks - 1
@@ -975,15 +1015,14 @@ def permuted_schur(
     xr_buffer_upper: list[NDArray],
     obc_blocks: OBCBlocks,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
-    xl_buffer_lower: list[NDArray] = None,
-    xl_buffer_upper: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
+    xl_buffer_upper: list[NDArray] | None = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
-    xg_buffer_lower: list[NDArray] = None,
-    xg_buffer_upper: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
+    xg_buffer_upper: list[NDArray] | None = None,
     stack_slice: slice = Ellipsis,
     selected_solve: bool = False,
+    **kwargs,
 ):
     """Performs the permuted Schur complement decomposition."""
     xr_buffer_lower[0] = a.blocks[0, 1]
@@ -1136,13 +1175,17 @@ def downward_selinv(
     xr_diag_blocks: list[NDArray],
     xr_out: DSDBSparse | _DStackView,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     xl_out: DSDBSparse | _DStackView = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     xg_out: DSDBSparse | _DStackView = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the downward selected inversion."""
     for i in range(a.num_local_blocks - 2, -1, -1):
@@ -1187,7 +1230,7 @@ def downward_selinv(
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
             xl_out.blocks[i, j] = xl_ij
-            if not xl_out.symmetry:
+            if xl_out.symmetry is None:
                 xl_out.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
             xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
             xl_out.blocks[i, i] = 0.5 * (
@@ -1206,12 +1249,25 @@ def downward_selinv(
                 + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
             xg_out.blocks[i, j] = xg_ij
-            if not xg_out.symmetry:
+            if xg_out.symmetry is None:
                 xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
             xg_diag_blocks[i] = xg_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
             xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
+
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=j,
+                    xl_ij=xl_ij,
+                    xl_jj=xl_jj,
+                    xg_jj=xg_jj,
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
 
         x_lower_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_upper_block = -xr_ii_a_ij @ xr_diag_blocks[j]
@@ -1224,19 +1280,35 @@ def downward_selinv(
         xr_out.blocks[i, j] = x_upper_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
 
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=-1,
+            j=0,
+            xl_jj=xl_diag_blocks[0],
+            xg_jj=xg_diag_blocks[0],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
+
 
 def upward_selinv(
     a: DSDBSparse,
     xr_diag_blocks: list[NDArray],
     xr_out: DSDBSparse,
     sigma_lesser: DSDBSparse = None,
-    xl_diag_blocks: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
     xl_out: DSDBSparse = None,
     sigma_greater: DSDBSparse = None,
-    xg_diag_blocks: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
     xg_out: DSDBSparse = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the upward selected inversion."""
     for i in range(1, a.num_local_blocks):
@@ -1283,7 +1355,7 @@ def upward_selinv(
                 - xl_ii @ a_ji_dagger_xr_jj_dagger
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
-            if not xl_out.symmetry:
+            if xl_out.symmetry is None:
                 xl_out.blocks[i, j] = xl_ij
             xl_out.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
@@ -1292,7 +1364,7 @@ def upward_selinv(
                 - xg_ii @ a_ji_dagger_xr_jj_dagger
                 + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
-            if not xg_out.symmetry:
+            if xg_out.symmetry is None:
                 xg_out.blocks[i, j] = xg_ij
             xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
@@ -1319,6 +1391,19 @@ def upward_selinv(
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=j,
+                    xl_ij=xl_ij,
+                    xl_jj=xl_jj,
+                    xg_jj=xg_jj,
+                    obc_blocks=obc_blocks,
+                    stack_slice=stack_slice,
+                )
+                for callback in callbacks:
+                    callback(ctx)
+
         x_upper_block = -xr_jj_a_ji @ xr_diag_blocks[i]
         x_lower_block = -xr_ii_a_ij @ xr_diag_blocks[j]
         xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
@@ -1330,6 +1415,18 @@ def upward_selinv(
         xr_out.blocks[i, j] = x_lower_block
         xr_out.blocks[i, i] = xr_diag_blocks[i]
 
+    if callbacks is not None:
+        ctx = BackSubstitutionContext(
+            i=a.num_local_blocks,
+            j=a.num_local_blocks - 1,
+            xl_jj=xl_diag_blocks[-1],
+            xg_jj=xg_diag_blocks[-1],
+            obc_blocks=obc_blocks,
+            stack_slice=stack_slice,
+        )
+        for callback in callbacks:
+            callback(ctx)
+
 
 def permuted_selinv(
     a: DSDBSparse | _DStackView,
@@ -1338,17 +1435,19 @@ def permuted_selinv(
     xr_buffer_upper: list[NDArray],
     xr_out: DSDBSparse | _DStackView,
     sigma_lesser: DSDBSparse | _DStackView = None,
-    xl_diag_blocks: list[NDArray] = None,
-    xl_buffer_lower: list[NDArray] = None,
-    xl_buffer_upper: list[NDArray] = None,
+    xl_diag_blocks: list[NDArray] | None = None,
+    xl_buffer_upper: list[NDArray] | None = None,
     xl_out: DSDBSparse | _DStackView = None,
     sigma_greater: DSDBSparse | _DStackView = None,
-    xg_diag_blocks: list[NDArray] = None,
-    xg_buffer_lower: list[NDArray] = None,
-    xg_buffer_upper: list[NDArray] = None,
+    xg_diag_blocks: list[NDArray] | None = None,
+    xg_buffer_upper: list[NDArray] | None = None,
     xg_out: DSDBSparse | _DStackView = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
+    obc_blocks: OBCBlocks | None = None,
+    stack_slice: slice = Ellipsis,
+    callbacks: list[Callable] | None = None,
+    **kwargs,
 ):
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
@@ -1443,7 +1542,7 @@ def permuted_selinv(
 
             # Streaming/Sparsifying back to DSDBSparse
             xl_out.blocks[i, i + 1] = bl_upper_block
-            if not xl_out.symmetry:
+            if xl_out.symmetry is None:
                 xl_out.blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
             xl_out.blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
@@ -1499,11 +1598,22 @@ def permuted_selinv(
 
             # Streaming/Sparsifying back to DSDBSparse
             xg_out.blocks[i, i + 1] = bg_upper_block
-            if not xg_out.symmetry:
+            if xg_out.symmetry is None:
                 xg_out.blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
             xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
+
+            if callbacks is not None:
+                ctx = BackSubstitutionContext(
+                    i=i,
+                    j=i + 1,
+                    xl_ij=bl_upper_block,
+                    stack_slice=stack_slice,
+                    obc_blocks=obc_blocks,
+                )
+                for callback in callbacks:
+                    callback(ctx)
 
         if return_retarded:
             xr_out.blocks[i, i + 1] = -xr_i @ B1
@@ -1522,10 +1632,21 @@ def permuted_selinv(
         xr_out.blocks[1, 0] = xr_buffer_upper[0]
         xr_out.blocks[0, 1] = xr_buffer_lower[0]
     if selected_solve:
-        if not xl_out.symmetry:
+        if xl_out.symmetry is None:
             xl_out.blocks[1, 0] = xl_buffer_upper[0]
         xl_out.blocks[0, 1] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
 
-        if not xg_out.symmetry:
+        if xg_out.symmetry is None:
             xg_out.blocks[1, 0] = xg_buffer_upper[0]
         xg_out.blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
+
+        if callbacks is not None:
+            ctx = BackSubstitutionContext(
+                i=0,
+                j=1,
+                xl_ij=-xl_buffer_upper[0].conj().swapaxes(-2, -1),
+                stack_slice=stack_slice,
+                obc_blocks=obc_blocks,
+            )
+            for callback in callbacks:
+                callback(ctx)

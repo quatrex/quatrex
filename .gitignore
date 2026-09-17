@@ -166,11 +166,22 @@ notebooks/
 
 # Examples directory and outputs
 **/outputs
-**/inputs
+
 hostfile
 .vscode/
-examples/.file_cache.npy
 
 # Nsight Systems output
 *.nsys-rep
 *.sqlite
+
+# quatrex output files
+*quatrex_times*
+
+# Auto-generated documentation files
+docs/api/qttools
+docs/api/quatrex
+docs/user_guide/parameters
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml

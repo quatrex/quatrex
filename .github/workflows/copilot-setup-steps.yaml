@@ -1,0 +1,36 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+name: Copilot Setup Steps
+
+on: workflow_dispatch
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7.0.1
+
+      - name: Set Up C++ Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ build-essential
+
+      - name: Set Up CMake
+        run: |
+          sudo apt-get install -y cmake
+
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          frozen: true
+          activate-environment: dev
+
+      - name: Run Pre-Commit Hooks
+        run: |
+          pre-commit install
+          pre-commit run --all-files

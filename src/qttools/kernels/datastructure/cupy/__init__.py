@@ -1,4 +1,6 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our CUDA datastructure kernels."""
 
 THREADS_PER_BLOCK = 1024
 

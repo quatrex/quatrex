@@ -1,15 +1,12 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+"""Includes our Numba csr datastructure kernels."""
 
 import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from qttools.profiling import Profiler
 
-profiler = Profiler()
-
-
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True)
 def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArray:
     """Finds the block coordinates of the given rows and columns.
@@ -31,8 +28,9 @@ def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArr
         The block column indices.
 
     """
-    brows = np.zeros(rows.shape[0], dtype=np.int16)
-    bcols = np.zeros(cols.shape[0], dtype=np.int16)
+    dtype = rows.dtype
+    brows = np.zeros(rows.shape[0], dtype=dtype)
+    bcols = np.zeros(cols.shape[0], dtype=dtype)
     for i in nb.prange(rows.shape[0]):
         for j in range(block_offsets.shape[0]):
             cond_rows = int(block_offsets[j] <= rows[i])
@@ -43,7 +41,6 @@ def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArr
     return brows, bcols
 
 
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True)
 def _find_block_inds(
     brows: NDArray,
@@ -87,6 +84,8 @@ def _find_block_inds(
         The matching indices of this matrix.
 
     """
+    dtype = rows.dtype
+
     mask = np.zeros(brows.shape[0], dtype=np.bool_)
     for i in nb.prange(rows.shape[0]):
         mask[i] = (brows[i] == brow) & (bcols[i] == bcol)
@@ -97,7 +96,7 @@ def _find_block_inds(
     rr = rows[mask] - block_offsets[brow]
     cc = cols[mask]
 
-    inds = np.zeros(rr.shape[0], dtype=np.int32) - 1
+    inds = np.zeros(rr.shape[0], dtype=dtype) - 1
     for i in nb.prange(rr.shape[0]):
         r = rr[i]
         ind = np.nonzero(self_cols[rowptr[r] : rowptr[r + 1]] == cc[i])[0]
@@ -109,7 +108,6 @@ def _find_block_inds(
     return inds[valid], mask_inds[valid]
 
 
-@profiler.profile(level="api")
 def find_inds(
     rowptr_map: dict[tuple, NDArray],
     block_offsets: NDArray,
@@ -169,7 +167,6 @@ def find_inds(
     return np.array(inds, dtype=int), np.array(value_inds, dtype=int)
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def densify_block(
     block: NDArray,
@@ -199,7 +196,6 @@ def densify_block(
         block[..., i, cols] = data[..., rowptr[i] : rowptr[i + 1]]
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def sparsify_block(
     block: NDArray,
@@ -231,7 +227,8 @@ def sparsify_block(
 
 # TODO: Check why the jit is uncommented here.
 # @nb.njit(parallel=True, cache=True)
-@profiler.profile(level="debug")
+
+
 def _compute_rowptr_map_kernel(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> nb.typed.Dict:
@@ -261,25 +258,27 @@ def _compute_rowptr_map_kernel(
         blockwise column-sparse-row format.
 
     """
+    dtype = coo_rows.dtype
+
     num_blocks = block_sizes.shape[0]
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
     nnz_offset = 0
-    sort_index = np.zeros(len(coo_cols), dtype=np.int32)
+    sort_index = np.zeros(len(coo_cols), dtype=dtype)
     rowptr_map = {}
 
-    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    block_nnz = np.zeros(num_blocks, dtype=dtype)
 
     # NOTE: This is a very generous estimate of the number of
     # nonzeros in each row of blocks. No assumption on the sparsity
     # pattern of the matrix is made here.
     nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
-    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=dtype)
 
     for i in range(num_blocks):
         # Precompute the row mask.
         row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])
-        hists = np.zeros((num_blocks, block_sizes[i]), dtype=np.int32)
+        hists = np.zeros((num_blocks, block_sizes[i]), dtype=dtype)
         bins = np.arange(block_sizes[i] + 1)
         # Process in parallel.
         for j in nb.prange(num_blocks):
@@ -306,14 +305,13 @@ def _compute_rowptr_map_kernel(
                 sort_index[nnz_offset : nnz_offset + nnz] = inds[j, :nnz]
 
                 rowptr = np.hstack((np.array([0]), np.cumsum(hists[j]))) + nnz_offset
-                rowptr_map[(i, j)] = rowptr
+                rowptr_map[(i, j)] = rowptr.astype(dtype)
 
                 nnz_offset += nnz
 
     return sort_index, rowptr_map
 
 
-@profiler.profile(level="api")
 def compute_rowptr_map(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> dict:

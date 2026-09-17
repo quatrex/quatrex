@@ -1,12 +1,11 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+"""Includes our CUDA general datastructure kernels."""
 
 import cupy as cp
-import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
-from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
     from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
@@ -14,10 +13,6 @@ else:
     from qttools.kernels.datastructure.cupy import _cupy_rawkernel as cupy_backend
 
 
-profiler = Profiler()
-
-
-@profiler.profile(level="api")
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Finds the ranks of the indices in the offsets.
 
@@ -34,10 +29,13 @@ def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
         The ranks of the indices in the offsets.
 
     """
-    ranks = cp.zeros(inds.shape[0], dtype=cp.int16)
+    dtype = nnz_section_offsets.dtype.type
+    if inds.dtype.type != dtype:
+        raise TypeError(
+            f"All input arrays must have the same dtype, but got {nnz_section_offsets.dtype}, {inds.dtype}."
+        )
 
-    nnz_section_offsets = nnz_section_offsets.astype(cp.int32)
-    inds = inds.astype(cp.int32)
+    ranks = cp.zeros_like(inds)
 
     blocks_per_grid = (inds.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._find_ranks(
@@ -47,8 +45,8 @@ def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
             nnz_section_offsets,
             inds,
             ranks,
-            np.int32(nnz_section_offsets.shape[0]),
-            np.int32(inds.shape[0]),
+            dtype(nnz_section_offsets.shape[0]),
+            dtype(inds.shape[0]),
         ),
     )
     return ranks

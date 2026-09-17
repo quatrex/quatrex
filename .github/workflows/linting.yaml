@@ -1,0 +1,36 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+name: Run Pre-Commit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-linting:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set Up Pixi
+        uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          frozen: true
+          activate-environment: ci
+
+      - name: Run Pre-Commit Hooks
+        id: pre-commit
+        continue-on-error: true
+        run: pre-commit run --all-files
+
+      - name: Show git diff
+        if: steps.pre-commit.outcome == 'failure'
+        run: ./.github/workflows/scripts/show-git-diff.sh

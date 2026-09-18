@@ -31,7 +31,19 @@ try:
     petsc4py_config = petsc4py.get_config()
     petsc_dir = petsc4py_config.get("PETSC_DIR", None)
     petsc_arch = os.environ.get("PETSC_ARCH", petsc4py_config.get("PETSC_ARCH", None))
-    libpetsc = ctypes.CDLL(f"{petsc_dir}/{petsc_arch}/lib/libpetsc.so")
+
+    try:
+        libpetsc = ctypes.CDLL(f"{petsc_dir}/{petsc_arch}/lib/libpetsc.so")
+    except OSError:
+        # If the PETSc library is not found, we can try to load it from
+        # the system library path. This may work if PETSc was installed
+        # system-wide or via a package manager.
+        print(
+            f"Could not load PETSc library from {petsc_dir}/{petsc_arch}. "
+            f"Trying to load from system library path."
+        )
+        libpetsc = ctypes.CDLL("libpetsc.so")
+
     libpetsc.MatSetPreallocationCOO.argtypes = [
         ctypes.c_void_p,  # Mat A
         ctypes.c_longlong,  # PetscCount ncoo
@@ -208,7 +220,7 @@ class PETSc(WFSolver):
                 "Valid options are: None, 'full', 'upper'."
             )
 
-        if (
+        if matrix_type is not None and (
             "real" in matrix_type
             and petsc.ScalarType != xp.float64
             or "complex" in matrix_type

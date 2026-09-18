@@ -114,7 +114,7 @@ gpu = { features = ["common", "gpu"], solve-group = "gpu" }
 
 # This environment is used for GitHub CI/CD linting and testing, since
 # the low-rank reference QTBM tests require pardiso to run.
-ci = { features = ["common", "dev", "pardiso"], solve-group = "dev" }
+ci = { features = ["common", "dev", "pardiso", "petsc"], solve-group = "dev" }
 
 hpc = { features = ["common", "hpc"], solve-group = "hpc", no-default-feature = true }
 
@@ -187,6 +187,11 @@ platforms = ["linux-64", "linux-aarch64"]
 # --- Pardiso feature --------------------------------------------------
 [tool.pixi.feature.pardiso]
 dependencies = { pydiso = "*" }
+platforms = ["linux-64"]
+
+# --- PETSc feature ----------------------------------------------------
+[tool.pixi.feature.petsc]
+dependencies = { petsc4py = "*" }
 platforms = ["linux-64"]
 
 

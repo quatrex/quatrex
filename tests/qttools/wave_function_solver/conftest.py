@@ -8,6 +8,7 @@ from qttools import xp
 from qttools.wave_function_solver import (
     MUMPS,
     PARDISO,
+    PETSc,
     SuperLU,
     Thomas,
     WFSolver,
@@ -39,6 +40,7 @@ def m(request: pytest.FixtureRequest) -> int:
 mumps_available = importlib.util.find_spec("mumps") is not None
 nvmath_available = importlib.util.find_spec("nvmath") is not None
 pardiso_available = importlib.util.find_spec("pydiso") is not None
+petsc_available = importlib.util.find_spec("petsc4py") is not None
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class WFSolverSpec:
     solver_type: type[WFSolver]
     sparse_format: str
     order: str = "C"
+    solver_options: dict[str, object] = field(default_factory=dict)
     use_banded: bool = False
     supports_reuse_analysis: bool = False
     supports_reuse_factorization: bool = False
@@ -115,6 +118,34 @@ SOLVER_SPECS = [
                 not nvmath_available, reason="Requires nvmath-python package"
             ),
             pytest.mark.skipif(xp.__name__ != "cupy", reason="Requires cupy backend"),
+        ],
+    ),
+    pytest.param(
+        WFSolverSpec(
+            solver_type=PETSc,
+            sparse_format="csr",
+            order="F",
+            solver_options={
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "lu",
+                    "pc_factor_mat_solver_type": "superlu_dist",
+                }
+            },
+            supports_reuse_analysis=True,
+            supports_reuse_factorization=True,
+            factorization_needs_analysis=True,
+            # NOTE: Not the most comprehensive test for PETSc, since it
+            # can handle real *or* complex matrices, just not both
+            # within the same build. Assuming here that the scalar type
+            # is complex, so we only test for complex support.
+            supports_symmetric=False,
+            supports_hermitian=False,
+            supports_distributed=True,
+        ),
+        id="petsc",
+        marks=[
+            pytest.mark.skipif(not petsc_available, reason="Requires petsc4py package")
         ],
     ),
     pytest.param(

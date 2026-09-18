@@ -109,7 +109,7 @@ def test_solve(n: int, m: int, solver_spec: WFSolverSpec):
         order=solver_spec.order,
         use_banded=solver_spec.use_banded,
     )
-    solver = solver_spec.solver_type()
+    solver = solver_spec.solver_type(**solver_spec.solver_options)
 
     x = solver.solve(a, b, **solver_spec.solve_kwargs)
 
@@ -131,7 +131,7 @@ def test_reuse_analysis(n: int, m: int, solver_spec: WFSolverSpec):
         order=solver_spec.order,
         use_banded=solver_spec.use_banded,
     )
-    solver = solver_spec.solver_type()
+    solver = solver_spec.solver_type(**solver_spec.solver_options)
 
     x1 = solver.solve(a, b, **solver_spec.solve_kwargs)
     assert xp.allclose(a @ x1, b, atol=1e-6)
@@ -165,7 +165,7 @@ def test_reuse_factorization(n: int, m: int, solver_spec: WFSolverSpec):
         order=solver_spec.order,
         use_banded=solver_spec.use_banded,
     )
-    solver = solver_spec.solver_type()
+    solver = solver_spec.solver_type(**solver_spec.solver_options)
 
     x1 = solver.solve(a, b, **solver_spec.solve_kwargs)
     assert xp.allclose(a @ x1, b, atol=1e-6)
@@ -209,7 +209,9 @@ def test_real_symmetric_system(n: int, m: int, solver_spec: WFSolverSpec):
     b = b.astype(xp.float64, order=solver_spec.order)
 
     solver = solver_spec.solver_type(
-        matrix_type="real_symmetric_indefinite", matrix_view="upper"
+        matrix_type="real_symmetric_indefinite",
+        matrix_view="upper",
+        **solver_spec.solver_options,
     )
     x = solver.solve(
         sparse.triu(a, format=solver_spec.sparse_format), b, **solver_spec.solve_kwargs
@@ -238,7 +240,9 @@ def test_complex_hermitian_system(n: int, m: int, solver_spec: WFSolverSpec):
     a = a.conj().T + a
 
     solver = solver_spec.solver_type(
-        matrix_type="complex_hermitian_indefinite", matrix_view="upper"
+        matrix_type="complex_hermitian_indefinite",
+        matrix_view="upper",
+        **solver_spec.solver_options,
     )
     x = solver.solve(
         sparse.triu(a, format=solver_spec.sparse_format), b, **solver_spec.solve_kwargs
@@ -275,7 +279,9 @@ def test_distributed_solve(n: int, m: int, solver_spec: WFSolverSpec):
     local_rows = (section_offsets[comm.rank], section_offsets[comm.rank + 1])
 
     solver = solver_spec.solver_type(
-        comm=_SubCommunicator(comm, {}), local_rows=local_rows
+        comm=_SubCommunicator(comm, {}),
+        local_rows=local_rows,
+        **solver_spec.solver_options,
     )
 
     a_local = a[local_rows[0] : local_rows[1], :]
@@ -330,6 +336,7 @@ def test_distributed_real_symmetric_system(n: int, m: int, solver_spec: WFSolver
         matrix_view="upper",
         comm=_SubCommunicator(comm, {}),
         local_rows=local_rows,
+        **solver_spec.solver_options,
     )
 
     # Cut the local matrix to only include the upper triangular part, as

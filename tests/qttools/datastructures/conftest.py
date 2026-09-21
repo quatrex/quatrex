@@ -14,6 +14,11 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
+SIZES = [
+    pytest.param(10, id="size-10"),
+    pytest.param(20, id="size-20"),
+    pytest.param(21, id="size-21"),
+]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -65,6 +70,11 @@ SYMMETRY = [
     pytest.param("hermitian", id="hermitian"),
     pytest.param("symmetric", id="symmetric"),
 ]
+
+
+@pytest.fixture(params=SIZES)
+def size(request: pytest.FixtureRequest) -> int:
+    return request.param
 
 
 @pytest.fixture(params=BLOCK_SIZES)

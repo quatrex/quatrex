@@ -154,6 +154,10 @@ class SigmaPhononDeformationPotential(ScatteringSelfEnergy):
         phonon_momenta = xp.linspace(
             -max_phonon_momentum, max_phonon_momentum, n_phonon_momenta
         )
+        if len(phonon_momenta) % 2 != 0:
+            raise ValueError(
+                f"The number of provided phonon momenta must be even to avoid the edge case where the phonon momentum equals zero and the electron-phonon coupling constants diverge. {len(phonon_momenta)} phonon momenta were given."
+            )
 
         # Compute electron-phonon coupling constants
         coupling_constants = xp.zeros((n_modes, n_phonon_momenta), dtype=complex)

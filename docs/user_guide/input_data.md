@@ -335,7 +335,9 @@ the angular velocities `omega[mode, momentum]` in
 $\mathrm{rad}/\mathrm{s}$ for the different phonon modes and momenta.
 The phonon momenta are assumed to be equally spaced as
 `np.linspace(-pi/a, pi/a, n_phonon_momenta)`, with `a` the lattice
-constant.
+constant. `n_phonon_momenta` must be even to avoid the edge case where
+the phonon momentum equals zero and the electron-phonon coupling
+constants diverge.
 
 !!! question "Why is the phonon momentum only one-dimensional?"
     Currently, the `"deformation-potential`" model is only implemented

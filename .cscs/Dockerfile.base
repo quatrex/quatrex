@@ -32,6 +32,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     git \
     git-lfs \
     gfortran \
+    pkg-config \
+    flex \
+    bison \
     && rm -rf /var/lib/apt/lists/*
 
 # When building on a machine without a GPU, during the build process on
@@ -111,6 +114,40 @@ RUN python3 -m venv /opt/venv \
     && python3 -m pip install nvmath-python \
     && python3 -m pip install ase meshio scikit-fem pyvista \
     && python3 -m pip install tomlkit
+
+# Install PETSc and petsc4py.
+ENV PETSC_DIR=/opt/petsc-3.25.5
+ENV PETSC_ARCH=arch-gh200-complex
+RUN cd /opt \
+    && wget https://web.cels.anl.gov/projects/petsc/download/release-snapshots/petsc-3.25.5.tar.gz \
+    && tar -xzf petsc-3.25.5.tar.gz \
+    && cd petsc-3.25.5 \
+    && ./configure --PETSC_ARCH=$PETSC_ARCH \
+        --with-scalar-type=complex \
+        --with-cuda=1 \
+        --with-debugging=no \
+        --with-cudac=nvcc \
+        --with-cuda-dialect=c++17 \
+        --with-cuda-arch=90 \
+        --with-blaslapack-dir=/usr/lib/aarch64-linux-gnu/ \
+        --with-openmp \
+        --with-mpi-dir=/usr \
+        --with-fortran-bindings=0 \
+        --download-hwloc \
+        --download-metis \
+        --download-mumps \
+        --download-parmetis \
+        --download-ptscotch \
+        --download-scalapack \
+        --download-slate \
+        --download-strumpack \
+        --download-superlu \
+        --download-superlu_dist \
+    && make PETSC_DIR=$PETSC_DIR PETSC_ARCH=$PETSC_ARCH all \
+    && . /opt/venv/bin/activate \
+    && python3 -m pip install src/binding/petsc4py \
+    && cd /opt \
+    && rm petsc-3.25.5.tar.gz
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available

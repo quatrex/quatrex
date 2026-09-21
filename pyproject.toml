@@ -193,8 +193,13 @@ platforms = ["linux-64"]
 
 # --- PETSc feature ----------------------------------------------------
 [tool.pixi.feature.petsc]
-dependencies = { petsc4py = "*" }
 platforms = ["linux-64"]
+
+    [tool.pixi.feature.petsc.dependencies]
+    # The "complex*" buildspec makes sure that the PETSc build does not
+    # include CUDA support.
+    petsc = { version = "*", build = "complex*" }
+    petsc4py = "*"
 
 
 # --- Tasks ------------------------------------------------------------

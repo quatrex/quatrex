@@ -329,7 +329,7 @@ describing the phononic structure inside the device are required.
 
 ## Phonon Dispersion
 
-The `"deformation-potential`" model requires the phonon dispersion to be
+The `"deformation-potential"` model requires the phonon dispersion to be
 provided in a file named `phonon_dispersion.npy`. This file must contain
 the angular velocities `omega[mode, momentum]` in
 $\mathrm{rad}/\mathrm{s}$ for the different phonon modes and momenta.

@@ -358,7 +358,7 @@ np.fill_diagonal(coulomb_matrix, 0)
 ## Phonon Dispersion
 
 The `"deformation-potential"` electron-phonon scattering model requires
-the `phonon_dispersion.npy` input file containing the angular momenta of
+the `phonon_dispersion.npy` input file containing the angular velocities of
 the phonons. For the required format, see User Guide -> Input Data ->
 Phonon Data -> Phonon Dispersion in the documentation.
 

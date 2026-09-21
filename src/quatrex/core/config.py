@@ -1444,7 +1444,7 @@ class PhononConfig(BaseModel):
     """The deformation potential of the acoustic phonon modes in eV."""
     optical_deformation_potential: FiniteFloat | None = None
     """The deformation potential of the optical phonon modes in eV/Å."""
-    atom_mass_u: NonNegativeFloat | None = None
+    atom_mass_u: PositiveFloat | None = None
     """
     The mass of a single atom in the unified atomic mass unit.
     All atoms are assumed to have the same mass.

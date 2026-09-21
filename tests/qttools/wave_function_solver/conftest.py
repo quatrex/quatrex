@@ -140,6 +140,8 @@ SOLVER_SPECS = [
             # within the same build. Assuming here that the scalar type
             # is complex, so we only test for complex support.
             supports_symmetric=False,
+            # NOTE: superlu_dist does not support Hermitian matrices, so
+            # we cannot test for that here.
             supports_hermitian=False,
             supports_distributed=True,
         ),

@@ -25,7 +25,7 @@ def _get_v_matrix(v: NDArray, g_size: int):
     if len(v.shape) != 1:
         raise ValueError("`v` has multiple dimensions.")
 
-    v_size = xp.size(v)
+    v_size = min(xp.size(v), g_size)
 
     diagonals = [xp.full(g_size - i, v[i]) for i in range(v_size)]
     offsets = xp.arange(v_size)

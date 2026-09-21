@@ -113,7 +113,9 @@ docs = { features = ["common", "docs"], solve-group = "dev" }
 gpu = { features = ["common", "gpu"], solve-group = "gpu" }
 
 # This environment is used for GitHub CI/CD linting and testing, since
-# the low-rank reference QTBM tests require pardiso to run.
+# the low-rank reference QTBM tests require pardiso to run. PETSc is
+# also included in the CI environment to ensure that distributed solving
+# it is tested as well.
 ci = { features = ["common", "dev", "pardiso", "petsc"], solve-group = "dev" }
 
 hpc = { features = ["common", "hpc"], solve-group = "hpc", no-default-feature = true }

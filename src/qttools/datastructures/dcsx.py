@@ -82,6 +82,12 @@ class DCSX:
 
         self.symmetry = symmetry
 
+        self.is_neighbour: NDArray | None = None
+        self.num_neighbour_indices: NDArray | None = None
+        self.neighbour_indices: dict[int, NDArray] | None = None
+        self.recv_row_indices: dict[int, NDArray] | None = None
+        self.recv_col_indices: dict[int, NDArray] | None = None
+
     def get_tile(self, rows, cols):
         pass
 
@@ -131,6 +137,244 @@ class DCSX:
             dense[idx] = tmp
 
         return dense
+
+    def _communicate_quantity(self, quantity: NDArray) -> dict[int, NDArray]:
+        """
+        Communicates a quantity to the neighbours.
+
+        The quantity can either be the row indices, column indices, or
+        the data. The quantity is communicated to the neighbours based
+        on the graph analysis performed in `_graph_analysis`.
+
+        Parameters
+        ----------
+        quantity : NDArray
+            The quantity to communicate.
+
+        Returns
+        -------
+        dict[int, NDArray]
+            A dictionary mapping the rank of each neighbour to the
+            received quantity.
+
+        """
+
+        if (
+            self.is_neighbour is None
+            or self.num_neighbour_indices is None
+            or self.neighbour_indices is None
+        ):
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        recv_buffer = {}
+
+        for rank in range(comm.block.size):
+            if rank < comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
+                recv_buffer[rank] = xp.empty(
+                    quantity.shape[:-1]
+                    + (self.num_neighbour_indices[comm.block.rank, rank],),
+                    dtype=quantity.dtype,
+                )
+
+        # First communicate the col indices
+        requests = []
+        send_buffers = []
+        comm.block.group_start(comm.block._config["send_recv"])
+        for rank in range(comm.block.size):
+            if rank == comm.block.rank:
+                continue
+
+            # Post a send
+            if rank > comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
+                send_buffer = xp.ascontiguousarray(
+                    quantity[..., self.neighbour_indices[rank]]
+                )
+                send_buffers.append(send_buffer)
+                requests.append(comm.block.isend(buf=send_buffer, dest=rank))
+
+            # Post a receive
+            if rank < comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
+                requests.append(comm.block.irecv(buf=recv_buffer[rank], source=rank))
+
+        comm.block.group_end(comm.block._config["send_recv"], requests)
+
+        return recv_buffer
+
+    def _graph_analysis(self):
+        """Performs a graph analysis to determine the neighbours of this rank.
+
+        This populates the following attributes:
+        - `is_neighbour`: A boolean array indicating whether each rank is a neighbour.
+        - `num_neighbour_indices`: An array indicating the number of indices to send to each neighbour.
+        - `neighbour_indices`: A dictionary mapping each neighbour rank to the indices to send to that neighbour.
+        - `recv_row_indices`: A dictionary mapping each neighbour rank to the row indices received from that neighbour.
+        - `recv_col_indices`: A dictionary mapping each neighbour rank to the column indices received from that neighbour.
+
+        Note
+        ----
+        This method should only be called for symmetric matrices. For
+        non-symmetric matrices, the graph analysis is not yet relevant.
+
+        """
+
+        if (
+            self.is_neighbour is not None
+            or self.num_neighbour_indices is not None
+            or self.neighbour_indices is not None
+        ):
+            raise ValueError("Graph analysis has already been performed.")
+
+        if self.symmetry is None:
+            raise ValueError("Graph analysis is only relevant for symmetric matrices.")
+
+        is_neighbour = xp.zeros((1, comm.block.size), dtype=bool)
+        num_neighbour_indices = xp.zeros((1, comm.block.size), dtype=self.index_type)
+        neighbour_indices = {}
+
+        col_ind = self.col_ind
+        for rank in range(comm.block.size):
+            indices = xp.argwhere(
+                (col_ind < self.row_offsets[rank + 1])
+                & (col_ind >= self.row_offsets[rank])
+            ).ravel()
+
+            # Do not include self connections in the neighbour list.
+            if len(indices) > 0:
+                is_neighbour[0, rank] = True
+                num_neighbour_indices[0, rank] = len(indices)
+                neighbour_indices[rank] = indices
+
+        self.is_neighbour = comm.block.all_gather_v(is_neighbour, axis=0)
+        self.num_neighbour_indices = comm.block.all_gather_v(
+            num_neighbour_indices, axis=0
+        )
+        # symmetrize the graph
+        self.is_neighbour |= self.is_neighbour.T
+        self.num_neighbour_indices += self.num_neighbour_indices.T
+
+        self.neighbour_indices = neighbour_indices
+
+        # In the symmetric case, we need now to communicate the row/col indices
+        # to the neighbouring ranks
+
+        # Allocate the receiv buffers for the row/col indices
+        self.recv_row_indices = self._communicate_quantity(self.row_ind)
+        self.recv_col_indices = self._communicate_quantity(self.col_ind)
+
+    def expand_symmetry(
+        self,
+    ) -> "DCSX":
+        """Symmetrizes the DCSX matrix. This returns a new DCSX matrix
+        that is the symmetrized version of the original matrix.
+
+        Note
+        ----
+        This method should only be called for symmetric matrices. For
+        non-symmetric matrices, the symmetrization is not yet relevant.
+
+        Note
+        ----
+        This method is intended to be used in the matrix assembly
+        process in QTBM.
+
+        Returns
+        -------
+        DCSX
+            The symmetrized DCSX matrix.
+
+        """
+        if self.symmetry is None:
+            raise ValueError("Symmetrization is only relevant for symmetric matrices.")
+
+        if (
+            self.is_neighbour
+            or self.num_neighbour_indices is None
+            or self.neighbour_indices is None
+        ):
+            self._graph_analysis()
+
+        if self.recv_row_indices is None or self.recv_col_indices is None:
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        if self.neighbour_indices is None:
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        recv_data = self._communicate_quantity(self.data)
+
+        # NOTE: All of the below could be cached, but then we start to
+        # lose the memory advantage and we could just save the full
+        # row_ind/col_ind/data arrays. So we will not do that for now.
+
+        # TODO: This could be optimized to avoid the concatenation and
+        # sorting, but for now we will keep it simple.
+
+        # Convert received global entries into their transposed local coordinates.
+        recv_row_ind = [self.row_ind] + [
+            self.recv_col_indices[rank] - self.row_offsets[comm.block.rank]
+            for rank in recv_data.keys()
+        ]
+        recv_col_ind = [self.col_ind] + [
+            self.recv_row_indices[rank] + self.row_offsets[rank]
+            for rank in recv_data.keys()
+        ]
+
+        new_data = [self.data] + [
+            symmetry_ops[self.symmetry](recv_data[rank]) for rank in recv_data.keys()
+        ]
+
+        # NOTE: Need to account for the local symmetric entries.
+        local_neighbour_indices = self.neighbour_indices[comm.block.rank]
+
+        # Filter out the diagonal.
+        local_neighbour_indices = local_neighbour_indices[
+            self.col_ind[local_neighbour_indices]
+            != self.row_ind[local_neighbour_indices] + self.row_offsets[comm.block.rank]
+        ]
+        recv_row_ind.append(
+            self.col_ind[local_neighbour_indices] - self.row_offsets[comm.block.rank]
+        )
+        recv_col_ind.append(
+            self.row_ind[local_neighbour_indices] + self.row_offsets[comm.block.rank]
+        )
+        new_data.append(
+            symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
+        )
+
+        new_row_ind = xp.concatenate(recv_row_ind, axis=-1)
+        new_col_ind = xp.concatenate(recv_col_ind, axis=-1)
+        new_data = xp.concatenate(new_data, axis=-1)
+
+        # Sort the indices and data to get the canonical format
+        flat_idx = new_row_ind * self.cols + new_col_ind
+        sort_idx = xp.argsort(flat_idx)
+        new_row_ind = new_row_ind[sort_idx]
+        new_col_ind = new_col_ind[sort_idx]
+        new_data = new_data[..., sort_idx]
+
+        # TODO: Do not get the row_ptr from scipy
+        # We are not passing in the real data since it is higher
+        # dimensional.
+        coo = sparse.coo_matrix(
+            (xp.ones_like(new_row_ind, dtype=bool), (new_row_ind, new_col_ind)),
+            shape=(self.rows, self.cols),
+            copy=False,
+        )
+        new_row_ptr = coo.tocsr().indptr
+
+        dcsx = DCSX(
+            dtype=self.dtype,
+            rows=self.rows,
+            cols=self.cols,
+            row_offsets=self.row_offsets,
+            local_stack_shape=self.local_stack_shape,
+            row_ptr=new_row_ptr,
+            row_ind=new_row_ind,
+            col_ind=new_col_ind,
+        )
+        dcsx.allocate_data()
+        dcsx.data = new_data
+
+        return dcsx
 
     @classmethod
     def from_sparray(
@@ -221,9 +465,10 @@ class DCSX:
 
         row_ind = coo.row
         col_ind = coo.col
+        # TODO: Do not get the row_ptr from scipy
         row_ptr = coo.tocsr().indptr
 
-        dsdbcoo = cls(
+        dcsx = cls(
             dtype=dtype,
             rows=int(rows[0]),
             cols=int(cols[0]),
@@ -236,7 +481,7 @@ class DCSX:
         )
 
         if allocate:
-            dsdbcoo.allocate_data()
-            dsdbcoo.data = coo.data
+            dcsx.allocate_data()
+            dcsx.data = coo.data
 
-        return dsdbcoo
+        return dcsx

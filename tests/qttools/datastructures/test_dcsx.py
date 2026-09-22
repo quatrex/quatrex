@@ -16,21 +16,9 @@ def configure_comm(request):
     """Setup any state specific to the execution of the given module."""
     block_comm_size = request.param
 
-    # Default configuration setup based on the xp module
-    if xp.__name__ == "cupy":
-        _default_config = {
-            "all_to_all": "host_mpi",
-            "all_gather": "host_mpi",
-            "all_reduce": "host_mpi",
-            "bcast": "host_mpi",
-        }
-    elif xp.__name__ == "numpy":
-        _default_config = {
-            "all_to_all": "device_mpi",
-            "all_gather": "device_mpi",
-            "all_reduce": "device_mpi",
-            "bcast": "device_mpi",
-        }
+    _default_config = {
+        "send_recv": "device_mpi",
+    }
 
     if global_comm.size < block_comm_size:
         pytest.skip(
@@ -62,6 +50,8 @@ def _create_coo(
         coo_t = coo.copy()
         coo_t.data[:] = symmetry_ops[symmetry](coo_t.data)
         coo = coo + coo_t.T
+        # Keep only the upper triangular part
+        coo = sparse.triu(coo, format="coo")
         return coo
 
     return coo
@@ -110,7 +100,14 @@ class TestCreation:
             symmetry=symmetry,
         )
         dense_dcsx = dcsx.to_dense()
-        assert xp.array_equiv(coo.toarray(), dense_dcsx)
+        if symmetry is not None:
+            reference = coo.toarray() + xp.triu(
+                symmetry_ops[symmetry](coo.toarray()), k=1
+            ).swapaxes(-1, -2)
+        else:
+            reference = coo.toarray()
+
+        assert xp.array_equiv(reference, dense_dcsx)
         if symmetry is not None:
             assert xp.array_equiv(
                 dense_dcsx, symmetry_ops[symmetry](dense_dcsx).swapaxes(-1, -2)
@@ -120,5 +117,85 @@ class TestCreation:
 @pytest.mark.mpi(min_size=2)
 class TestCreationDist(TestCreation):
     """Tests all tests of TestCreation in distributed setting."""
+
+    pass
+
+
+class TestConversion:
+    """Tests for the conversion methods of DSDBSparse."""
+
+    def test_to_dense(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can convert a DSDBSparse matrix to dense."""
+        __, coo, dcsx = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        if symmetry is not None:
+            reference = coo.toarray() + xp.triu(
+                symmetry_ops[symmetry](coo.toarray()), k=1
+            ).swapaxes(-1, -2)
+        else:
+            reference = coo.toarray()
+
+        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+
+        assert xp.allclose(reference, dcsx.to_dense())
+
+    def test_graph_analysis(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can perform graph analysis on a DCSX matrix."""
+
+        if symmetry is None:
+            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+
+        __, __, dcsx = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        # Just check that it runs without errors or deadlocks.
+        dcsx._graph_analysis()
+
+    def test_expand_symmetry(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can expand the symmetry of a DCSX matrix."""
+
+        if symmetry is None:
+            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+
+        __, coo, dcsx = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        # Just check that it runs without errors or deadlocks.
+        full_dcsx = dcsx.expand_symmetry()
+
+        test = full_dcsx.to_dense()
+        reference = coo.toarray() + xp.triu(
+            symmetry_ops[symmetry](coo.toarray()), k=1
+        ).swapaxes(-1, -2)
+        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+
+        assert xp.allclose(test, reference)
+
+
+@pytest.mark.mpi(min_size=2)
+class TestConversionDist(TestConversion):
+    """Tests all tests of TestConversion in distributed setting."""
 
     pass

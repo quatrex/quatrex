@@ -6,31 +6,19 @@ import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.comm.comm import _default_config
 from qttools.datastructures.dsdbsparse import DSDBSparse, _block_view, symmetry_ops
 
 
 @pytest.fixture(autouse=True, scope="module")
 def configure_comm():
     """setup any state specific to the execution of the given module."""
-    if xp.__name__ == "cupy":
-        _default_config = {
-            "all_to_all": "host_mpi",
-            "all_gather": "host_mpi",
-            "all_reduce": "host_mpi",
-            "bcast": "host_mpi",
-        }
-    elif xp.__name__ == "numpy":
-        _default_config = {
-            "all_to_all": "device_mpi",
-            "all_gather": "device_mpi",
-            "all_reduce": "device_mpi",
-            "bcast": "device_mpi",
-        }
     # Configure the comm singleton.
     comm.configure(
         block_comm_size=1,
         block_comm_config=_default_config,
         stack_comm_config=_default_config,
+        global_comm_config=_default_config,
         override=True,
     )
 

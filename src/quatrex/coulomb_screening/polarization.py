@@ -13,6 +13,7 @@ from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
 
@@ -79,7 +80,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.prefactor = (
             -1j
             / (xp.pi)
-            * xp.abs(self.energies[1] - self.energies[0])
+            * xp.abs(get_equal_spacing(self.energies))
             / self.kpoint_volume
         )
         self.batch_size = config.compute.convolve.batch_size

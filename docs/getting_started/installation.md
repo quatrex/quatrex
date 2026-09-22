@@ -21,7 +21,7 @@ We currently do not ship any pre-built binaries for `quatrex`, so the
 first step in installing `quatrex` is typically to clone the repository:
 
 ```bash
-git clone git@github.com:quatrex/quatrex.git
+git clone https://github.com/quatrex/quatrex.git
 cd quatrex
 ```
 
@@ -91,10 +91,25 @@ can create a virtual environment and install `quatrex` (in editable
 mode) and its dependencies with:
 
 ```bash
-uv venv --python >=3.13
+uv venv --python ">=3.13"
 source .venv/bin/activate
 uv pip install --editable .
 ```
+
+!!! note "MPI runtime for `mpi4py`"
+    The `uv` installation of `quatrex` will only install an `mpi4py`
+    wheel from PyPI by default. **An MPI runtime must be available on
+    the system for `mpi4py` to work.** The MPI runtime (for instance
+    MPICH) can be installed via the system package manager or using
+    `uv`:
+
+    ```bash
+    uv pip install mpich
+    ```
+
+    This is not included by default since the system MPI runtime is
+    often preferred on HPC systems, and installing a different MPI
+    runtime lead to conflicts with the system MPI.
 
 The following optional dependencies for `quatrex` can be installed
 with `uv`:

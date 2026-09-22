@@ -10,6 +10,7 @@
 ---
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/quatrex/quatrex/tests.yaml?branch=main&label=tests)](https://github.com/quatrex/quatrex/actions/workflows/tests.yaml?query=branch%3Amain+branch%3Adev)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquatrex%2Fquatrex%2Fpython-coverage-comment-action-data%2Fendpoint.json&label=coverage)](https://htmlpreview.github.io/?https://github.com/quatrex/quatrex/blob/python-coverage-comment-action-data/htmlcov/index.html)
 [![License](https://img.shields.io/badge/license-BSD_3--Clause-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-zensical-orange)](https://quatrex.github.io/quatrex/)
 [![Code Style:
@@ -54,14 +55,14 @@ simulations of realistic nanostructures.
 `quatrex` is installed from source using `pixi` (recommended) or `uv`.
 
 ```bash
-git clone git@github.com:quatrex/quatrex.git
+git clone https://github.com/quatrex/quatrex.git
 cd quatrex
 pixi install --frozen
 ```
 
 Detailed installation instructions, including optional GPU support and
 deployment on HPC systems, are available in [the
-documentation](https://quatrex.github.io/quatrex/getting_started/installation).
+documentation](https://quatrex.github.io/quatrex/latest/getting_started/installation/).
 
 ## Documentation
 

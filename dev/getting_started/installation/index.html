@@ -6476,7 +6476,7 @@ GitHub using <code>uv</code>:</p>
 <h2 id="obtaining-the-source-code">Obtaining the source code<a class="headerlink" href="#obtaining-the-source-code" title="Permanent link">#</a></h2>
 <p>We currently do not ship any pre-built binaries for <code>quatrex</code>, so the
 first step in installing <code>quatrex</code> is typically to clone the repository:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:quatrex/quatrex.git
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/quatrex/quatrex.git
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>quatrex
 </span></code></pre></div>
 <p>We provide several example configurations, input files, and reference
@@ -6530,13 +6530,26 @@ You can find more information on <code>pixi</code> named workspaces in the
 environment and dependency manager. After obtaining the source code you
 can create a virtual environment and install <code>quatrex</code> (in editable
 mode) and its dependencies with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span>&gt;<span class="o">=</span><span class="m">3</span>.13
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="s2">&quot;&gt;=3.13&quot;</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--editable<span class="w"> </span>.
 </span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">MPI runtime for <code>mpi4py</code></p>
+<p>The <code>uv</code> installation of <code>quatrex</code> will only install an <code>mpi4py</code>
+wheel from PyPI by default. <strong>An MPI runtime must be available on
+the system for <code>mpi4py</code> to work.</strong> The MPI runtime (for instance
+MPICH) can be installed via the system package manager or using
+<code>uv</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>mpich
+</span></code></pre></div>
+<p>This is not included by default since the system MPI runtime is
+often preferred on HPC systems, and installing a different MPI
+runtime lead to conflicts with the system MPI.</p>
+</div>
 <p>The following optional dependencies for <code>quatrex</code> can be installed
 with <code>uv</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--editable<span class="w"> </span>.<span class="o">[</span>&lt;dev<span class="p">|</span>docs<span class="p">|</span>gpu&gt;<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--editable<span class="w"> </span>.<span class="o">[</span>&lt;dev<span class="p">|</span>docs<span class="p">|</span>gpu&gt;<span class="o">]</span>
 </span></code></pre></div>
 <ul>
 <li><strong><code>dev</code></strong>: Includes tools for development, testing, and linting, such
@@ -6585,9 +6598,9 @@ similar, i.e.:</p>
 <p class="admonition-title">Building <code>cupy</code> from source</p>
 <p>To build <code>cupy</code> with NCCL support, you may need to set the following
 environment variables to point to your NCCL
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NCCL_ROOT_DIR</span><span class="o">=</span>/path/to/nccl
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CPATH</span><span class="o">=</span><span class="nv">$NCCL_ROOT_DIR</span>/include:<span class="nv">$CPATH</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LIBRARY_PATH</span><span class="o">=</span><span class="nv">$NCCL_ROOT_DIR</span>/lib:<span class="nv">$LIBRARY_PATH</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NCCL_ROOT_DIR</span><span class="o">=</span>/path/to/nccl
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CPATH</span><span class="o">=</span><span class="nv">$NCCL_ROOT_DIR</span>/include:<span class="nv">$CPATH</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LIBRARY_PATH</span><span class="o">=</span><span class="nv">$NCCL_ROOT_DIR</span>/lib:<span class="nv">$LIBRARY_PATH</span>
 </span></code></pre></div></p>
 </div>
 <div class="admonition info">
@@ -6599,33 +6612,33 @@ future, which will simplify the installation process.</p>
 <p>After setting up pixi and cloning the source code, set up and start an
 up-to-date programming environment with the appropriate compiler, MPI,
 and GPU modules. For example, on Alps:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uenv<span class="w"> </span>start<span class="w"> </span>--view<span class="o">=</span>default<span class="w"> </span>prgenv-gnu/26.3:v1
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uenv<span class="w"> </span>start<span class="w"> </span>--view<span class="o">=</span>default<span class="w"> </span>prgenv-gnu/26.3:v1
 </span></code></pre></div>
 <p>Now you can install <code>quatrex</code> and its dependencies for running on HPC
 systems with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>pixi<span class="w"> </span>install<span class="w"> </span>--environment<span class="o">=</span>hpc
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>pixi<span class="w"> </span>install<span class="w"> </span>--environment<span class="o">=</span>hpc
 </span></code></pre></div>
 <p>The installation will take a while, as <code>mpi4py</code> and <code>cupy</code> will be built
 from source. After the installation is complete, you can run <code>quatrex</code>
 on multiple nodes using a batch script similar to the following:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="ch">#!/bin/bash</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1">#SBATCH --job-name=quatrex</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1">#SBATCH --output=%x.%j.out</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">#SBATCH --error=%x.%j.err</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1">#SBATCH --nodes=2</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1">#SBATCH --ntasks-per-node=4</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1">#SBATCH --gpus-per-task=1</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1">#SBATCH --cpus-per-task=64</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1">#SBATCH --uenv=prgenv-gnu/26.3:v1</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1">#SBATCH --view=default</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CUPY_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.cupy/kernel_cache
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NUMBA_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.numba/kernel_cache
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="nb">eval</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>pixi<span class="w"> </span>shell-hook<span class="w"> </span>--environment<span class="w"> </span>hpc<span class="w"> </span>--frozen<span class="k">)</span><span class="s2">&quot;</span>
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>
-</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="ch">#!/bin/bash</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c1">#SBATCH --job-name=quatrex</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1">#SBATCH --output=%x.%j.out</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1">#SBATCH --error=%x.%j.err</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1">#SBATCH --nodes=2</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1">#SBATCH --ntasks-per-node=4</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="c1">#SBATCH --gpus-per-task=1</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1">#SBATCH --cpus-per-task=64</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="c1">#SBATCH --uenv=prgenv-gnu/26.3:v1</span>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="c1">#SBATCH --view=default</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CUPY_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.cupy/kernel_cache
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NUMBA_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.numba/kernel_cache
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="nb">eval</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>pixi<span class="w"> </span>shell-hook<span class="w"> </span>--environment<span class="w"> </span>hpc<span class="w"> </span>--frozen<span class="k">)</span><span class="s2">&quot;</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Kernel Caches</p>
@@ -6638,17 +6651,17 @@ shown in the example above.</p>
 <p class="admonition-title">Using <code>pixi</code> workspaces on HPC systems</p>
 <p>Like described <a href="#installation-using-pixi">above</a>, you can also
 register a <code>quatrex</code> workspace on Alps with
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>pixi<span class="w"> </span>workspace<span class="w"> </span>register<span class="w"> </span>--path<span class="w"> </span>/path/to/quatrex
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>pixi<span class="w"> </span>workspace<span class="w"> </span>register<span class="w"> </span>--path<span class="w"> </span>/path/to/quatrex
 </span></code></pre></div>
 And you can then use this workspace in batch scripts or from any
 other directory</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="ch">#!/bin/bash</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># ... SBATCH directives ...</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="nb">eval</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>pixi<span class="w"> </span>shell-hook<span class="w"> </span>--workspace<span class="w"> </span>quatrex<span class="w"> </span>--environment<span class="w"> </span>hpc<span class="w"> </span>--frozen<span class="k">)</span><span class="s2">&quot;</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="ch">#!/bin/bash</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># ... SBATCH directives ...</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="nb">eval</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>pixi<span class="w"> </span>shell-hook<span class="w"> </span>--workspace<span class="w"> </span>quatrex<span class="w"> </span>--environment<span class="w"> </span>hpc<span class="w"> </span>--frozen<span class="k">)</span><span class="s2">&quot;</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
 </span></code></pre></div>
 </div>
 <h3 id="installing-quatrex-on-alps-using-uv">Installing <code>quatrex</code> on Alps using <code>uv</code><a class="headerlink" href="#installing-quatrex-on-alps-using-uv" title="Permanent link">#</a></h3>
@@ -6658,10 +6671,10 @@ again set up and start an up-to-date programming environment.</p>
 <p>After this, following the instructions for <a href="https://docs.cscs.ch/build-install/python/">installing Python software
 on Alps</a>, you can create a
 virtual environment and install <code>quatrex</code> and its dependencies:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="k">$(</span>which<span class="w"> </span>python<span class="k">)</span><span class="w"> </span>--system-site-packages<span class="w"> </span>--seed<span class="w"> </span>--relocatable<span class="w"> </span>--link-mode<span class="o">=</span>copy
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;.[gpu]&quot;</span><span class="w"> </span>--no-binary<span class="o">=</span>mpi4py
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="k">$(</span>which<span class="w"> </span>python<span class="k">)</span><span class="w"> </span>--system-site-packages<span class="w"> </span>--seed<span class="w"> </span>--relocatable<span class="w"> </span>--link-mode<span class="o">=</span>copy
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;.[gpu]&quot;</span><span class="w"> </span>--no-binary<span class="o">=</span>mpi4py
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Building <code>mpi4py</code> from source</p>
@@ -6673,8 +6686,8 @@ This is automatically handled in the <code>pixi</code> installation above.</p>
 installation without optional dependencies and install a <code>cupy</code> binary
 that will link against the system's runtime libraries. For example, for
 CUDA 13.x, you can run:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w"> </span>--no-binary<span class="o">=</span>mpi4py
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>cupy-cuda13x
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w"> </span>--no-binary<span class="o">=</span>mpi4py
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>cupy-cuda13x
 </span></code></pre></div>
 <p>This way of installing is significantly faster, as it avoids building
 <code>cupy</code> from source. For more information on the available <code>cupy</code>
@@ -6682,24 +6695,24 @@ binaries, see the <a href="https://docs.cupy.dev/en/stable/install.html"><code>c
 documentation</a>. After the
 installation is complete, you can run quatrex on multiple nodes using a
 batch script similar to the following:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="ch">#!/bin/bash</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1">#SBATCH --job-name=quatrex</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1">#SBATCH --output=%x.%j.out</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1">#SBATCH --error=%x.%j.err</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1">#SBATCH --nodes=2</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1">#SBATCH --ntasks-per-node=4</span>
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="c1">#SBATCH --gpus-per-task=1</span>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="c1">#SBATCH --cpus-per-task=64</span>
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1">#SBATCH --uenv=prgenv-gnu/26.3:v1</span>
-</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="c1">#SBATCH --view=default</span>
-</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
-</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CUPY_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.cupy/kernel_cache
-</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NUMBA_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.numba/kernel_cache
-</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>
-</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>
-</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="ch">#!/bin/bash</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1">#SBATCH --job-name=quatrex</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1">#SBATCH --output=%x.%j.out</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="c1">#SBATCH --error=%x.%j.err</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="c1">#SBATCH --nodes=2</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1">#SBATCH --ntasks-per-node=4</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1">#SBATCH --gpus-per-task=1</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="c1">#SBATCH --cpus-per-task=64</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="c1">#SBATCH --uenv=prgenv-gnu/26.3:v1</span>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="c1">#SBATCH --view=default</span>
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CUPY_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.cupy/kernel_cache
+</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NUMBA_CACHE_DIR</span><span class="o">=</span><span class="si">${</span><span class="nv">SCRATCH</span><span class="si">}</span>/.numba/kernel_cache
+</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>
+</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>
+</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>srun<span class="w"> </span>quatrex<span class="w"> </span>run<span class="w"> </span>&lt;path/to/config.toml&gt;
 </span></code></pre></div>
 
 

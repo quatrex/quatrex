@@ -7,6 +7,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import symmetry_ops
+from qttools.kernels import inplace
 from qttools.utils.gpu_utils import get_host
 
 
@@ -82,11 +83,18 @@ class DCSX:
 
         self.symmetry = symmetry
 
+        # Graph analysis attributes. They are populated by the
+        # `_graph_analysis` method and used in the `expand_symmetry`
+        # method.
         self.is_neighbour: NDArray | None = None
         self.num_neighbour_indices: NDArray | None = None
         self.neighbour_indices: dict[int, NDArray] | None = None
         self.recv_row_indices: dict[int, NDArray] | None = None
         self.recv_col_indices: dict[int, NDArray] | None = None
+
+        # Addition cache. Used to cache to avoid repeated finding of the
+        # indices for the addition operation.
+        self._add_cache: dict[int, NDArray] = {}
 
     def get_tile(self, rows, cols):
         pass
@@ -323,22 +331,26 @@ class DCSX:
         ]
 
         # NOTE: Need to account for the local symmetric entries.
-        local_neighbour_indices = self.neighbour_indices[comm.block.rank]
+        if comm.block.rank in self.neighbour_indices:
+            local_neighbour_indices = self.neighbour_indices[comm.block.rank]
 
-        # Filter out the diagonal.
-        local_neighbour_indices = local_neighbour_indices[
-            self.col_ind[local_neighbour_indices]
-            != self.row_ind[local_neighbour_indices] + self.row_offsets[comm.block.rank]
-        ]
-        recv_row_ind.append(
-            self.col_ind[local_neighbour_indices] - self.row_offsets[comm.block.rank]
-        )
-        recv_col_ind.append(
-            self.row_ind[local_neighbour_indices] + self.row_offsets[comm.block.rank]
-        )
-        new_data.append(
-            symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
-        )
+            # Filter out the diagonal.
+            local_neighbour_indices = local_neighbour_indices[
+                self.col_ind[local_neighbour_indices]
+                != self.row_ind[local_neighbour_indices]
+                + self.row_offsets[comm.block.rank]
+            ]
+            recv_row_ind.append(
+                self.col_ind[local_neighbour_indices]
+                - self.row_offsets[comm.block.rank]
+            )
+            recv_col_ind.append(
+                self.row_ind[local_neighbour_indices]
+                + self.row_offsets[comm.block.rank]
+            )
+            new_data.append(
+                symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
+            )
 
         new_row_ind = xp.concatenate(recv_row_ind, axis=-1)
         new_col_ind = xp.concatenate(recv_col_ind, axis=-1)
@@ -375,6 +387,106 @@ class DCSX:
         dcsx.data = new_data
 
         return dcsx
+
+    def _get_update_indices(self, other: "DCSX") -> NDArray:
+        """Returns the indices of `self` that correspond to the entries
+        of `other`.
+
+        Parameters
+        ----------
+        other : DCSX
+            The DCSX matrix whose entries we want to find in `self`.
+
+        Returns
+        -------
+        NDArray
+            The indices of `self` that correspond to the entries of
+            `other`.
+
+        """
+        # flatten row cols into a sortable integer key
+        other_keys = other.row_ind * self.cols + other.col_ind
+        self_keys = self.row_ind * self.cols + self.col_ind
+
+        update_indices = np.searchsorted(self_keys, other_keys)
+
+        if not np.array_equal(self_keys[update_indices], other_keys):
+            raise AssertionError("`other` has entries not present in `self`.")
+
+        return update_indices
+
+    def add_(
+        self,
+        other: "DCSX",
+        prefactor: int | float | np.number = 1.0,
+        cache: bool = True,
+        cache_id: int | None = None,
+    ) -> None:
+        """Adds another DCSX matrix to this one in place.
+
+        Note
+        ----
+        This method assumes that the sparsity pattern of `other` is a
+        subset of the sparsity pattern of `self`. If this is not the
+        case, a ValueError will be raised.
+
+        Parameters
+        ----------
+        other : DCSX
+            The DCSX matrix to add to this one.
+        prefactor : int | float | np.number, optional
+            A prefactor to multiply `other` by before adding. Default is
+            1.0.
+        cache : bool, optional
+            Whether to cache the indices for the addition operation.
+            Default is True.
+        cache_id : int | None, optional
+            An optional cache ID to use for caching the indices. If
+            None, the ID of `other` will be used. Default is None.
+
+        """
+        if self.symmetry is not None and other.symmetry is None:
+            raise ValueError("Cannot add a non-symmetric matrix to a symmetric matrix.")
+        if self.rows != other.rows or self.cols != other.cols:
+            raise ValueError(
+                "The shapes of the two matrices must be the same for addition."
+            )
+        if self.local_stack_shape != other.local_stack_shape:
+            raise ValueError(
+                "The local stack shapes of the two matrices must be the same for addition."
+            )
+        if self._data is None:
+            raise ValueError("Self data has not been allocated yet.")
+        if other._data is None:
+            raise ValueError("Other data has not been allocated yet.")
+
+        # In the case of adding a symmetric matrix to a non-symmetric
+        # one, we expand the symmetry of the symmetric matrix to match
+        # the non-symmetric one.
+        if other.symmetry is not None and self.symmetry is None:
+            other = other.expand_symmetry()
+
+        if cache_id is None:
+            cache_id = id(other)
+
+        # NOTE: We assume that the sparsity of `other` is a subset of
+        # the sparsity of `self`.
+        if cache and cache_id in self._add_cache:
+            update_indices = self._add_cache[cache_id]
+        else:
+            update_indices = self._get_update_indices(other)
+            if cache:
+                self._add_cache[cache_id] = update_indices
+
+        # TODO: Update the kernel for higher dimensions
+        for stack_index in np.ndindex(self.local_stack_shape):
+            inplace.scatter_add_scaled(
+                self._data[stack_index],
+                other._data[stack_index],
+                update_indices,
+                prefactor,
+                False,
+            )
 
     @classmethod
     def from_sparray(

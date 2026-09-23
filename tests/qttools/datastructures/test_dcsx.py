@@ -40,11 +40,17 @@ def _create_coo(
 ) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
 
-    rng = xp.random.default_rng()
+    rng = xp.random.default_rng(seed=42)
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
     coo.setdiag(rng.uniform(size=size) + 1j * rng.uniform(size=size))
     coo.data += 1j * rng.uniform(size=coo.nnz)
+
+    # make the sparsity pattern symmetric
+    coo_ = coo.copy()
+    coo_.data[:] = rng.uniform(size=coo_.nnz) + 1j * rng.uniform(size=coo_.nnz)
+    coo = coo + coo_.T
+    coo = coo.tocoo()
 
     if symmetry is not None:
         coo_t = coo.copy()
@@ -69,10 +75,10 @@ def _create_coo_dcsx(
     coo = global_comm.bcast(coo, root=0)
 
     section_sizes, __ = get_section_sizes(size, comm.block.size)
-    offsets = np.cumsum([0] + section_sizes)
+    row_offsets = np.cumsum([0] + section_sizes)
 
     local_sparray = coo.tocsr()[
-        offsets[comm.block.rank] : offsets[comm.block.rank + 1], :
+        row_offsets[comm.block.rank] : row_offsets[comm.block.rank + 1], :
     ]
 
     dcsx = DCSX.from_sparray(
@@ -122,7 +128,7 @@ class TestCreationDist(TestCreation):
 
 
 class TestConversion:
-    """Tests for the conversion methods of DSDBSparse."""
+    """Tests for the conversion methods of DCSX."""
 
     def test_to_dense(
         self,
@@ -130,7 +136,7 @@ class TestConversion:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can convert a DSDBSparse matrix to dense."""
+        """Tests that we can convert a DCSX matrix to dense."""
         __, coo, dcsx = _create_coo_dcsx(
             size=size,
             local_stack_shape=global_stack_shape,
@@ -196,6 +202,94 @@ class TestConversion:
 
 @pytest.mark.mpi(min_size=2)
 class TestConversionDist(TestConversion):
+    """Tests all tests of TestConversion in distributed setting."""
+
+    pass
+
+
+class TestInplace:
+    """Tests for the inplace methods of DCSX."""
+
+    def test_add_symmetric(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can add a DCSX matrix to another DCSX matrix."""
+        __, coo, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        # randomly mask the `coo` matrix to create a new sparse matrix with a subset of the sparsity pattern of `coo`
+        rng = xp.random.default_rng(seed=42)
+        # choose a random subset of the non-zero entries of `coo` to keep
+        mask = rng.choice([False, True], size=coo.nnz)
+        coo = sparse.coo_matrix(
+            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
+        )
+
+        local_sparray = coo.tocsr()[
+            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
+        ]
+
+        b = DCSX.from_sparray(
+            sparray=local_sparray,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        a_dense = a.to_dense()
+        b_dense = b.to_dense()
+
+        a.add_(b)
+
+        assert xp.allclose(a.to_dense(), a_dense + b_dense)
+
+    def test_add_nonsymmetric(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can add a symmetric DCSX matrix to a non-symmetric DCSX matrix."""
+        __, coo, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+        )
+
+        # randomly mask the `coo` matrix to create a new sparse matrix
+        # with a subset of the sparsity pattern of `coo`
+        rng = xp.random.default_rng(seed=42)
+        # choose a random subset of the non-zero entries of `coo` to keep
+        mask = rng.choice([False, True], size=coo.nnz)
+        coo = sparse.coo_matrix(
+            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
+        )
+        coo = sparse.triu(coo)
+
+        local_sparray = coo.tocsr()[
+            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
+        ]
+
+        b = DCSX.from_sparray(
+            sparray=local_sparray,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        a_dense = a.to_dense()
+        b_dense = b.to_dense()
+
+        a.add_(b)
+
+        assert xp.allclose(a.to_dense(), a_dense + b_dense)
+
+
+@pytest.mark.mpi(min_size=2)
+class TestInplaceDist(TestInplace):
     """Tests all tests of TestConversion in distributed setting."""
 
     pass

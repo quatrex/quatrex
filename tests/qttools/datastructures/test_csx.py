@@ -1,37 +1,10 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import numpy as np
 import pytest
-from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import sparse, xp
-from qttools.comm import comm
-from qttools.datastructures.dcsx import DCSX
+from qttools.datastructures.csx import CSX
 from qttools.datastructures.dsdbsparse import symmetry_ops
-from qttools.utils.mpi_utils import get_section_sizes
-
-
-@pytest.fixture(autouse=True, scope="module", params=[3, 1])
-def configure_comm(request):
-    """Setup any state specific to the execution of the given module."""
-    block_comm_size = request.param
-
-    _default_config = {
-        "send_recv": "device_mpi",
-    }
-
-    if global_comm.size < block_comm_size:
-        pytest.skip(
-            f"Skipping test for block comm size {block_comm_size} with global comm size {global_comm.size}."
-        )
-
-    # Configure the comm singleton with the parameterized block_comm_size
-    comm.configure(
-        block_comm_size=block_comm_size,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        override=True,
-    )
 
 
 def _create_coo(
@@ -63,34 +36,26 @@ def _create_coo(
     return coo
 
 
-def _create_coo_dcsx(
+def _create_coo_csx(
     size: int,
     local_stack_shape: tuple,
     symmetry: str | None = None,
-) -> tuple[sparse.coo_matrix, sparse.coo_matrix, DCSX]:
+) -> tuple[sparse.coo_matrix, CSX]:
     """Returns a random complex sparse array
-    and a DCSX matrix with the same sparsity pattern.
+    and a CSX matrix with the same sparsity pattern.
     """
-    coo = _create_coo(size, symmetry=symmetry) if global_comm.rank == 0 else None
-    coo = global_comm.bcast(coo, root=0)
+    coo = _create_coo(size, symmetry=symmetry)
 
-    section_sizes, __ = get_section_sizes(size, comm.block.size)
-    row_offsets = np.cumsum([0] + section_sizes)
-
-    local_sparray = coo.tocsr()[
-        row_offsets[comm.block.rank] : row_offsets[comm.block.rank + 1], :
-    ]
-
-    dcsx = DCSX.from_sparray(
-        sparray=local_sparray,
+    csx = CSX.from_sparray(
+        sparray=coo,
         local_stack_shape=local_stack_shape,
         symmetry=symmetry,
     )
-    return local_sparray, coo, dcsx
+    return coo, csx
 
 
 class TestCreation:
-    """Tests the creation methods of DCSX."""
+    """Tests the creation methods of CSX."""
 
     def test_from_sparray(
         self,
@@ -98,14 +63,14 @@ class TestCreation:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests the creation of DCSX matrices from sparse arrays."""
+        """Tests the creation of CSX matrices from sparse arrays."""
 
-        __, coo, dcsx = _create_coo_dcsx(
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
         )
-        dense_dcsx = dcsx._to_dense()
+        dense_dcsx = csx._to_dense()
         if symmetry is not None:
             reference = coo.toarray() + xp.triu(
                 symmetry_ops[symmetry](coo.toarray()), k=1
@@ -120,15 +85,8 @@ class TestCreation:
             )
 
 
-@pytest.mark.mpi(min_size=2)
-class TestCreationDist(TestCreation):
-    """Tests all tests of TestCreation in distributed setting."""
-
-    pass
-
-
 class TestConversion:
-    """Tests for the conversion methods of DCSX."""
+    """Tests for the conversion methods of CSX."""
 
     def test_to_dense(
         self,
@@ -136,8 +94,8 @@ class TestConversion:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can convert a DCSX matrix to dense."""
-        __, coo, dcsx = _create_coo_dcsx(
+        """Tests that we can convert a CSX matrix to dense."""
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
@@ -151,26 +109,7 @@ class TestConversion:
 
         reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
 
-        assert xp.allclose(reference, dcsx._to_dense())
-
-    def test_graph_analysis(
-        self,
-        size: int,
-        global_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can perform graph analysis on a DCSX matrix."""
-
-        if symmetry is None:
-            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
-
-        __, __, dcsx = _create_coo_dcsx(
-            size=size,
-            local_stack_shape=global_stack_shape,
-            symmetry=symmetry,
-        )
-        # Just check that it runs without errors or deadlocks.
-        dcsx._graph_analysis()
+        assert xp.allclose(reference, csx._to_dense())
 
     def test_expand_symmetry(
         self,
@@ -178,18 +117,18 @@ class TestConversion:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can expand the symmetry of a DCSX matrix."""
+        """Tests that we can expand the symmetry of a CSX matrix."""
 
         if symmetry is None:
             pytest.skip("Graph analysis is only relevant for symmetric matrices.")
 
-        __, coo, dcsx = _create_coo_dcsx(
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
         )
         # Just check that it runs without errors or deadlocks.
-        full_dcsx = dcsx.expand_symmetry()
+        full_dcsx = csx.expand_symmetry()
 
         test = full_dcsx._to_dense()
         reference = coo.toarray() + xp.triu(
@@ -200,15 +139,8 @@ class TestConversion:
         assert xp.allclose(test, reference)
 
 
-@pytest.mark.mpi(min_size=2)
-class TestConversionDist(TestConversion):
-    """Tests all tests of TestConversion in distributed setting."""
-
-    pass
-
-
 class TestInplace:
-    """Tests for the inplace methods of DCSX."""
+    """Tests for the inplace methods of CSX."""
 
     def test_add_symmetric(
         self,
@@ -216,8 +148,8 @@ class TestInplace:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can add a DCSX matrix to another DCSX matrix."""
-        __, coo, a = _create_coo_dcsx(
+        """Tests that we can add a CSX matrix to another CSX matrix."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
@@ -231,12 +163,8 @@ class TestInplace:
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
 
-        local_sparray = coo.tocsr()[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
-
-        b = DCSX.from_sparray(
-            sparray=local_sparray,
+        b = CSX.from_sparray(
+            sparray=coo,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
         )
@@ -254,8 +182,8 @@ class TestInplace:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can add a symmetric DCSX matrix to a non-symmetric DCSX matrix."""
-        __, coo, a = _create_coo_dcsx(
+        """Tests that we can add a symmetric CSX matrix to a non-symmetric CSX matrix."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=global_stack_shape,
         )
@@ -270,12 +198,8 @@ class TestInplace:
         )
         coo = sparse.triu(coo)
 
-        local_sparray = coo.tocsr()[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
-
-        b = DCSX.from_sparray(
-            sparray=local_sparray,
+        b = CSX.from_sparray(
+            sparray=coo,
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
         )
@@ -286,10 +210,3 @@ class TestInplace:
         a.add_(b)
 
         assert xp.allclose(a._to_dense(), a_dense + b_dense)
-
-
-@pytest.mark.mpi(min_size=2)
-class TestInplaceDist(TestInplace):
-    """Tests all tests of TestConversion in distributed setting."""
-
-    pass

@@ -105,7 +105,7 @@ class TestCreation:
             local_stack_shape=global_stack_shape,
             symmetry=symmetry,
         )
-        dense_dcsx = dcsx.to_dense()
+        dense_dcsx = dcsx._to_dense()
         if symmetry is not None:
             reference = coo.toarray() + xp.triu(
                 symmetry_ops[symmetry](coo.toarray()), k=1
@@ -151,7 +151,7 @@ class TestConversion:
 
         reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
 
-        assert xp.allclose(reference, dcsx.to_dense())
+        assert xp.allclose(reference, dcsx._to_dense())
 
     def test_graph_analysis(
         self,
@@ -191,7 +191,7 @@ class TestConversion:
         # Just check that it runs without errors or deadlocks.
         full_dcsx = dcsx.expand_symmetry()
 
-        test = full_dcsx.to_dense()
+        test = full_dcsx._to_dense()
         reference = coo.toarray() + xp.triu(
             symmetry_ops[symmetry](coo.toarray()), k=1
         ).swapaxes(-1, -2)
@@ -241,12 +241,12 @@ class TestInplace:
             symmetry=symmetry,
         )
 
-        a_dense = a.to_dense()
-        b_dense = b.to_dense()
+        a_dense = a._to_dense()
+        b_dense = b._to_dense()
 
         a.add_(b)
 
-        assert xp.allclose(a.to_dense(), a_dense + b_dense)
+        assert xp.allclose(a._to_dense(), a_dense + b_dense)
 
     def test_add_nonsymmetric(
         self,
@@ -280,12 +280,12 @@ class TestInplace:
             symmetry=symmetry,
         )
 
-        a_dense = a.to_dense()
-        b_dense = b.to_dense()
+        a_dense = a._to_dense()
+        b_dense = b._to_dense()
 
         a.add_(b)
 
-        assert xp.allclose(a.to_dense(), a_dense + b_dense)
+        assert xp.allclose(a._to_dense(), a_dense + b_dense)
 
 
 @pytest.mark.mpi(min_size=2)

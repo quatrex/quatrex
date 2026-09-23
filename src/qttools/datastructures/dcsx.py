@@ -6,8 +6,8 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.datastructures.csx import CSX
 from qttools.datastructures.dsdbsparse import symmetry_ops
-from qttools.kernels import inplace
 from qttools.utils.gpu_utils import get_host
 
 
@@ -42,46 +42,32 @@ class DCSX:
 
     """
 
+    _DELEGATED = [
+        "dtype",
+        "rows",
+        "cols",
+        "index_type",
+        "local_stack_shape",
+        "shape",
+        "row_ptr",
+        "row_ind",
+        "col_ind",
+        "nnz",
+        "symmetry",
+        "allocate_data",
+        "toarray",
+    ]
+
     def __init__(
         self,
-        dtype: xp.dtype[xp.generic],
-        rows: int,
-        cols: int,
+        _csx: CSX,
         row_offsets: NDArray,
-        local_stack_shape: tuple[int, ...],
-        row_ptr: NDArray,
-        row_ind: NDArray,
-        col_ind: NDArray,
-        symmetry: str | None = None,
     ):
 
-        rows = int(rows)
-        cols = int(cols)
+        self._csx = _csx
 
-        # Type of the data
-        self.dtype = dtype
-        # Type of the indices
-        self.index_type = col_ind.dtype
         # Distribution of rows
         self.row_offsets = row_offsets
-        self.local_stack_shape = local_stack_shape
-
-        # TODO: Unify the naming between the data structures. In
-        # DSDBSparse, `rows` and `cols` refer to the `row_ind` and
-        # `col_ind` arrays.
-        self.rows = rows
-        self.cols = cols
-
-        self.shape = self.local_stack_shape + (self.rows, self.cols)
-
-        self.row_ptr = row_ptr
-        self.row_ind = row_ind
-        self.col_ind = col_ind
-        self._data = None
-
-        self.nnz = len(self.col_ind)
-
-        self.symmetry = symmetry
 
         # Graph analysis attributes. They are populated by the
         # `_graph_analysis` method and used in the `expand_symmetry`
@@ -92,40 +78,46 @@ class DCSX:
         self.recv_row_indices: dict[int, NDArray] | None = None
         self.recv_col_indices: dict[int, NDArray] | None = None
 
-        # Addition cache. Used to cache to avoid repeated finding of the
-        # indices for the addition operation.
-        self._add_cache: dict[int, NDArray] = {}
+    def __getattr__(self, name: str):
+        if name in self._DELEGATED:
+            return getattr(self._csx, name)
+        raise AttributeError(
+            f"{type(self).__name__!r} object has no attribute {name!r}"
+        )
 
-    def get_tile(self, rows, cols):
-        pass
+    def __setattr__(self, name: str, value) -> None:
+        if name in self._DELEGATED:
+            raise AttributeError(
+                f"{type(self).__name__!r} object attribute {name!r} is read-only "
+                f"(it is delegated to the underlying CSX object)"
+            )
+        super().__setattr__(name, value)
 
     @property
     def data(self) -> NDArray:
         """Returns the local data."""
-        if self._data is None:
+        if self._csx._data is None:
             raise ValueError("Data has not been allocated yet.")
-        return self._data
+        return self._csx._data
 
     @data.setter
     def data(self, value: NDArray) -> None:
         """Sets the local data."""
-        if self._data is None:
+        if self._csx._data is None:
             raise ValueError("Data has not been allocated yet.")
-        self._data[...] = value
+        self._csx._data[...] = value
 
-    def allocate_data(self) -> None:
-        """Allocates the local data array."""
-        if self._data is not None:
-            raise ValueError("Data has already been allocated.")
-        self._data = xp.zeros(self.local_stack_shape + (self.nnz,), dtype=self.dtype)
-
-    def to_dense(self) -> NDArray:
-        """Returns the local dense array.
+    def _to_dense(self) -> NDArray:
+        """Returns the unsymmetrized dense array.
 
         Warning
         -------
         This is purely for testing purposes and should not be used in
         production code.
+
+        Note
+        ----
+        This also unsymmetrizes the matrix if it is symmetric.
 
         """
         dense = xp.zeros(
@@ -317,11 +309,11 @@ class DCSX:
         # sorting, but for now we will keep it simple.
 
         # Convert received global entries into their transposed local coordinates.
-        recv_row_ind = [self.row_ind] + [
+        new_row_ind = [self.row_ind] + [
             self.recv_col_indices[rank] - self.row_offsets[comm.block.rank]
             for rank in recv_data.keys()
         ]
-        recv_col_ind = [self.col_ind] + [
+        new_col_ind = [self.col_ind] + [
             self.recv_row_indices[rank] + self.row_offsets[rank]
             for rank in recv_data.keys()
         ]
@@ -340,11 +332,11 @@ class DCSX:
                 != self.row_ind[local_neighbour_indices]
                 + self.row_offsets[comm.block.rank]
             ]
-            recv_row_ind.append(
+            new_row_ind.append(
                 self.col_ind[local_neighbour_indices]
                 - self.row_offsets[comm.block.rank]
             )
-            recv_col_ind.append(
+            new_col_ind.append(
                 self.row_ind[local_neighbour_indices]
                 + self.row_offsets[comm.block.rank]
             )
@@ -352,8 +344,8 @@ class DCSX:
                 symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
             )
 
-        new_row_ind = xp.concatenate(recv_row_ind, axis=-1)
-        new_col_ind = xp.concatenate(recv_col_ind, axis=-1)
+        new_row_ind = xp.concatenate(new_row_ind, axis=-1)
+        new_col_ind = xp.concatenate(new_col_ind, axis=-1)
         new_data = xp.concatenate(new_data, axis=-1)
 
         # Sort the indices and data to get the canonical format
@@ -373,47 +365,24 @@ class DCSX:
         )
         new_row_ptr = coo.tocsr().indptr
 
-        dcsx = DCSX(
+        _csx = CSX(
             dtype=self.dtype,
             rows=self.rows,
             cols=self.cols,
-            row_offsets=self.row_offsets,
             local_stack_shape=self.local_stack_shape,
             row_ptr=new_row_ptr,
             row_ind=new_row_ind,
             col_ind=new_col_ind,
         )
+
+        dcsx = DCSX(
+            _csx=_csx,
+            row_offsets=self.row_offsets,
+        )
         dcsx.allocate_data()
         dcsx.data = new_data
 
         return dcsx
-
-    def _get_update_indices(self, other: "DCSX") -> NDArray:
-        """Returns the indices of `self` that correspond to the entries
-        of `other`.
-
-        Parameters
-        ----------
-        other : DCSX
-            The DCSX matrix whose entries we want to find in `self`.
-
-        Returns
-        -------
-        NDArray
-            The indices of `self` that correspond to the entries of
-            `other`.
-
-        """
-        # flatten row cols into a sortable integer key
-        other_keys = other.row_ind * self.cols + other.col_ind
-        self_keys = self.row_ind * self.cols + self.col_ind
-
-        update_indices = np.searchsorted(self_keys, other_keys)
-
-        if not np.array_equal(self_keys[update_indices], other_keys):
-            raise AssertionError("`other` has entries not present in `self`.")
-
-        return update_indices
 
     def add_(
         self,
@@ -445,48 +414,62 @@ class DCSX:
             None, the ID of `other` will be used. Default is None.
 
         """
-        if self.symmetry is not None and other.symmetry is None:
-            raise ValueError("Cannot add a non-symmetric matrix to a symmetric matrix.")
-        if self.rows != other.rows or self.cols != other.cols:
-            raise ValueError(
-                "The shapes of the two matrices must be the same for addition."
-            )
-        if self.local_stack_shape != other.local_stack_shape:
-            raise ValueError(
-                "The local stack shapes of the two matrices must be the same for addition."
-            )
-        if self._data is None:
-            raise ValueError("Self data has not been allocated yet.")
-        if other._data is None:
-            raise ValueError("Other data has not been allocated yet.")
-
         # In the case of adding a symmetric matrix to a non-symmetric
         # one, we expand the symmetry of the symmetric matrix to match
         # the non-symmetric one.
+        # NOTE: We route here to the `DCSX` version of `expand_symmetry`
+        # since it involves communication between ranks.
         if other.symmetry is not None and self.symmetry is None:
             other = other.expand_symmetry()
 
-        if cache_id is None:
-            cache_id = id(other)
+        # Afterwards we can just use the `CSX` version of `add_` since
+        # the symmetries are now the same.
+        self._csx.add_(
+            other._csx,
+            prefactor=prefactor,
+            cache=cache,
+            cache_id=cache_id,
+        )
 
-        # NOTE: We assume that the sparsity of `other` is a subset of
-        # the sparsity of `self`.
-        if cache and cache_id in self._add_cache:
-            update_indices = self._add_cache[cache_id]
-        else:
-            update_indices = self._get_update_indices(other)
-            if cache:
-                self._add_cache[cache_id] = update_indices
+    # def get_tile(
+    #     self,
+    #     row_ind: NDArray | None,
+    #     col_ind: NDArray | None,
+    #     unsymmetrize: bool = False,
+    # ) -> "CSX":
 
-        # TODO: Update the kernel for higher dimensions
-        for stack_index in np.ndindex(self.local_stack_shape):
-            inplace.scatter_add_scaled(
-                self._data[stack_index],
-                other._data[stack_index],
-                update_indices,
-                prefactor,
-                False,
-            )
+    #     if row_ind is None:
+    #         row_ind = np.arange(self.rows, dtype=self.index_type)
+    #     if col_ind is None:
+    #         col_ind = np.arange(self.cols, dtype=self.index_type)
+
+    #     if unsymmetrize and self.symmetry is None:
+    #         raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
+
+    #     # NOTE: The indices passed in are the local indices of the tile.
+    #     # Check which entries lie within the tile
+
+    #     # NOTE: It is assumed that the `col_ind` are shared between all ranks
+    #     # such that the final matrix is `DCSX` again.
+
+    #     tile_shape = (len(row_ind), len(col_ind))
+
+    #     row_lookup = np.full(self.rows, -1, dtype=np.intp)
+    #     row_lookup[row_ind] = np.arange(tile_shape[0])
+
+    #     col_lookup = np.full(self.cols, -1, dtype=np.intp)
+    #     col_lookup[col_ind] = np.arange(tile_shape[1])
+
+    #     new_row = row_lookup[self.row_ind]
+    #     new_col = col_lookup[self.col_ind]
+
+    #     mask = (new_row >= 0) & (new_col >= 0)
+
+    #     tile_data = self.data[..., mask]
+    #     tile_row = new_row[mask]
+    #     tile_col = new_col[mask]
+
+    #     return tile_data, tile_row, tile_col, (len(rows), len(cols))
 
     @classmethod
     def from_sparray(
@@ -563,37 +546,17 @@ class DCSX:
         comm.block.all_gather(rows, row_offsets[1:])
         row_offsets = get_host(xp.cumsum(row_offsets))
 
-        # NOTE: This is not necessary since the inputs should already be
-        # upper if needed.
-        if symmetry:
-            coo = sparse.triu(coo, format="coo", k=row_offsets[comm.block.rank])
-
-        # Canonicalizes the COO format.
-        if not coo.has_canonical_format:
-            coo.sum_duplicates()
-
-        if not coo.has_canonical_format:
-            raise ValueError("COO format is not canonical.")
-
-        row_ind = coo.row
-        col_ind = coo.col
-        # TODO: Do not get the row_ptr from scipy
-        row_ptr = coo.tocsr().indptr
-
-        dcsx = cls(
-            dtype=dtype,
-            rows=int(rows[0]),
-            cols=int(cols[0]),
-            row_offsets=row_offsets,
+        _csx = CSX.from_sparray(
+            coo,
             local_stack_shape=local_stack_shape,
-            row_ptr=row_ptr,
-            row_ind=row_ind,
-            col_ind=col_ind,
             symmetry=symmetry,
+            dtype=dtype,
+            allocate=allocate,
         )
 
-        if allocate:
-            dcsx.allocate_data()
-            dcsx.data = coo.data
+        dcsx = cls(
+            _csx=_csx,
+            row_offsets=row_offsets,
+        )
 
         return dcsx

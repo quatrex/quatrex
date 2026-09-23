@@ -1,0 +1,212 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+import pytest
+
+from qttools import sparse, xp
+from qttools.datastructures.csx import CSX
+from qttools.datastructures.dsdbsparse import symmetry_ops
+
+
+def _create_coo(
+    size: int,
+    symmetry: str | None = None,
+) -> sparse.coo_matrix:
+    """Returns a random complex sparse array."""
+
+    rng = xp.random.default_rng(seed=42)
+    density = rng.uniform(low=0.1, high=0.3)
+    coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    coo.setdiag(rng.uniform(size=size) + 1j * rng.uniform(size=size))
+    coo.data += 1j * rng.uniform(size=coo.nnz)
+
+    # make the sparsity pattern symmetric
+    coo_ = coo.copy()
+    coo_.data[:] = rng.uniform(size=coo_.nnz) + 1j * rng.uniform(size=coo_.nnz)
+    coo = coo + coo_.T
+    coo = coo.tocoo()
+
+    if symmetry is not None:
+        coo_t = coo.copy()
+        coo_t.data[:] = symmetry_ops[symmetry](coo_t.data)
+        coo = coo + coo_t.T
+        # Keep only the upper triangular part
+        coo = sparse.triu(coo, format="coo")
+        return coo
+
+    return coo
+
+
+def _create_coo_csx(
+    size: int,
+    local_stack_shape: tuple,
+    symmetry: str | None = None,
+) -> tuple[sparse.coo_matrix, CSX]:
+    """Returns a random complex sparse array
+    and a CSX matrix with the same sparsity pattern.
+    """
+    coo = _create_coo(size, symmetry=symmetry)
+
+    csx = CSX.from_sparray(
+        sparray=coo,
+        local_stack_shape=local_stack_shape,
+        symmetry=symmetry,
+    )
+    return coo, csx
+
+
+class TestCreation:
+    """Tests the creation methods of CSX."""
+
+    def test_from_sparray(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests the creation of CSX matrices from sparse arrays."""
+
+        coo, csx = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        dense_dcsx = csx._to_dense()
+        if symmetry is not None:
+            reference = coo.toarray() + xp.triu(
+                symmetry_ops[symmetry](coo.toarray()), k=1
+            ).swapaxes(-1, -2)
+        else:
+            reference = coo.toarray()
+
+        assert xp.array_equiv(reference, dense_dcsx)
+        if symmetry is not None:
+            assert xp.array_equiv(
+                dense_dcsx, symmetry_ops[symmetry](dense_dcsx).swapaxes(-1, -2)
+            )
+
+
+class TestConversion:
+    """Tests for the conversion methods of CSX."""
+
+    def test_to_dense(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can convert a CSX matrix to dense."""
+        coo, csx = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        if symmetry is not None:
+            reference = coo.toarray() + xp.triu(
+                symmetry_ops[symmetry](coo.toarray()), k=1
+            ).swapaxes(-1, -2)
+        else:
+            reference = coo.toarray()
+
+        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+
+        assert xp.allclose(reference, csx._to_dense())
+
+    def test_expand_symmetry(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can expand the symmetry of a CSX matrix."""
+
+        if symmetry is None:
+            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+
+        coo, csx = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+        # Just check that it runs without errors or deadlocks.
+        full_dcsx = csx.expand_symmetry()
+
+        test = full_dcsx._to_dense()
+        reference = coo.toarray() + xp.triu(
+            symmetry_ops[symmetry](coo.toarray()), k=1
+        ).swapaxes(-1, -2)
+        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+
+        assert xp.allclose(test, reference)
+
+
+class TestInplace:
+    """Tests for the inplace methods of CSX."""
+
+    def test_add_symmetric(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can add a CSX matrix to another CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        # randomly mask the `coo` matrix to create a new sparse matrix with a subset of the sparsity pattern of `coo`
+        rng = xp.random.default_rng(seed=42)
+        # choose a random subset of the non-zero entries of `coo` to keep
+        mask = rng.choice([False, True], size=coo.nnz)
+        coo = sparse.coo_matrix(
+            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
+        )
+
+        b = CSX.from_sparray(
+            sparray=coo,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        a_dense = a._to_dense()
+        b_dense = b._to_dense()
+
+        a.add_(b)
+
+        assert xp.allclose(a._to_dense(), a_dense + b_dense)
+
+    def test_add_nonsymmetric(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can add a symmetric CSX matrix to a non-symmetric CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+        )
+
+        # randomly mask the `coo` matrix to create a new sparse matrix
+        # with a subset of the sparsity pattern of `coo`
+        rng = xp.random.default_rng(seed=42)
+        # choose a random subset of the non-zero entries of `coo` to keep
+        mask = rng.choice([False, True], size=coo.nnz)
+        coo = sparse.coo_matrix(
+            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
+        )
+        coo = sparse.triu(coo)
+
+        b = CSX.from_sparray(
+            sparray=coo,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        a_dense = a._to_dense()
+        b_dense = b._to_dense()
+
+        a.add_(b)
+
+        assert xp.allclose(a._to_dense(), a_dense + b_dense)

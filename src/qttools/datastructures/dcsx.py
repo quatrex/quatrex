@@ -56,6 +56,8 @@ class DCSX:
         "symmetry",
         "allocate_data",
         "toarray",
+        "_get_update_indices",
+        "multiply_",
     ]
 
     def __init__(
@@ -459,22 +461,6 @@ class DCSX:
             The tile as a new CSX object.
 
         """
-        if row_ind is None:
-            row_ind = np.arange(self.rows, dtype=self.index_type)
-        if col_ind is None:
-            col_ind = np.arange(self.cols, dtype=self.index_type)
-
-        # NOTE: The indices passed in are the local indices of the tile.
-        # Check which entries lie within the tile
-        if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
-            raise ValueError(
-                f"Row indices {row_ind} are out of bounds for matrix with {self.rows} rows."
-            )
-        if xp.min(col_ind) < 0 or xp.max(col_ind) >= self.cols:
-            raise ValueError(
-                f"Column indices {col_ind} are out of bounds for matrix with {self.cols} columns."
-            )
-
         if not unsymmetrize:
             return self._csx.get_tile(
                 row_ind=row_ind,
@@ -496,7 +482,7 @@ class DCSX:
         sparray: sparse.spmatrix,
         local_stack_shape: tuple,
         symmetry: str | None = None,
-        dtype: xp.dtype[xp.generic] = xp.complex128,
+        dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
     ) -> "DCSX":
         """Allocates a DCSX matrix from a sparse array.
@@ -522,9 +508,9 @@ class DCSX:
             The symmetry of the matrix. This can be "symmetric",
             "hermitian", "skew-symmetric", "skew-hermitian", or None.
             Default is None.
-        dtype : xp.dtype[xp.generic], optional
+        dtype : xp.dtype[xp.generic] | None, optional
             The data type of the matrix elements. Default is
-            xp.complex128.
+            None and the data type of the input sparse array is used.
         allocate : bool, optional
             Whether to allocate the data array. Default is True.
 
@@ -569,7 +555,7 @@ class DCSX:
             coo,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
-            dtype=dtype,
+            dtype=coo.data.dtype if dtype is None else dtype,
             allocate=allocate,
         )
 

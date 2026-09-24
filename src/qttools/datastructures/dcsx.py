@@ -125,8 +125,8 @@ class DCSX:
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
-            tmp = sparse.csr_matrix(
-                (data, self.col_ind, self.row_ptr), shape=(self.rows, self.cols)
+            tmp = sparse.coo_matrix(
+                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
             ).toarray()
 
             tmp = comm.block.all_gather_v(tmp, axis=0)
@@ -355,22 +355,11 @@ class DCSX:
         new_col_ind = new_col_ind[sort_idx]
         new_data = new_data[..., sort_idx]
 
-        # TODO: Do not get the row_ptr from scipy
-        # We are not passing in the real data since it is higher
-        # dimensional.
-        coo = sparse.coo_matrix(
-            (xp.ones_like(new_row_ind, dtype=bool), (new_row_ind, new_col_ind)),
-            shape=(self.rows, self.cols),
-            copy=False,
-        )
-        new_row_ptr = coo.tocsr().indptr
-
         _csx = CSX(
             dtype=self.dtype,
             rows=self.rows,
             cols=self.cols,
             local_stack_shape=self.local_stack_shape,
-            row_ptr=new_row_ptr,
             row_ind=new_row_ind,
             col_ind=new_col_ind,
         )

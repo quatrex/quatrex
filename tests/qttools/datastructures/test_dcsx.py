@@ -380,7 +380,7 @@ class TestAccess:
         global_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can get a tile from a CSX matrix and unsymmetrize it."""
+        """Tests that we can get a tile from a DCSX matrix and unsymmetrize it."""
         if symmetry is None:
             pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
 
@@ -414,6 +414,32 @@ class TestAccess:
         ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
 
         assert xp.allclose(test_tile, ref_tile)
+
+    @pytest.mark.parametrize("unsymmetrize", [True, False])
+    def test_get_tile_empty(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+        unsymmetrize: bool,
+    ):
+        """Tests that we can get an empty tile from a DCSX matrix."""
+
+        if unsymmetrize and symmetry is None:
+            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
+
+        __, __, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rows = xp.array([], dtype=xp.int64)
+
+        test_tile = a.get_tile(rows, unsymmetrize=unsymmetrize).toarray()
+
+        assert test_tile.shape[-2] == 0
+        assert test_tile.shape[-1] == a.cols
 
 
 @pytest.mark.mpi(min_size=2)

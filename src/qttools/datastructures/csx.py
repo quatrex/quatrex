@@ -489,6 +489,18 @@ class CSX:
         if col_ind is None:
             col_ind = xp.arange(self.cols, dtype=self.index_type)
 
+        if len(row_ind) == 0 or len(col_ind) == 0:
+            tile_csx = CSX(
+                dtype=self.dtype,
+                rows=len(row_ind),
+                cols=len(col_ind),
+                local_stack_shape=self.local_stack_shape,
+                row_ind=xp.array([], dtype=self.index_type),
+                col_ind=xp.array([], dtype=self.index_type),
+            )
+            tile_csx.allocate_data()
+            return tile_csx
+
         if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
             raise ValueError(
                 f"Row indices {row_ind} are out of bounds for matrix with {self.rows} rows."

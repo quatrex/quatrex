@@ -290,6 +290,89 @@ class TestInplace:
 
 @pytest.mark.mpi(min_size=2)
 class TestInplaceDist(TestInplace):
-    """Tests all tests of TestConversion in distributed setting."""
+    """Tests all tests of TestInplace in distributed setting."""
+
+    pass
+
+
+class TestAccess:
+    """Tests for the access methods of DCSX."""
+
+    def test_get_tile(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can get a tile from a DCSX matrix."""
+        local_coo, __, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+
+        rows = xp.arange(a.rows)
+        cols = xp.arange(a.cols)
+
+        mask = rng.choice([False, True], size=a.rows)
+        rows = rows[mask]
+
+        mask = rng.choice([False, True], size=a.cols)
+        cols = cols[mask]
+
+        test_tile = a.get_tile(rows, cols).toarray()
+
+        ref_tile = local_coo.tocsr()[rows, :][:, cols].toarray()
+        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+
+        assert xp.allclose(test_tile, ref_tile)
+
+    def test_get_tile_unsymmetrize(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can get a tile from a CSX matrix and unsymmetrize it."""
+        if symmetry is None:
+            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
+
+        __, coo, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+
+        rows = xp.arange(a.rows)
+        cols = xp.arange(a.cols)
+
+        mask = rng.choice([False, True], size=a.rows)
+        rows = rows[mask]
+
+        mask = rng.choice([False, True], size=a.cols)
+        cols = cols[mask]
+
+        test_tile = a.get_tile(rows, cols, unsymmetrize=True).toarray()
+
+        dense = coo.toarray()
+        dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
+
+        dense = dense[
+            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
+        ]
+
+        ref_tile = dense[rows, :][:, cols]
+        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+
+        assert xp.allclose(test_tile, ref_tile)
+
+
+@pytest.mark.mpi(min_size=2)
+class TestAccessDist(TestAccess):
+    """Tests all tests of TestAccess in distributed setting."""
 
     pass

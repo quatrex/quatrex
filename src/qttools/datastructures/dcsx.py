@@ -293,7 +293,7 @@ class DCSX:
             raise ValueError("Symmetrization is only relevant for symmetric matrices.")
 
         if (
-            self.is_neighbour
+            self.is_neighbour is None
             or self.num_neighbour_indices is None
             or self.neighbour_indices is None
         ):
@@ -415,6 +415,15 @@ class DCSX:
         # NOTE: We route here to the `DCSX` version of `expand_symmetry`
         # since it involves communication between ranks.
         if other.symmetry is not None and self.symmetry is None:
+
+            # Get the ID here since `expand_symmetry` will create a new
+            # object, but we want to keep the cache ID of the original
+            # object.
+            # i.e. `expand_symmetry` will be called again, but the
+            # update indices are the same again.
+            if cache_id is None:
+                cache_id = id(other)
+
             other = other.expand_symmetry()
 
         # Afterwards we can just use the `CSX` version of `add_` since

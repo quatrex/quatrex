@@ -9,6 +9,41 @@ from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.kernels import inplace
 
 
+def _make_canonical_coo(
+    row_ind: NDArray,
+    col_ind: NDArray,
+    data: NDArray,
+    cols: int,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns the canonical COO format of the given indices and data.
+
+    Parameters
+    ----------
+    row_ind : NDArray
+        The row indices of the COO format.
+    col_ind : NDArray
+        The column indices of the COO format.
+    data : NDArray
+        The data of the COO format.
+    cols : int
+        The number of columns in the matrix.
+
+    Returns
+    -------
+    tuple[NDArray, NDArray, NDArray]
+        The canonical COO format of the given indices and data.
+
+    """
+    # Sort the indices and data to get the canonical format
+    flat_idx = row_ind * cols + col_ind
+    sort_idx = xp.argsort(flat_idx)
+    row_ind = row_ind[sort_idx]
+    col_ind = col_ind[sort_idx]
+    data = data[..., sort_idx]
+
+    return row_ind, col_ind, data
+
+
 class CSX:
     """Extended Compressed Sparse Row (CSX) format with
     stack support.
@@ -46,10 +81,10 @@ class CSX:
         rows: int,
         cols: int,
         local_stack_shape: tuple[int, ...],
-        row_ptr: NDArray,
         row_ind: NDArray,
         col_ind: NDArray,
         symmetry: str | None = None,
+        row_ptr: NDArray | None = None,
     ):
 
         rows = int(rows)
@@ -70,6 +105,8 @@ class CSX:
 
         self.shape = self.local_stack_shape + (self.rows, self.cols)
 
+        # NOTE: We currently do not populate the `row_ptr` array. This
+        # is because we do not use it in any of the operations.
         self.row_ptr = row_ptr
         self.row_ind = row_ind
         self.col_ind = col_ind
@@ -121,8 +158,8 @@ class CSX:
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
-            tmp = sparse.csr_matrix(
-                (data, self.col_ind, self.row_ptr), shape=(self.rows, self.cols)
+            tmp = sparse.coo_matrix(
+                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
             ).toarray()
 
             if self.symmetry is not None:
@@ -147,12 +184,12 @@ class CSX:
 
         """
         dense = xp.zeros(
-            self.local_stack_shape + (self.cols, self.cols), dtype=self.dtype
+            self.local_stack_shape + (self.rows, self.cols), dtype=self.dtype
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
-            tmp = sparse.csr_matrix(
-                (data, self.col_ind, self.row_ptr), shape=(self.rows, self.cols)
+            tmp = sparse.coo_matrix(
+                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
             ).toarray()
 
             dense[idx] = tmp
@@ -174,36 +211,25 @@ class CSX:
         new_col_ind = xp.concatenate(new_col_ind, axis=-1)
         new_data = xp.concatenate(new_data, axis=-1)
 
-        # Sort the indices and data to get the canonical format
-        flat_idx = new_row_ind * self.cols + new_col_ind
-        sort_idx = xp.argsort(flat_idx)
-        new_row_ind = new_row_ind[sort_idx]
-        new_col_ind = new_col_ind[sort_idx]
-        new_data = new_data[..., sort_idx]
-
-        # TODO: Do not get the row_ptr from scipy
-        # We are not passing in the real data since it is higher
-        # dimensional.
-        coo = sparse.coo_matrix(
-            (xp.ones_like(new_row_ind, dtype=bool), (new_row_ind, new_col_ind)),
-            shape=(self.rows, self.cols),
-            copy=False,
+        new_row_ind, new_col_ind, new_data = _make_canonical_coo(
+            row_ind=new_row_ind,
+            col_ind=new_col_ind,
+            data=new_data,
+            cols=self.cols,
         )
-        new_row_ptr = coo.tocsr().indptr
 
-        dcsx = CSX(
+        csx = CSX(
             dtype=self.dtype,
             rows=self.rows,
             cols=self.cols,
             local_stack_shape=self.local_stack_shape,
-            row_ptr=new_row_ptr,
             row_ind=new_row_ind,
             col_ind=new_col_ind,
         )
-        dcsx.allocate_data()
-        dcsx.data = new_data
+        csx.allocate_data()
+        csx.data = new_data
 
-        return dcsx
+        return csx
 
     def _get_update_indices(self, other: "CSX") -> NDArray:
         """Returns the indices of `self` that correspond to the entries
@@ -305,6 +331,140 @@ class CSX:
                 False,
             )
 
+    def _get_tile(
+        self,
+        row_ind: NDArray,
+        col_ind: NDArray,
+        unsymmetrize: bool = False,
+        _exclude_diagonal: bool = False,
+    ) -> tuple[NDArray, NDArray, NDArray, tuple[int, int]]:
+        """Returns a tile of the matrix as COO format.
+
+        Parameters
+        ----------
+        row_ind : NDArray
+            The row indices of the tile.
+        col_ind : NDArray
+            The column indices of the tile.
+        unsymmetrize : bool, optional
+            Whether to unsymmetrize the tile if the matrix is symmetric.
+        _exclude_diagonal : bool, optional
+            Whether to exclude the diagonal entries from the tile. This
+            is used internally when unsymmetrizing a symmetric matrix to
+            avoid double counting the diagonal entries.
+
+        Returns
+        -------
+        tuple[NDArray, NDArray, NDArray, tuple[int, int]]
+            The data, row indices, column indices, and shape of the tile
+            in COO format.
+
+        """
+
+        if unsymmetrize and self.symmetry is None:
+            raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
+
+        tile_shape = (len(row_ind), len(col_ind))
+
+        row_lookup = np.full(self.rows, -1, dtype=np.intp)
+        row_lookup[row_ind] = np.arange(tile_shape[0])
+
+        col_lookup = np.full(self.cols, -1, dtype=np.intp)
+        col_lookup[col_ind] = np.arange(tile_shape[1])
+
+        new_row = row_lookup[self.row_ind]
+        new_col = col_lookup[self.col_ind]
+
+        mask = (new_row >= 0) & (new_col >= 0)
+        if _exclude_diagonal:
+            mask &= self.row_ind != self.col_ind
+
+        tile_data = self.data[..., mask]
+        tile_row = new_row[mask]
+        tile_col = new_col[mask]
+
+        # NOTE: This can only be entered if the matrix is symmetric and we
+        # want to unsymmetrize it.
+        if unsymmetrize:
+            # NOTE: Small sanity check. This should never be triggered
+            # since we check for this at the beginning of the function.
+            if self.symmetry is None:
+                raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
+
+            # NOTE: This is a bit hacky. We switch both the
+            # inputs/outputs to get the transpose of the tile. We strip
+            # out the diagonal since it's already present in
+            # `tile_data/row/col` above.
+            tile_data_t, tile_col_t, tile_row_t, _ = self._get_tile(
+                row_ind=col_ind,
+                col_ind=row_ind,
+                unsymmetrize=False,
+                _exclude_diagonal=True,
+            )
+            tile_data_t = symmetry_ops[self.symmetry](tile_data_t)
+
+            tile_data = np.concatenate([tile_data, tile_data_t], axis=-1)
+            tile_row = np.concatenate([tile_row, tile_row_t])
+            tile_col = np.concatenate([tile_col, tile_col_t])
+
+            tile_row, tile_col, tile_data = _make_canonical_coo(
+                row_ind=tile_row,
+                col_ind=tile_col,
+                data=tile_data,
+                cols=tile_shape[1],
+            )
+
+        return tile_data, tile_row, tile_col, tile_shape
+
+    def get_tile(
+        self,
+        row_ind: NDArray | None = None,
+        col_ind: NDArray | None = None,
+        unsymmetrize: bool = False,
+    ) -> "CSX":
+        """Returns a tile of the matrix as a new CSX object.
+
+        Parameters
+        ----------
+        row_ind : NDArray | None
+            The row indices of the tile. If None, all rows are included.
+        col_ind : NDArray | None
+            The column indices of the tile. If None, all columns are included.
+        unsymmetrize : bool, optional
+            Whether to unsymmetrize the tile if the matrix is symmetric.
+
+        Returns
+        -------
+        CSX
+            The tile as a new CSX object.
+
+        """
+        if row_ind is None:
+            row_ind = np.arange(self.rows, dtype=self.index_type)
+        if col_ind is None:
+            col_ind = np.arange(self.cols, dtype=self.index_type)
+
+        tile_data, tile_row, tile_col, tile_shape = self._get_tile(
+            row_ind=row_ind,
+            col_ind=col_ind,
+            unsymmetrize=unsymmetrize,
+        )
+
+        tile_csx = CSX(
+            dtype=self.dtype,
+            rows=tile_shape[0],
+            cols=tile_shape[1],
+            local_stack_shape=self.local_stack_shape,
+            row_ind=tile_row,
+            col_ind=tile_col,
+            symmetry=self.symmetry,
+        )
+
+        tile_csx.allocate_data()
+        tile_csx.data = tile_data
+
+        return tile_csx
+
     @classmethod
     def from_sparray(
         cls,
@@ -371,22 +531,19 @@ class CSX:
 
         row_ind = coo.row
         col_ind = coo.col
-        # TODO: Do not get the row_ptr from scipy
-        row_ptr = coo.tocsr().indptr
 
-        dcsx = cls(
+        csx = cls(
             dtype=dtype,
             rows=int(rows[0]),
             cols=int(cols[0]),
             local_stack_shape=local_stack_shape,
-            row_ptr=row_ptr,
             row_ind=row_ind,
             col_ind=col_ind,
             symmetry=symmetry,
         )
 
         if allocate:
-            dcsx.allocate_data()
-            dcsx.data = coo.data
+            csx.allocate_data()
+            csx.data = coo.data
 
-        return dcsx
+        return csx

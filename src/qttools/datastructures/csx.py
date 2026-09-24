@@ -444,6 +444,15 @@ class CSX:
         if col_ind is None:
             col_ind = np.arange(self.cols, dtype=self.index_type)
 
+        if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
+            raise ValueError(
+                f"Row indices {row_ind} are out of bounds for matrix with {self.rows} rows."
+            )
+        if xp.min(col_ind) < 0 or xp.max(col_ind) >= self.cols:
+            raise ValueError(
+                f"Column indices {col_ind} are out of bounds for matrix with {self.cols} columns."
+            )
+
         tile_data, tile_row, tile_col, tile_shape = self._get_tile(
             row_ind=row_ind,
             col_ind=col_ind,

@@ -119,6 +119,10 @@ class DCSX:
         ----
         This also unsymmetrizes the matrix if it is symmetric.
 
+        Note
+        ----
+        This returns the global dense array, not just the local part.
+
         """
         dense = xp.zeros(
             self.local_stack_shape + (self.cols, self.cols), dtype=self.dtype
@@ -420,45 +424,71 @@ class DCSX:
             cache_id=cache_id,
         )
 
-    # def get_tile(
-    #     self,
-    #     row_ind: NDArray | None,
-    #     col_ind: NDArray | None,
-    #     unsymmetrize: bool = False,
-    # ) -> "CSX":
+    def get_tile(
+        self,
+        row_ind: NDArray | None = None,
+        col_ind: NDArray | None = None,
+        unsymmetrize: bool = False,
+    ) -> "CSX":
+        """Returns a tile of the matrix as a new CSX object.
 
-    #     if row_ind is None:
-    #         row_ind = np.arange(self.rows, dtype=self.index_type)
-    #     if col_ind is None:
-    #         col_ind = np.arange(self.cols, dtype=self.index_type)
+        Note
+        ----
+        The output is a non-distributed CSX object. If needed, one needs
+        to manually gather the results.
 
-    #     if unsymmetrize and self.symmetry is None:
-    #         raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
+        Note
+        ----
+        We cannot directly return the method of the underlying `CSX`
+        object since the unsymmetrization needs to be done on the full
+        matrix, not just the local part.
 
-    #     # NOTE: The indices passed in are the local indices of the tile.
-    #     # Check which entries lie within the tile
+        Parameters
+        ----------
+        row_ind : NDArray | None
+            The row indices of the tile. If None, all rows are included.
+        col_ind : NDArray | None
+            The column indices of the tile. If None, all columns are
+            included.
+        unsymmetrize : bool, optional
+            Whether to unsymmetrize the tile if the matrix is symmetric.
 
-    #     # NOTE: It is assumed that the `col_ind` are shared between all ranks
-    #     # such that the final matrix is `DCSX` again.
+        Returns
+        -------
+        CSX
+            The tile as a new CSX object.
 
-    #     tile_shape = (len(row_ind), len(col_ind))
+        """
+        if row_ind is None:
+            row_ind = np.arange(self.rows, dtype=self.index_type)
+        if col_ind is None:
+            col_ind = np.arange(self.cols, dtype=self.index_type)
 
-    #     row_lookup = np.full(self.rows, -1, dtype=np.intp)
-    #     row_lookup[row_ind] = np.arange(tile_shape[0])
+        # NOTE: The indices passed in are the local indices of the tile.
+        # Check which entries lie within the tile
+        if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
+            raise ValueError(
+                f"Row indices {row_ind} are out of bounds for matrix with {self.rows} rows."
+            )
+        if xp.min(col_ind) < 0 or xp.max(col_ind) >= self.cols:
+            raise ValueError(
+                f"Column indices {col_ind} are out of bounds for matrix with {self.cols} columns."
+            )
 
-    #     col_lookup = np.full(self.cols, -1, dtype=np.intp)
-    #     col_lookup[col_ind] = np.arange(tile_shape[1])
+        if not unsymmetrize:
+            return self._csx.get_tile(
+                row_ind=row_ind,
+                col_ind=col_ind,
+            )
 
-    #     new_row = row_lookup[self.row_ind]
-    #     new_col = col_lookup[self.col_ind]
-
-    #     mask = (new_row >= 0) & (new_col >= 0)
-
-    #     tile_data = self.data[..., mask]
-    #     tile_row = new_row[mask]
-    #     tile_col = new_col[mask]
-
-    #     return tile_data, tile_row, tile_col, (len(rows), len(cols))
+        # NOTE: This is expensive. It would be possible to only
+        # communicate the relevant entries, but for now we will keep it
+        # simple.
+        tmp = self.expand_symmetry()
+        return tmp.get_tile(
+            row_ind=row_ind,
+            col_ind=col_ind,
+        )
 
     @classmethod
     def from_sparray(

@@ -211,6 +211,51 @@ class TestInplace:
 
         assert xp.allclose(a._to_dense(), a_dense + b_dense)
 
+    def test_multiply_colwise(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can multiply a CSX matrix by a column-wise vector."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        colwise = rng.uniform(size=size) + 1j * rng.uniform(size=size)
+
+        a.multiply_(colwise)
+        coo = coo.multiply(colwise).toarray()
+        reference = xp.broadcast_to(coo, global_stack_shape + (size, size))
+
+        assert xp.allclose(a.toarray(), reference)
+
+    def test_multiply_rowwise(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can multiply a CSX matrix by a row-wise vector."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        rowwise = rng.uniform(size=size) + 1j * rng.uniform(size=size)
+        rowwise = rowwise[:, None]
+
+        a.multiply_(rowwise)
+        coo = coo.multiply(rowwise).toarray()
+        reference = xp.broadcast_to(coo, global_stack_shape + (size, size))
+
+        assert xp.allclose(a.toarray(), reference)
+
 
 class TestAccess:
     """Tests for the access methods of CSX."""

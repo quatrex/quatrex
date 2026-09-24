@@ -231,14 +231,20 @@ class CSX:
 
         return csx
 
-    def _get_update_indices(self, other: "CSX") -> NDArray:
+    def _get_update_indices(
+        self,
+        row_ind: NDArray,
+        col_ind: NDArray,
+    ) -> NDArray:
         """Returns the indices of `self` that correspond to the entries
         of `other`.
 
         Parameters
         ----------
-        other : CSX
-            The CSX matrix whose entries we want to find in `self`.
+        row_ind : NDArray
+            The row indices of `other`.
+        col_ind : NDArray
+            The column indices of `other`.
 
         Returns
         -------
@@ -248,12 +254,12 @@ class CSX:
 
         """
         # flatten row cols into a sortable integer key
-        other_keys = other.row_ind * self.cols + other.col_ind
+        other_keys = row_ind * self.cols + col_ind
         self_keys = self.row_ind * self.cols + self.col_ind
 
-        update_indices = np.searchsorted(self_keys, other_keys)
+        update_indices = xp.searchsorted(self_keys, other_keys)
 
-        if not np.array_equal(self_keys[update_indices], other_keys):
+        if not xp.array_equal(self_keys[update_indices], other_keys):
             raise AssertionError("`other` has entries not present in `self`.")
 
         return update_indices
@@ -317,7 +323,7 @@ class CSX:
         if cache and cache_id in self._add_cache:
             update_indices = self._add_cache[cache_id]
         else:
-            update_indices = self._get_update_indices(other)
+            update_indices = self._get_update_indices(other.row_ind, other.col_ind)
             if cache:
                 self._add_cache[cache_id] = update_indices
 
@@ -330,6 +336,45 @@ class CSX:
                 prefactor,
                 False,
             )
+
+    def multiply_(
+        self,
+        other: NDArray,
+    ):
+        """Multiplies the matrix by a 1D or 2D array in place.
+
+        Note
+        ----
+        The multiplication with a 1D array scales the columns of the
+        matrix, while the multiplication with a 2D array scales the
+        rows of the matrix.
+
+        Parameters
+        ----------
+        other : NDArray
+            The array to multiply the matrix by. Can be either a 1D
+            array of shape (cols,) or a 2D array of shape (rows, 1).
+
+        """
+        if other.ndim not in [1, 2]:
+            raise ValueError("Other must be a 1D or 2D array.")
+
+        if other.ndim == 2:
+            if other.shape[1] != 1:
+                raise ValueError("Other must be a 2D array with shape (N, 1).")
+            if other.shape[0] != self.rows:
+                raise ValueError("Other must have the same number of rows as self.")
+
+            # scale rowwise
+            other = xp.squeeze(other)
+            self.data *= other[self.row_ind]
+
+        else:
+            if other.shape[0] != self.cols:
+                raise ValueError("Other must have the same number of columns as self.")
+
+            # scale columnwise
+            self.data *= other[self.col_ind]
 
     def _get_tile(
         self,
@@ -366,11 +411,11 @@ class CSX:
 
         tile_shape = (len(row_ind), len(col_ind))
 
-        row_lookup = np.full(self.rows, -1, dtype=np.intp)
-        row_lookup[row_ind] = np.arange(tile_shape[0])
+        row_lookup = xp.full(self.rows, -1, dtype=xp.intp)
+        row_lookup[row_ind] = xp.arange(tile_shape[0])
 
-        col_lookup = np.full(self.cols, -1, dtype=np.intp)
-        col_lookup[col_ind] = np.arange(tile_shape[1])
+        col_lookup = xp.full(self.cols, -1, dtype=xp.intp)
+        col_lookup[col_ind] = xp.arange(tile_shape[1])
 
         new_row = row_lookup[self.row_ind]
         new_col = col_lookup[self.col_ind]
@@ -403,9 +448,9 @@ class CSX:
             )
             tile_data_t = symmetry_ops[self.symmetry](tile_data_t)
 
-            tile_data = np.concatenate([tile_data, tile_data_t], axis=-1)
-            tile_row = np.concatenate([tile_row, tile_row_t])
-            tile_col = np.concatenate([tile_col, tile_col_t])
+            tile_data = xp.concatenate([tile_data, tile_data_t], axis=-1)
+            tile_row = xp.concatenate([tile_row, tile_row_t])
+            tile_col = xp.concatenate([tile_col, tile_col_t])
 
             tile_row, tile_col, tile_data = _make_canonical_coo(
                 row_ind=tile_row,
@@ -440,9 +485,9 @@ class CSX:
 
         """
         if row_ind is None:
-            row_ind = np.arange(self.rows, dtype=self.index_type)
+            row_ind = xp.arange(self.rows, dtype=self.index_type)
         if col_ind is None:
-            col_ind = np.arange(self.cols, dtype=self.index_type)
+            col_ind = xp.arange(self.cols, dtype=self.index_type)
 
         if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
             raise ValueError(
@@ -466,7 +511,6 @@ class CSX:
             local_stack_shape=self.local_stack_shape,
             row_ind=tile_row,
             col_ind=tile_col,
-            symmetry=self.symmetry,
         )
 
         tile_csx.allocate_data()
@@ -480,7 +524,7 @@ class CSX:
         sparray: sparse.spmatrix,
         local_stack_shape: tuple,
         symmetry: str | None = None,
-        dtype: xp.dtype[xp.generic] = xp.complex128,
+        dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
     ) -> "CSX":
         """Allocates a CSX matrix from a sparse array.
@@ -506,9 +550,9 @@ class CSX:
             The symmetry of the matrix. This can be "symmetric",
             "hermitian", "skew-symmetric", "skew-hermitian", or None.
             Default is None.
-        dtype : xp.dtype[xp.generic], optional
+        dtype : xp.dtype[xp.generic] | None, optional
             The data type of the matrix elements. Default is
-            xp.complex128.
+            None and the data type of the input sparse array is used.
         allocate : bool, optional
             Whether to allocate the data array. Default is True.
 
@@ -542,7 +586,7 @@ class CSX:
         col_ind = coo.col
 
         csx = cls(
-            dtype=dtype,
+            dtype=coo.data.dtype if dtype is None else dtype,
             rows=int(rows[0]),
             cols=int(cols[0]),
             local_stack_shape=local_stack_shape,

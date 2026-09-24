@@ -287,6 +287,51 @@ class TestInplace:
 
         assert xp.allclose(a._to_dense(), a_dense + b_dense)
 
+    def test_multiply_colwise(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can multiply a DCSX matrix by a column-wise vector."""
+        local_coo, __, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        colwise = rng.uniform(size=a.cols) + 1j * rng.uniform(size=a.cols)
+
+        a.multiply_(colwise)
+        coo = local_coo.multiply(colwise).toarray()
+        reference = xp.broadcast_to(coo, global_stack_shape + (a.rows, a.cols))
+
+        assert xp.allclose(a.toarray(), reference)
+
+    def test_multiply_rowwise(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can multiply a DCSX matrix by a row-wise vector."""
+        local_coo, __, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        rowwise = rng.uniform(size=a.rows) + 1j * rng.uniform(size=a.rows)
+        rowwise = rowwise[:, None]
+
+        a.multiply_(rowwise)
+        coo = local_coo.multiply(rowwise).toarray()
+        reference = xp.broadcast_to(coo, global_stack_shape + (a.rows, a.cols))
+
+        assert xp.allclose(a.toarray(), reference)
+
 
 @pytest.mark.mpi(min_size=2)
 class TestInplaceDist(TestInplace):

@@ -210,3 +210,74 @@ class TestInplace:
         a.add_(b)
 
         assert xp.allclose(a._to_dense(), a_dense + b_dense)
+
+
+class TestAccess:
+    """Tests for the access methods of CSX."""
+
+    def test_get_tile(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can get a tile from a CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+
+        rows = xp.arange(size)
+        cols = xp.arange(size)
+
+        mask = rng.choice([False, True], size=size)
+        rows = rows[mask]
+
+        mask = rng.choice([False, True], size=size)
+        cols = cols[mask]
+
+        test_tile = a.get_tile(rows, cols).toarray()
+
+        ref_tile = coo.tocsr()[rows, :][:, cols].toarray()
+        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+
+        assert xp.allclose(test_tile, ref_tile)
+
+    def test_get_tile_unsymmetrize(
+        self,
+        size: int,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can get a tile from a CSX matrix and unsymmetrize it."""
+        if symmetry is None:
+            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
+
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+
+        rows = xp.arange(size)
+        cols = xp.arange(size)
+
+        mask = rng.choice([False, True], size=size)
+        rows = rows[mask]
+
+        mask = rng.choice([False, True], size=size)
+        cols = cols[mask]
+
+        test_tile = a.get_tile(rows, cols, unsymmetrize=True).toarray()
+
+        dense = coo.toarray()
+        dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
+        ref_tile = dense[rows, :][:, cols]
+        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+
+        assert xp.allclose(test_tile, ref_tile)

@@ -489,7 +489,7 @@ class DCSX:
     def from_sparray(
         cls,
         sparray: sparse.spmatrix,
-        local_stack_shape: tuple,
+        local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
         dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
@@ -511,8 +511,9 @@ class DCSX:
         ----------
         sparray : sparse.spmatrix
             The sparse array to convert to DCSX format.
-        local_stack_shape : tuple
-            The shape of the local stack for this rank.
+        local_stack_shape : tuple, optional
+            The shape of the local stack for this rank. Default is an
+            empty tuple, which means no stack.
         symmetry : str | None, optional
             The symmetry of the matrix. This can be "symmetric",
             "hermitian", "skew-symmetric", "skew-hermitian", or None.

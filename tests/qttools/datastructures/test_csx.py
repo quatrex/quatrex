@@ -60,14 +60,14 @@ class TestCreation:
     def test_from_sparray(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests the creation of CSX matrices from sparse arrays."""
 
         coo, csx = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
         dense_dcsx = csx._to_dense()
@@ -91,13 +91,13 @@ class TestConversion:
     def test_to_dense(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can convert a CSX matrix to dense."""
         coo, csx = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
         if symmetry is not None:
@@ -107,14 +107,14 @@ class TestConversion:
         else:
             reference = coo.toarray()
 
-        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+        reference = xp.broadcast_to(reference, local_stack_shape + (size, size))
 
         assert xp.allclose(reference, csx._to_dense())
 
     def test_expand_symmetry(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can expand the symmetry of a CSX matrix."""
@@ -124,7 +124,7 @@ class TestConversion:
 
         coo, csx = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
         # Just check that it runs without errors or deadlocks.
@@ -134,7 +134,7 @@ class TestConversion:
         reference = coo.toarray() + xp.triu(
             symmetry_ops[symmetry](coo.toarray()), k=1
         ).swapaxes(-1, -2)
-        reference = xp.broadcast_to(reference, global_stack_shape + (size, size))
+        reference = xp.broadcast_to(reference, local_stack_shape + (size, size))
 
         assert xp.allclose(test, reference)
 
@@ -145,13 +145,13 @@ class TestInplace:
     def test_add_symmetric(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can add a CSX matrix to another CSX matrix."""
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -165,7 +165,7 @@ class TestInplace:
 
         b = CSX.from_sparray(
             sparray=coo,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -179,13 +179,13 @@ class TestInplace:
     def test_add_nonsymmetric(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can add a symmetric CSX matrix to a non-symmetric CSX matrix."""
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
         )
 
         # randomly mask the `coo` matrix to create a new sparse matrix
@@ -200,7 +200,7 @@ class TestInplace:
 
         b = CSX.from_sparray(
             sparray=coo,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -214,13 +214,13 @@ class TestInplace:
     def test_multiply_colwise(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can multiply a CSX matrix by a column-wise vector."""
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -229,20 +229,20 @@ class TestInplace:
 
         a.multiply_(colwise)
         coo = coo.multiply(colwise).toarray()
-        reference = xp.broadcast_to(coo, global_stack_shape + (size, size))
+        reference = xp.broadcast_to(coo, local_stack_shape + (size, size))
 
         assert xp.allclose(a.toarray(), reference)
 
     def test_multiply_rowwise(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can multiply a CSX matrix by a row-wise vector."""
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -252,7 +252,7 @@ class TestInplace:
 
         a.multiply_(rowwise)
         coo = coo.multiply(rowwise).toarray()
-        reference = xp.broadcast_to(coo, global_stack_shape + (size, size))
+        reference = xp.broadcast_to(coo, local_stack_shape + (size, size))
 
         assert xp.allclose(a.toarray(), reference)
 
@@ -263,13 +263,13 @@ class TestAccess:
     def test_get_tile(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can get a tile from a CSX matrix."""
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -287,14 +287,14 @@ class TestAccess:
         test_tile = a.get_tile(rows, cols).toarray()
 
         ref_tile = coo.tocsr()[rows, :][:, cols].toarray()
-        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+        ref_tile = xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape)
 
         assert xp.allclose(test_tile, ref_tile)
 
     def test_get_tile_unsymmetrize(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
     ):
         """Tests that we can get a tile from a CSX matrix and unsymmetrize it."""
@@ -303,7 +303,7 @@ class TestAccess:
 
         coo, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
@@ -323,7 +323,7 @@ class TestAccess:
         dense = coo.toarray()
         dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
         ref_tile = dense[rows, :][:, cols]
-        ref_tile = xp.broadcast_to(ref_tile, global_stack_shape + ref_tile.shape)
+        ref_tile = xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape)
 
         assert xp.allclose(test_tile, ref_tile)
 
@@ -331,7 +331,7 @@ class TestAccess:
     def test_get_tile_empty(
         self,
         size: int,
-        global_stack_shape: tuple,
+        local_stack_shape: tuple,
         symmetry: str | None,
         unsymmetrize: bool,
     ):
@@ -342,7 +342,7 @@ class TestAccess:
 
         __, a = _create_coo_csx(
             size=size,
-            local_stack_shape=global_stack_shape,
+            local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 

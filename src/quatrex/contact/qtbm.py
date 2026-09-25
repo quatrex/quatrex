@@ -11,6 +11,8 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
+from qttools.comm import comm
+from qttools.datastructures.dcsx import DCSX
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
 from qttools.toeplitz.circulant import construct_circulant_cell
@@ -156,6 +158,7 @@ class QTBMContact(BaseContact):
         device,
         contact_config: ContactConfig,
         sparsity_pattern: sparse.spmatrix,
+        offsets: NDArray,
     ):
         super().__init__(device, contact_config, sparsity_pattern)
 
@@ -167,9 +170,28 @@ class QTBMContact(BaseContact):
             self.device.config.compute.nevp,
         )
 
-    def get_coupling_matrix(
-        self, M: sparse.spmatrix, transpose: bool = False
-    ) -> NDArray:
+        self._distribute(offsets)
+
+    def _distribute(self, offsets: NDArray):
+        start = offsets[comm.block.rank]
+        end = offsets[comm.block.rank + 1]
+
+        self.local_orbital_indices = (
+            self.orbital_indices[
+                (self.orbital_indices >= start) & (self.orbital_indices < end)
+            ]
+            - start
+        )
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+
+        self.local_origin_orbital_indices = (
+            origin_orbital_indices[
+                (origin_orbital_indices >= start) & (origin_orbital_indices < end)
+            ]
+            - start
+        )
+
+    def get_coupling_matrix(self, M: DCSX) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
@@ -185,7 +207,7 @@ class QTBMContact(BaseContact):
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        M : DCSX
             The matrix (Hamiltonian or overlap) from which to extract
             coupling elements. Should have dimensions
             (n_device_orbitals, n_device_orbitals).
@@ -207,18 +229,37 @@ class QTBMContact(BaseContact):
 
         indices_zero = self.orbital_indices_per_layer[0]
 
-        # Slice block column of the matrix
-        # Thus, no conjugation and transpose is needed
-        if not transpose:
-            layers = [
-                M[indices, :][:, indices_zero]
-                for indices in self.orbital_indices_per_layer[1:]
+        offsets = self.device.offsets
+        local_indices_zero = (
+            indices_zero[
+                (indices_zero >= offsets[comm.block.rank])
+                & (indices_zero < offsets[comm.block.rank + 1])
             ]
-        else:
-            layers = [
-                M[:, indices][indices_zero, :].T.conj()
-                for indices in self.orbital_indices_per_layer[1:]
-            ]
+            - offsets[comm.block.rank]
+        )
+
+        layers = []
+        for indices in self.orbital_indices_per_layer[1:]:
+
+            tmp = (
+                M.get_tile(
+                    row_ind=local_indices_zero,
+                    col_ind=indices,
+                )
+                .conjugate()
+                .transpose()
+            )
+
+            data = comm.block.all_gather_v(tmp.data, axis=0)
+            col_ind = comm.block.all_gather_v(tmp.col_ind, axis=0)
+            row_ind = comm.block.all_gather_v(
+                tmp.row_ind + offsets[comm.block.rank], axis=0
+            )
+            layers.append(
+                sparse.coo_matrix(
+                    (data, (row_ind, col_ind)), shape=(len(indices_zero), len(indices))
+                ).tocsr()
+            )
 
         # NOTE: Stacking sparse matrix is slow
         coupling_matrix = []
@@ -412,18 +453,15 @@ class QTBMContact(BaseContact):
 
     def _slice_matrix(
         self,
-        M: sparse.spmatrix,
-        upper: bool = False,
+        M: DCSX,
     ):
         """Slices the given matrix into a dictionary of submatrices
         corresponding to the unit cell orbital indices.
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        M : DCSX
             The matrix to slice.
-        upper : bool, optional
-            Whether M is only upper triangular.
 
         Returns
         -------
@@ -437,13 +475,39 @@ class QTBMContact(BaseContact):
         origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
         M_slice = {}
-        M_origin = M[origin_orbital_indices, :]
+        M_origin = M.get_tile(
+            row_ind=self.local_origin_orbital_indices,
+            unsymmetrize=False if M.symmetry is None else True,
+        )
 
-        if upper:
-            M_origin += M[:, origin_orbital_indices].T.conj()
-            M_origin[:, origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
-            )
+        data = xp.ascontiguousarray(xp.squeeze(M_origin.data))
+        row_ind = xp.ascontiguousarray(M_origin.row_ind)
+        col_ind = xp.ascontiguousarray(M_origin.col_ind)
+
+        # Allgather over all ranks
+        # NOTE: Possible that only ranks owning the OBC solve them.
+        # Parallize over them like in SCBA. Need to make a communicator
+        # for this.
+        count = len(self.local_origin_orbital_indices)
+        counts = np.zeros(comm.block.size, dtype=xp.int64)
+        comm.block.all_gather(
+            np.array(count, dtype=xp.int64),
+            counts,
+            backend="device_mpi",
+        )
+        offsets = np.array([0] + list(np.cumsum(counts)), dtype=xp.int64)
+
+        data = comm.block.all_gather_v(data, axis=0)
+        col_ind = comm.block.all_gather_v(col_ind, axis=0)
+        row_ind = comm.block.all_gather_v(row_ind + offsets[comm.block.rank], axis=0)
+        M_origin = sparse.coo_matrix(
+            (data, (row_ind, col_ind)),
+            shape=(
+                len(origin_orbital_indices),
+                self.device.orbital_coordinates.shape[0],
+            ),
+        )
+        M_origin = M_origin.tocsr()
 
         for index in np.ndindex(*grid):
             M_slice[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
@@ -515,8 +579,7 @@ class QTBMContact(BaseContact):
     @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
         self,
-        M: sparse.spmatrix,
-        upper_M: bool,
+        M: DCSX,
         k_outer: tuple[float, float, float],
         return_modes_only: bool = False,
     ) -> OBCResult:
@@ -524,11 +587,9 @@ class QTBMContact(BaseContact):
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        M : DCSX
             The system matrix from which to extract coupling elements.
             It should have dimensions (n_device_orbitals, n_device_orbitals).
-        upper_M : bool
-            Whether to use the upper triangle of the system matrix.
         k_outer : tuple[float, float, float]
             The k-point in the transport direction.
         return_modes_only : bool, optional
@@ -555,7 +616,6 @@ class QTBMContact(BaseContact):
         ny, nz = self.transverse_repetition_grid
         M_slice = self._slice_matrix(
             M=M,
-            upper=upper_M,
         )
 
         # Create the k-space list needed to upscale the self-energy and

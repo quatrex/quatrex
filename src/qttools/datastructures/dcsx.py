@@ -55,6 +55,7 @@ class DCSX:
         "nnz",
         "symmetry",
         "allocate_data",
+        "free_data",
         "toarray",
         "_get_update_indices",
         "multiply_",

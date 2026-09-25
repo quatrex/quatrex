@@ -352,3 +352,37 @@ class TestAccess:
 
         assert test_tile.shape[-2] == 0
         assert test_tile.shape[-1] == a.cols
+
+
+class TestOperations:
+    """Tests for the operation on CSX matrices."""
+
+    @pytest.mark.parametrize("rhs_size", [(10,), tuple()])
+    def test_matmul(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+        rhs_size: tuple,
+    ):
+        """Tests that we can get a tile from a CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        rhs = rng.uniform(size=(size,) + rhs_size) + 1j * rng.uniform(
+            size=(size,) + rhs_size
+        )
+
+        out = a @ rhs
+        dense = coo.toarray()
+        ref = dense @ rhs
+        if symmetry is not None:
+            ref += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2) @ rhs
+
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(out, ref)

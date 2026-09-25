@@ -376,6 +376,69 @@ class CSX:
             # scale columnwise
             self.data *= other[self.col_ind]
 
+    def __matmul__(self, other: NDArray) -> NDArray:
+        """Matrix multiplication with a 1D or 2D array.
+
+        Parameters
+        ----------
+        other : NDArray
+            The array to multiply the matrix by. Can be either a 1D
+            array of shape (cols,) or a 2D array of shape (cols, N).
+
+        Returns
+        -------
+        NDArray
+            The result of the matrix multiplication. Will have the shape
+            `self.local_stack_shape + (self.rows,) + other.shape[1:]`.
+
+        """
+        if self.symmetry is not None:
+            csx = self.expand_symmetry()
+            return csx.__matmul__(other)
+
+        if other.ndim not in [1, 2]:
+            raise ValueError("Other must be a 1D or 2D array.")
+
+        # TODO: Allow for more general shapes of `other` and implement
+        # the full matrix multiplication.
+
+        # SPMV
+        if other.ndim == 1 and other.shape[0] != self.cols:
+            raise ValueError("Other must have the same number of columns as self.")
+
+        # SPMM
+        if other.ndim == 2 and other.shape[0] != self.cols:
+            raise ValueError("Other must have the same number of columns as self.")
+
+        if self.row_ptr is None:
+            # TODO: Not the most efficient way to get the row_ptr.
+            self.row_ptr = (
+                sparse.coo_matrix(
+                    (
+                        xp.ones_like(self.row_ind, dtype=xp.bool_),
+                        (self.row_ind, self.col_ind),
+                    ),
+                    shape=(self.rows, self.cols),
+                    copy=False,
+                )
+                .tocsr()
+                .indptr
+            )
+
+        out = xp.empty(
+            self.local_stack_shape + (self.rows,) + other.shape[1:], dtype=self.dtype
+        )
+
+        for idx in np.ndindex(self.local_stack_shape):
+            # TODO: Not the most efficient pipeline but shouldnt copy.
+            out[idx] = sparse.csr_matrix(
+                (self.data[idx], self.col_ind, self.row_ptr),
+                shape=(self.rows, self.cols),
+                copy=False,
+            ).dot(other)
+
+        return out
+
     def _get_tile(
         self,
         row_ind: NDArray,

@@ -439,6 +439,55 @@ class CSX:
 
         return out
 
+    def transpose(self) -> "CSX":
+        """Returns the transpose of the matrix as a new CSX object.
+
+        Returns
+        -------
+        CSX
+            The transpose of the matrix.
+
+        """
+        if self.symmetry is not None:
+            raise ValueError("Cannot transpose a symmetric matrix.")
+
+        csx = CSX(
+            dtype=self.dtype,
+            rows=self.cols,
+            cols=self.rows,
+            local_stack_shape=self.local_stack_shape,
+            row_ind=self.col_ind,
+            col_ind=self.row_ind,
+            symmetry=self.symmetry,
+        )
+        csx.allocate_data()
+        csx.data = self.data
+
+        return csx
+
+    def conjugate(self) -> "CSX":
+        """Returns the conjugate of the matrix as a new CSX object.
+
+        Returns
+        -------
+        CSX
+            The conjugate of the matrix.
+
+        """
+        csx = CSX(
+            dtype=self.dtype,
+            rows=self.rows,
+            cols=self.cols,
+            local_stack_shape=self.local_stack_shape,
+            row_ind=self.row_ind,
+            col_ind=self.col_ind,
+            symmetry=self.symmetry,
+        )
+        csx.allocate_data()
+        csx.data = xp.conj(self.data)
+
+        return csx
+
     def _get_tile(
         self,
         row_ind: NDArray,

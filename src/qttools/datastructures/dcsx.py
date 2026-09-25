@@ -435,6 +435,34 @@ class DCSX:
             cache_id=cache_id,
         )
 
+    def __matmul__(self, other: NDArray) -> NDArray:
+        """Matrix multiplication with a 1D or 2D array.
+
+        Note
+        ----
+        This method currently only implements local matrix
+        multiplication. This means `other` is expected to be a local
+        array on each rank.
+
+        Parameters
+        ----------
+        other : NDArray
+            The array to multiply the matrix by. Can be either a 1D
+            array of shape (cols,) or a 2D array of shape (cols, N).
+
+        Returns
+        -------
+        NDArray
+            The result of the matrix multiplication. Will have the shape
+            `self.local_stack_shape + (self.rows,) + other.shape[1:]`.
+
+        """
+        csx = self._csx
+        if self.symmetry is not None:
+            csx = self.expand_symmetry()._csx
+
+        return csx @ other
+
     def get_tile(
         self,
         row_ind: NDArray | None = None,

@@ -365,7 +365,7 @@ class TestOperations:
         symmetry: str | None,
         rhs_size: tuple,
     ):
-        """Tests that we can get a tile from a CSX matrix."""
+        """Tests that we can multiply a CSX matrix with another array."""
         coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
@@ -386,3 +386,46 @@ class TestOperations:
         ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
 
         assert xp.allclose(out, ref)
+
+    def test_transpose(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can transpose a CSX matrix."""
+        if symmetry is not None:
+            pytest.skip("Transposition is only relevant for non-symmetric matrices.")
+
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+
+        test = a.transpose().toarray()
+        dense = coo.toarray()
+        ref = dense.transpose()
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(test, ref)
+
+    def test_conjugate(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can conjugate a CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+
+        test = a.conjugate().toarray()
+        dense = coo.toarray()
+        ref = dense.conjugate()
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(test, ref)

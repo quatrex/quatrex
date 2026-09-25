@@ -447,3 +447,48 @@ class TestAccessDist(TestAccess):
     """Tests all tests of TestAccess in distributed setting."""
 
     pass
+
+
+class TestOperations:
+    """Tests for the operation on DCSX matrices."""
+
+    @pytest.mark.parametrize("rhs_size", [(10,), tuple()])
+    def test_local_matmul(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+        rhs_size: tuple,
+    ):
+        """Tests that we can get a tile from a DCSX matrix."""
+        __, coo, a = _create_coo_dcsx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+        rhs = rng.uniform(size=(size,) + rhs_size) + 1j * rng.uniform(
+            size=(size,) + rhs_size
+        )
+
+        out = a @ rhs
+
+        dense = coo.toarray()
+        if symmetry is not None:
+            dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
+
+        dense = dense[
+            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
+        ]
+        ref = dense @ rhs
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(out, ref)
+
+
+@pytest.mark.mpi(min_size=2)
+class TestOperationsDist(TestOperations):
+    """Tests all tests of TestOperations in distributed setting."""
+
+    pass

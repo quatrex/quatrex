@@ -7,6 +7,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.kernels import inplace
+from qttools.utils.gpu_utils import free_mempool
 
 
 def _make_canonical_coo(
@@ -136,9 +137,15 @@ class CSX:
 
     def allocate_data(self) -> None:
         """Allocates the local data array."""
-        if self._data is not None:
-            raise ValueError("Data has already been allocated.")
-        self._data = xp.zeros(self.local_stack_shape + (self.nnz,), dtype=self.dtype)
+        if self._data is None:
+            self._data = xp.zeros(
+                self.local_stack_shape + (self.nnz,), dtype=self.dtype
+            )
+
+    def free_data(self) -> None:
+        """Frees the local data."""
+        self._data = None
+        free_mempool()
 
     def _to_dense(self) -> NDArray:
         """Returns the unsymmetrized dense array.

@@ -5,9 +5,11 @@
 import warnings
 
 import numpy as np
-from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
+from qttools.datastructures.dcsx import DCSX
+from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.contact import QTBMContact
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.base import BaseDevice
@@ -63,7 +65,45 @@ class QTBMDevice(BaseDevice):
     def __init__(self, config: QuatrexConfig) -> None:
         super().__init__(config)
         self._init_hamiltonian()
+
+        self.offsets = self._get_offsets()
         self._add_contacts()
+        self._convert_to_dcsx()
+
+    def _get_offsets(self) -> NDArray:
+        section_sizes, __ = get_section_sizes(
+            self.orbital_coordinates.shape[0], comm.block.size
+        )
+        return np.cumsum([0] + section_sizes)
+
+    def _convert_to_dcsx(self):
+        # NOTE: In the first step, naively split the matrix by uniform by the number of rows.
+        # NOTE: This can not be really unified with SCBA because of the `block` requirement in SCBA.
+        # NOTE: Currently, the contacts need the full graph and thus the
+        # conversion to `DCSX` is happening not in `_init_hamiltonian`.
+        # NOTE: We pretend that non (0,0,0) are hermitian, but they are
+        # not. This is a hack and needed for the assembly of a symmetric
+        # kpoint since currently `add_` of non-symmetric to symmetric is
+        # not allowed.
+        for r, h_r in self.hamiltonians.items():
+            tmp = h_r[
+                self.offsets[comm.block.rank] : self.offsets[comm.block.rank + 1], :
+            ]
+            self.hamiltonians[r] = DCSX.from_sparray(
+                sparray=tmp,
+                symmetry="hermitian",
+                dtype=tmp.dtype,
+            )
+
+        for r, s_r in self.overlap_matrices.items():
+            tmp = s_r[
+                self.offsets[comm.block.rank] : self.offsets[comm.block.rank + 1], :
+            ]
+            self.overlap_matrices[r] = DCSX.from_sparray(
+                sparray=tmp,
+                symmetry="hermitian",
+                dtype=tmp.dtype,
+            )
 
     def _add_contacts(self):
         """Initializes and attaches contacts to the device.
@@ -81,6 +121,7 @@ class QTBMDevice(BaseDevice):
                     device=self,
                     contact_config=contact_config,
                     sparsity_pattern=self.hamiltonians[(0, 0, 0)],
+                    offsets=self.offsets,
                 )
             )
 

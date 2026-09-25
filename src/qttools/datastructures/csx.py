@@ -411,10 +411,10 @@ class CSX:
 
         tile_shape = (len(row_ind), len(col_ind))
 
-        row_lookup = xp.full(self.rows, -1, dtype=xp.intp)
+        row_lookup = xp.full(self.rows, -1, dtype=self.index_type)
         row_lookup[row_ind] = xp.arange(tile_shape[0])
 
-        col_lookup = xp.full(self.cols, -1, dtype=xp.intp)
+        col_lookup = xp.full(self.cols, -1, dtype=self.index_type)
         col_lookup[col_ind] = xp.arange(tile_shape[1])
 
         new_row = row_lookup[self.row_ind]
@@ -534,7 +534,7 @@ class CSX:
     def from_sparray(
         cls,
         sparray: sparse.spmatrix,
-        local_stack_shape: tuple,
+        local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
         dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
@@ -556,15 +556,16 @@ class CSX:
         ----------
         sparray : sparse.spmatrix
             The sparse array to convert to CSX format.
-        local_stack_shape : tuple
-            The shape of the local stack for this rank.
+        local_stack_shape : tuple, optional
+            The shape of the local stack for this rank. Default is an
+            empty tuple, which means no stack.
         symmetry : str | None, optional
             The symmetry of the matrix. This can be "symmetric",
             "hermitian", "skew-symmetric", "skew-hermitian", or None.
             Default is None.
         dtype : xp.dtype[xp.generic] | None, optional
-            The data type of the matrix elements. Default is
-            None and the data type of the input sparse array is used.
+            The data type of the matrix elements. Default is None and
+            the data type of the input sparse array is used.
         allocate : bool, optional
             Whether to allocate the data array. Default is True.
 

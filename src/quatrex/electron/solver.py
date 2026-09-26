@@ -39,13 +39,33 @@ def spin_current(
 
     def callback(ctx: BackSubstitutionContext):
         """Computes the spin-polarized contact currents along x,y or z."""
-        # non-contact layers are set to xp.nan
+        # currents from non contact layers can also be projected onto the spin basis
         if (
             comm.block.size == 1
             and 0 <= ctx.i <= len(ctx.obc_blocks.retarded) - 1
             and 0 <= ctx.j <= len(ctx.obc_blocks.retarded) - 1
         ):
-            out[ctx.stack_slice, ..., ctx.j] = xp.nan
+            sigma_jj = spin_matrix.blocks[ctx.j, ctx.j]
+
+            a_ji_dagger = ctx.a_ji.conj().swapaxes(-2, -1)
+            a_ji_xr_ii = ctx.a_ji @ ctx.xr_hat_ii
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_lesser_ij
+            sigma_lesser_tilde = (
+                ctx.a_ji @ ctx.xl_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            a_ji_xr_ii_sx_ij = a_ji_xr_ii @ ctx.sigma_greater_ij
+            sigma_greater_tilde = (
+                ctx.a_ji @ ctx.xg_hat_ii @ a_ji_dagger
+                + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                - a_ji_xr_ii_sx_ij
+            )
+            out[ctx.stack_slice, ..., ctx.j] = xp.trace(sigma_jj @ 
+                (sigma_greater_tilde @ ctx.xl_jj - ctx.xg_jj @ sigma_lesser_tilde),
+                axis1=-2,
+                axis2=-1,
+            ).real
 
         # The contact (lead) spin-currents from the boundary self-energies
         # and the spin matrix.

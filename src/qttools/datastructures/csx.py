@@ -203,6 +203,32 @@ class CSX:
 
         return dense
 
+    def tocoo(self) -> sparse.coo_matrix:
+        """Returns the local matrix in COO format.
+
+        Note
+        ----
+        This is made to match the `scipy.sparse` API. It does not
+        perform any communication.
+
+        Note
+        ----
+        Only possible with a non-stacked CSX. Could be amended by
+        returning a list of COO matrices.
+
+        Returns
+        -------
+        sparse.coo_matrix
+            The local matrix in COO format.
+
+        """
+        if self.local_stack_shape != ():
+            raise ValueError("Cannot convert a stacked CSX to COO.")
+
+        return sparse.coo_matrix(
+            (self.data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
+        )
+
     def expand_symmetry(
         self,
     ) -> "CSX":
@@ -588,14 +614,23 @@ class CSX:
     ) -> "CSX":
         """Returns a tile of the matrix as a new CSX object.
 
+        Note
+        ----
+        If the matrix is non-symmetric, this will return the tile
+        unchanged. If the matrix is symmetric and `unsymmetrize` is
+        True, the tile will be unsymmetrized if wanted.
+
         Parameters
         ----------
         row_ind : NDArray | None
             The row indices of the tile. If None, all rows are included.
         col_ind : NDArray | None
-            The column indices of the tile. If None, all columns are included.
+            The column indices of the tile. If None, all columns are
+            included.
         unsymmetrize : bool, optional
             Whether to unsymmetrize the tile if the matrix is symmetric.
+            This keyword is ignored if the matrix is non-symmetric.
+            Default is False.
 
         Returns
         -------
@@ -603,6 +638,9 @@ class CSX:
             The tile as a new CSX object.
 
         """
+        if unsymmetrize and self.symmetry is None:
+            unsymmetrize = False
+
         if row_ind is None:
             row_ind = xp.arange(self.rows, dtype=self.index_type)
         if col_ind is None:

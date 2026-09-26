@@ -250,10 +250,19 @@ class QTBMContact(BaseContact):
                 .transpose()
             )
 
+            count = len(local_indices_zero)
+            counts = np.zeros(comm.block.size, dtype=xp.int64)
+            comm.block.all_gather(
+                np.array(count, dtype=xp.int64),
+                counts,
+                backend="device_mpi",
+            )
+            origin_offsets = np.array([0] + list(np.cumsum(counts)), dtype=xp.int64)
+
             data = comm.block.all_gather_v(tmp.data, axis=0)
-            col_ind = comm.block.all_gather_v(tmp.col_ind, axis=0)
-            row_ind = comm.block.all_gather_v(
-                tmp.row_ind + offsets[comm.block.rank], axis=0
+            row_ind = comm.block.all_gather_v(tmp.row_ind, axis=0)
+            col_ind = comm.block.all_gather_v(
+                tmp.col_ind + origin_offsets[comm.block.rank], axis=0
             )
             layers.append(
                 sparse.coo_matrix(
@@ -516,21 +525,14 @@ class QTBMContact(BaseContact):
 
     def _get_contact_blocks(
         self,
-        matrices: dict,
-        kpoint: NDArray,
-        upper: bool = False,
+        matrix: DCSX,
     ) -> dict:
         """Constructs the contact blocks for the given k-point.
 
         Parameters
         ----------
-        matrices : dict
-            A dictionary of matrices (Hamiltonian or overlap) indexed by
-            the spatial index.
-        kpoint : NDArray
-            The k-point for which to construct the contact blocks.
-        upper : bool, optional
-            Whether M is only upper triangular.
+        matrix : DCSX
+            The matrix (Hamiltonian or overlap) for which to construct the contact blocks   .
 
         Returns
         -------
@@ -539,40 +541,15 @@ class QTBMContact(BaseContact):
             corresponding to the unit cell orbital indices.
 
         """
-        M_origin = None
-        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
-        # NOTE: Needs to slice and multiply the phase at once using
-        # `_slice_matrix` would be wrong with `upper=True` since not each
-        # k-point hamiltonian is hermitian, but only the sum over all
-        # k-points is hermitian.
-
-        # Assemble the contact layer for the full summed k-point matrix
-        for r, matrix in matrices.items():
-            phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-            term = phase * matrix[origin_orbital_indices, :]
-            M_origin = term if M_origin is None else M_origin + term
-
-        if upper:
-            # NOTE: We could potentially optimize this by only slicing
-            # the origin orbital indices since the rest is zero due to
-            # being upper triangular.
-
-            M_col = None
-            for r, matrix in matrices.items():
-                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-                term = phase * matrix[:, origin_orbital_indices]
-                M_col = term if M_col is None else M_col + term
-
-            M_origin = M_origin + M_col.T.conj()
-            M_origin[:, origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
-            )
+        matrix = matrix.expand_symmetry()
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
         for index in np.ndindex(*grid):
-            m_xx[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+            m_xx[index] = matrix.get_tile(
+                self.local_origin_orbital_indices, self.unit_cell_orbital_indices[index]
+            )
 
         return m_xx
 
@@ -842,16 +819,67 @@ class QTBMContact(BaseContact):
             dtype=float,
         )
 
+        # TODO: Clean this up and merge functionality with the assembly
+        # and the allocation of QTBM.
+        # Get full sparsity
+        row_ind = [h_r.row_ind for h_r in self.device.hamiltonians.values()]
+        col_ind = [h_r.col_ind for h_r in self.device.hamiltonians.values()]
+
+        row_ind = np.concatenate(row_ind)
+        col_ind = np.concatenate(col_ind)
+        cols = self.device.hamiltonians[(0, 0, 0)].cols
+        indices = row_ind * cols + col_ind
+        indices = xp.unique(indices)
+        row_ind = indices // cols
+        col_ind = indices % cols
+
+        h_k = DCSX.from_sparray(
+            sparray=sparse.coo_matrix(
+                (xp.empty_like(row_ind, dtype=xp.complex128), (row_ind, col_ind)),
+                shape=self.device.hamiltonians[(0, 0, 0)].shape,
+                copy=False,
+            ),
+            symmetry="hermitian",
+        )
+
+        row_ind = [s_r.row_ind for s_r in self.device.overlap_matrices.values()]
+        col_ind = [s_r.col_ind for s_r in self.device.overlap_matrices.values()]
+
+        row_ind = np.concatenate(row_ind)
+        col_ind = np.concatenate(col_ind)
+        cols = self.device.overlap_matrices[(0, 0, 0)].cols
+        indices = row_ind * cols + col_ind
+        indices = xp.unique(indices)
+        row_ind = indices // cols
+        col_ind = indices % cols
+
+        s_k = DCSX.from_sparray(
+            sparray=sparse.coo_matrix(
+                (xp.empty_like(row_ind, dtype=xp.complex128), (row_ind, col_ind)),
+                shape=self.device.overlap_matrices[(0, 0, 0)].shape,
+                copy=False,
+            ),
+            symmetry="hermitian",
+        )
+
         for m, kpoint in enumerate(self.device.kpoints):
+            h_k.data = 0.0
+            s_k.data = 0.0
+
+            for r, h_r in self.device.hamiltonians.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                # NOTE: Problem here with the data type if h_r is allocated as real.
+                h_k.add_(h_r, prefactor=phase)
+
+            for r, s_r in self.device.overlap_matrices.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                s_k.add_(s_r, prefactor=phase)
+
             h_xx = self._get_contact_blocks(
-                matrices=self.device.hamiltonians,
-                kpoint=kpoint,
-                upper=True,
+                matrix=h_k,
             )
             s_xx = self._get_contact_blocks(
-                matrices=self.device.overlap_matrices,
-                kpoint=kpoint,
-                upper=True,
+                matrix=s_k,
             )
 
             grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

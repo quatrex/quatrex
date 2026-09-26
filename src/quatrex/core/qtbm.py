@@ -984,6 +984,12 @@ class QTBM(TransportSolver):
 
             # Get the wavefunctions of the contact
             phi_c = phi[:, injection_segment]
+            phi_c = phi_c[
+                self.device.offsets[comm.block.rank] : self.device.offsets[
+                    comm.block.rank + 1
+                ],
+                :,
+            ]
 
             # Get the "orthogonalized" wavefunction of the contact
             phi_c_ortho = phi_ortho[:, injection_segment]
@@ -1362,7 +1368,7 @@ class QTBM(TransportSolver):
                         )
                         row_indices = comm.block.all_gather_v(
                             system_matrix.row_ind
-                            + system_matrix.row_offsets[comm.block.rank],
+                            + self.device.offsets[comm.block.rank],
                             axis=0,
                         )
                         system_matrix = sparse.coo_matrix(

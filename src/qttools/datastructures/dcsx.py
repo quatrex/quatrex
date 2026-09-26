@@ -59,6 +59,7 @@ class DCSX:
         "toarray",
         "_get_update_indices",
         "multiply_",
+        "tocoo",
     ]
 
     def __init__(
@@ -276,8 +277,8 @@ class DCSX:
 
         Note
         ----
-        This method should only be called for symmetric matrices. For
-        non-symmetric matrices, the symmetrization is not yet relevant.
+        For non-symmetric matrices, this will return the matrix
+        unchanged.
 
         Note
         ----
@@ -291,7 +292,7 @@ class DCSX:
 
         """
         if self.symmetry is None:
-            raise ValueError("Symmetrization is only relevant for symmetric matrices.")
+            return self
 
         if (
             self.is_neighbour is None

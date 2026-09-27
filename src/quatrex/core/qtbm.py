@@ -566,7 +566,7 @@ class QTBM(TransportSolver):
 
         # -0.5 * V @ S
         local_potential = self.device.potential[
-            self.device.offsets[comm.block.rank] : self.device.offsets[
+            self.device.row_offsets[comm.block.rank] : self.device.row_offsets[
                 comm.block.rank + 1
             ]
         ]
@@ -999,7 +999,7 @@ class QTBM(TransportSolver):
             # Get the wavefunctions of the contact
             phi_c = phi[:, injection_segment]
             phi_c = phi_c[
-                self.device.offsets[comm.block.rank] : self.device.offsets[
+                self.device.row_offsets[comm.block.rank] : self.device.row_offsets[
                     comm.block.rank + 1
                 ],
                 :,
@@ -1363,9 +1363,9 @@ class QTBM(TransportSolver):
                         # TODO: Only assemble the local part of the RHS
                         rhs = self._assemble_rhs(obc_results, energy_ind)
                         rhs = rhs[
-                            self.device.offsets[comm.block.rank] : self.device.offsets[
-                                comm.block.rank + 1
-                            ],
+                            self.device.row_offsets[
+                                comm.block.rank
+                            ] : self.device.row_offsets[comm.block.rank + 1],
                             :,
                         ]
 
@@ -1407,7 +1407,7 @@ class QTBM(TransportSolver):
                         )
                         row_indices = comm.block.all_gather_v(
                             system_matrix.row_ind
-                            + self.device.offsets[comm.block.rank],
+                            + self.device.row_offsets[comm.block.rank],
                             axis=0,
                         )
                         system_matrix = sparse.coo_matrix(
@@ -1425,9 +1425,9 @@ class QTBM(TransportSolver):
                             reuse_factorization=False,
                         )
                         phi = phi[
-                            self.device.offsets[comm.block.rank] : self.device.offsets[
-                                comm.block.rank + 1
-                            ],
+                            self.device.row_offsets[
+                                comm.block.rank
+                            ] : self.device.row_offsets[comm.block.rank + 1],
                             :,
                         ]
 

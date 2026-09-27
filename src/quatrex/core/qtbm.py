@@ -971,7 +971,13 @@ class QTBM(TransportSolver):
 
             # Add the spill over from the overlap
             phi_ortho[local_orbital_indices, :] += (
-                (contact.get_coupling_matrix(overlap_matrix)) @ phi_cont
+                (
+                    contact.get_coupling_matrix(
+                        matrix=overlap_matrix,
+                        kpoint=kpoint,
+                    )
+                )
+                @ phi_cont
             )[offsets[comm.block.rank] : offsets[comm.block.rank + 1], :]
 
         # Conjugate of the orthongonalized wavefunction

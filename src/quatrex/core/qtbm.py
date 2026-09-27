@@ -704,9 +704,12 @@ class QTBM(TransportSolver):
         # NOTE: xp.split returns views, so this does not copy the data.
         phi_injected, phi_reflected = xp.split(phi, [total_num_injected], axis=1)
 
+        all_reflected = comm.block.all_gather_v(phi_reflected, axis=0)
+        all_injected = comm.block.all_gather_v(phi_injected, axis=0)
+
         phi_injected += phi_reflected @ xp.linalg.solve(
-            xp.diag(eig_tot) - phi_inv_tot @ phi_reflected,
-            phi_inv_tot @ phi_injected,
+            xp.diag(eig_tot) - phi_inv_tot @ all_reflected,
+            phi_inv_tot @ all_injected,
         )
 
         return phi_injected

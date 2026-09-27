@@ -11,7 +11,7 @@ from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-@pytest.fixture(autouse=True, scope="module", params=[3, 1])
+@pytest.fixture(autouse=True, scope="module", params=[6, 3, 1])
 def configure_comm(request):
     """Setup any state specific to the execution of the given module."""
     block_comm_size = request.param

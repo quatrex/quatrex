@@ -66,11 +66,11 @@ class QTBMDevice(BaseDevice):
         super().__init__(config)
         self._init_hamiltonian()
 
-        self.offsets = self._get_offsets()
+        self.row_offsets = self._get_row_offsets()
         self._add_contacts()
         self._convert_to_dcsx()
 
-    def _get_offsets(self) -> NDArray:
+    def _get_row_offsets(self) -> NDArray:
         section_sizes, __ = get_section_sizes(
             self.orbital_coordinates.shape[0], comm.block.size
         )
@@ -87,7 +87,10 @@ class QTBMDevice(BaseDevice):
         # not allowed.
         for r, h_r in self.hamiltonians.items():
             tmp = h_r[
-                self.offsets[comm.block.rank] : self.offsets[comm.block.rank + 1], :
+                self.row_offsets[comm.block.rank] : self.row_offsets[
+                    comm.block.rank + 1
+                ],
+                :,
             ]
             self.hamiltonians[r] = DCSX.from_sparray(
                 sparray=tmp,
@@ -97,7 +100,10 @@ class QTBMDevice(BaseDevice):
 
         for r, s_r in self.overlap_matrices.items():
             tmp = s_r[
-                self.offsets[comm.block.rank] : self.offsets[comm.block.rank + 1], :
+                self.row_offsets[comm.block.rank] : self.row_offsets[
+                    comm.block.rank + 1
+                ],
+                :,
             ]
             self.overlap_matrices[r] = DCSX.from_sparray(
                 sparray=tmp,
@@ -121,7 +127,7 @@ class QTBMDevice(BaseDevice):
                     device=self,
                     contact_config=contact_config,
                     sparsity_pattern=self.hamiltonians[(0, 0, 0)],
-                    offsets=self.offsets,
+                    row_offsets=self.row_offsets,
                 )
             )
 

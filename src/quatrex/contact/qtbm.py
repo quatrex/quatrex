@@ -132,13 +132,6 @@ class QTBMContact(BaseContact):
     orbital_indices : NDArray
         Flattened array of orbital indices for the contact, sorted first
         in transport direction, then in transverse directions.
-    orbital_indices_per_layer : list[NDArray]
-        List of orbital indices for each layer in the transport
-        direction, sorted first in transverse directions, then in
-        transport direction.
-    transverse_to_transport_indices : NDArray
-        Indices to reorder the coupling matrix from transverse-first to
-        transport-first ordering.
     fermi_level : float
         Fermi level of the contact in eV.
     mid_gap_energy : float
@@ -202,29 +195,22 @@ class QTBMContact(BaseContact):
             - start
         )
 
-    def get_coupling_matrix(self, M: DCSX) -> NDArray:
+    def get_coupling_matrix(
+        self,
+        matrix: DCSX,
+        kpoint: tuple[float, float, float],
+    ) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
-        to the contact.
-
-        Example:
-            Given a contact layers |0 1 2 3|,
-            the resulting coupling matrix is
-            |3 2 1|
-            |0 3 2|
-            |0 0 3|
-
+        to the contact. This correspond to the M10 block in the quatratic eigenvalue problem.
 
         Parameters
         ----------
-        M : DCSX
+        matrix : DCSX
             The matrix (Hamiltonian or overlap) from which to extract
             coupling elements. Should have dimensions
             (n_device_orbitals, n_device_orbitals).
-        transpose : bool, optional
-            If True, the method extracts the transpose of the coupling
-            matrix, by default False.
 
         Returns
         -------
@@ -235,63 +221,55 @@ class QTBMContact(BaseContact):
             contact's transverse repetitions.
 
         """
+        m_xx = self._get_contact_blocks(
+            matrix=matrix,
+        )
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
 
-        n = self.orbital_indices_per_layer[0].shape[0]
+        m_xx_tmp = {}
+        # TODO: Make natural order default
+        # TODO: Do not densify here.
+        # shuffle keys to to have natural order a,b,c
+        for i, j, k in np.ndindex(*grid):
+            index = [j, k]
+            index.insert(self.transport_direction, i)
+            index = tuple(index)
+            m_xx_tmp[index] = m_xx[i, j, k].toarray()
+        m_xx = m_xx_tmp
 
-        indices_zero = self.orbital_indices_per_layer[0]
-
-        row_offsets = self.device.row_offsets
-        local_indices_zero = (
-            indices_zero[
-                (indices_zero >= row_offsets[comm.block.rank])
-                & (indices_zero < row_offsets[comm.block.rank + 1])
-            ]
-            - row_offsets[comm.block.rank]
+        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+        phases = (
+            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
         )
 
-        layers = []
-        for indices in self.orbital_indices_per_layer[1:]:
+        coupling_matrix = construct_circulant_cell(
+            matrix_dict=m_xx,
+            transport_cell_size=self.transport_repetitions,
+            transport_ind=self.transport_direction,
+            block_index=-1,  # Meaning  M10 is constructed.
+            sections=self.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
 
-            tmp = (
-                M.get_tile(
-                    row_ind=local_indices_zero,
-                    col_ind=indices,
-                )
-                .conjugate()
-                .transpose()
-            )
+        # TODO: Not reorder here, but where it is used.
+        ny, nz = self.transverse_repetition_grid
+        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
+        indices = xp.concatenate(
+            [
+                xp.arange(origin_num_orbitals)
+                + i * origin_num_orbitals
+                + k * origin_num_orbitals * ny * nz
+                for i in range(ny * nz)
+                for k in range(self.transport_repetitions)
+            ],
+            dtype=int,
+        )[None, :]
 
-            count = len(local_indices_zero)
-            counts = np.zeros(comm.block.size, dtype=xp.int64)
-            comm.block.all_gather(
-                np.array(count, dtype=xp.int64),
-                counts,
-                backend="device_mpi",
-            )
-            origin_offsets = np.array([0] + list(np.cumsum(counts)), dtype=xp.int64)
-
-            data = comm.block.all_gather_v(tmp.data, axis=0)
-            row_ind = comm.block.all_gather_v(tmp.row_ind, axis=0)
-            col_ind = comm.block.all_gather_v(
-                tmp.col_ind + origin_offsets[comm.block.rank], axis=0
-            )
-            layers.append(
-                sparse.coo_matrix(
-                    (data, (row_ind, col_ind)), shape=(len(indices_zero), len(indices))
-                ).tocsr()
-            )
-
-        # NOTE: Stacking sparse matrix is slow
-        coupling_matrix = []
-        zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
-        # Assemble column by column
-        for shift in range(self.transport_repetitions):
-            layer = layers[shift:] + [zero] * shift
-            coupling_matrix.append(sparse.vstack(layer, format="csr"))
-
-        coupling_matrix = sparse.hstack(coupling_matrix[::-1], format="csr")
-
-        indices = self.transverse_to_transport_indices
+        # When getting the coupling matrix (01) for spill over, it is
+        # more efficient to have it sorted first in transverse, then in
+        # transport The orbital list is then different.
+        # TODO: Investigate this.
         return coupling_matrix[indices.T, indices]
 
     def _construct_contact_matrix(self, UC_matrix: list):
@@ -542,7 +520,8 @@ class QTBMContact(BaseContact):
         if k_outer[self.transport_direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
-                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.transport_direction}). "
+                "You can't compute the OBC for a non-zero k-point "
+                f"in the transport direction ({self.transport_direction}). "
             )
         # Remove the k-point in the transport direction
         k_outer.pop(self.transport_direction)

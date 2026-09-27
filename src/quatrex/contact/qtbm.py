@@ -12,6 +12,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
 from qttools.comm import comm
+from qttools.datastructures.csx_routines import allgather_csx
 from qttools.datastructures.dcsx import DCSX
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
@@ -158,7 +159,7 @@ class QTBMContact(BaseContact):
         device,
         contact_config: ContactConfig,
         sparsity_pattern: sparse.spmatrix,
-        offsets: NDArray,
+        row_offsets: NDArray,
     ):
         super().__init__(device, contact_config, sparsity_pattern)
 
@@ -170,11 +171,21 @@ class QTBMContact(BaseContact):
             self.device.config.compute.nevp,
         )
 
-        self._distribute(offsets)
+        self._distribute(row_offsets)
 
-    def _distribute(self, offsets: NDArray):
-        start = offsets[comm.block.rank]
-        end = offsets[comm.block.rank + 1]
+    def _distribute(self, row_offsets: NDArray):
+        """Distributes the contact orbital indices across MPI ranks.
+
+        Parameters
+        ----------
+        row_offsets : NDArray
+            The row offsets for each MPI rank, used to determine the local
+            orbital indices for the contact on each rank.
+
+        """
+
+        start = row_offsets[comm.block.rank]
+        end = row_offsets[comm.block.rank + 1]
 
         self.local_orbital_indices = (
             self.orbital_indices[
@@ -229,13 +240,13 @@ class QTBMContact(BaseContact):
 
         indices_zero = self.orbital_indices_per_layer[0]
 
-        offsets = self.device.offsets
+        row_offsets = self.device.row_offsets
         local_indices_zero = (
             indices_zero[
-                (indices_zero >= offsets[comm.block.rank])
-                & (indices_zero < offsets[comm.block.rank + 1])
+                (indices_zero >= row_offsets[comm.block.rank])
+                & (indices_zero < row_offsets[comm.block.rank + 1])
             ]
-            - offsets[comm.block.rank]
+            - row_offsets[comm.block.rank]
         )
 
         layers = []
@@ -460,16 +471,16 @@ class QTBMContact(BaseContact):
 
         return modes
 
-    def _slice_matrix(
+    def _get_contact_blocks(
         self,
-        M: DCSX,
-    ):
+        matrix: DCSX,
+    ) -> dict[sparse.spmatrix]:
         """Slices the given matrix into a dictionary of submatrices
         corresponding to the unit cell orbital indices.
 
         Parameters
         ----------
-        M : DCSX
+        matrix : DCSX
             The matrix to slice.
 
         Returns
@@ -479,77 +490,25 @@ class QTBMContact(BaseContact):
             submatrices corresponding to the unit cell orbital indices.
 
         """
-
-        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
-        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
-
-        M_slice = {}
-        M_origin = M.get_tile(
+        m_origin = matrix.get_tile(
             row_ind=self.local_origin_orbital_indices,
-            unsymmetrize=False if M.symmetry is None else True,
+            unsymmetrize=True,
         )
-
-        data = xp.ascontiguousarray(xp.squeeze(M_origin.data))
-        row_ind = xp.ascontiguousarray(M_origin.row_ind)
-        col_ind = xp.ascontiguousarray(M_origin.col_ind)
 
         # Allgather over all ranks
         # NOTE: Possible that only ranks owning the OBC solve them.
         # Parallize over them like in SCBA. Need to make a communicator
         # for this.
-        count = len(self.local_origin_orbital_indices)
-        counts = np.zeros(comm.block.size, dtype=xp.int64)
-        comm.block.all_gather(
-            np.array(count, dtype=xp.int64),
-            counts,
-            backend="device_mpi",
-        )
-        offsets = np.array([0] + list(np.cumsum(counts)), dtype=xp.int64)
-
-        data = comm.block.all_gather_v(data, axis=0)
-        col_ind = comm.block.all_gather_v(col_ind, axis=0)
-        row_ind = comm.block.all_gather_v(row_ind + offsets[comm.block.rank], axis=0)
-        M_origin = sparse.coo_matrix(
-            (data, (row_ind, col_ind)),
-            shape=(
-                len(origin_orbital_indices),
-                self.device.orbital_coordinates.shape[0],
-            ),
-        )
-        M_origin = M_origin.tocsr()
-
-        for index in np.ndindex(*grid):
-            M_slice[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
-
-        return M_slice
-
-    def _get_contact_blocks(
-        self,
-        matrix: DCSX,
-    ) -> dict:
-        """Constructs the contact blocks for the given k-point.
-
-        Parameters
-        ----------
-        matrix : DCSX
-            The matrix (Hamiltonian or overlap) for which to construct the contact blocks   .
-
-        Returns
-        -------
-        dict
-            A dictionary mapping (i, j, k) tuples to the contact blocks
-            corresponding to the unit cell orbital indices.
-
-        """
-
-        matrix = matrix.expand_symmetry()
+        # NOTE: Possible to cache here the offsets in both nnz and
+        # shape.
+        m_origin = allgather_csx(m_origin, comm.block, axis=0.0)
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
         for index in np.ndindex(*grid):
-            m_xx[index] = matrix.get_tile(
-                self.local_origin_orbital_indices, self.unit_cell_orbital_indices[index]
-            )
+            m_xx[index] = m_origin.get_tile(
+                col_ind=self.unit_cell_orbital_indices[index]
+            ).tocoo()
 
         return m_xx
 
@@ -591,8 +550,8 @@ class QTBMContact(BaseContact):
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
-        M_slice = self._slice_matrix(
-            M=M,
+        m_xx = self._get_contact_blocks(
+            matrix=M,
         )
 
         # Create the k-space list needed to upscale the self-energy and
@@ -620,12 +579,12 @@ class QTBMContact(BaseContact):
 
             for i in range(self.transport_repetitions + 1):
                 temp = sparse.csr_matrix(
-                    (M_slice[i, 0, 0].shape[0], M_slice[i, 0, 0].shape[1]),
+                    (m_xx[i, 0, 0].shape[0], m_xx[i, 0, 0].shape[1]),
                     dtype=xp.complex128,
                 )
                 for j, k in np.ndindex(ny, nz):
-                    if M_slice[i, j, k].nnz > 0:
-                        temp += M_slice[i, j, k] * xp.exp(
+                    if m_xx[i, j, k].nnz > 0:
+                        temp += m_xx[i, j, k] * xp.exp(
                             1j
                             * (
                                 (ky) * (j - self.origin_key[1])

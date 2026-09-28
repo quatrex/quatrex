@@ -2,6 +2,8 @@
 
 """Distributed Extended Compressed Sparse Row (CSX) format with stack support."""
 
+from __future__ import annotations
+
 import numpy as np
 
 from qttools import NDArray, sparse, xp
@@ -271,7 +273,7 @@ class DCSX:
 
     def expand_symmetry(
         self,
-    ) -> "DCSX":
+    ) -> DCSX:
         """Symmetrizes the DCSX matrix. This returns a new DCSX matrix
         that is the symmetrized version of the original matrix.
 
@@ -383,7 +385,7 @@ class DCSX:
 
     def add_(
         self,
-        other: "DCSX",
+        other: DCSX,
         prefactor: int | float | np.number = 1.0,
         cache: bool = True,
         cache_id: int | None = None,
@@ -470,7 +472,7 @@ class DCSX:
         row_ind: NDArray | None = None,
         col_ind: NDArray | None = None,
         unsymmetrize: bool = False,
-    ) -> "CSX":
+    ) -> CSX:
         """Returns a tile of the matrix as a new CSX object.
 
         Note
@@ -518,12 +520,15 @@ class DCSX:
     @classmethod
     def from_sparray(
         cls,
-        sparray: sparse.spmatrix,
+        sparray: sparse.spmatrix | None = None,
+        row_ind: NDArray | None = None,
+        col_ind: NDArray | None = None,
+        shape: tuple[int, int] | None = None,
         local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
         dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
-    ) -> "DCSX":
+    ) -> DCSX:
         """Allocates a DCSX matrix from a sparse array.
 
         Note
@@ -539,8 +544,18 @@ class DCSX:
 
         Parameters
         ----------
-        sparray : sparse.spmatrix
-            The sparse array to convert to DCSX format.
+        sparray : sparse.spmatrix | None, optional
+            The sparse array to convert to DCSX format. If None,
+            `row_ind` and `col_ind` must be provided.
+        row_ind : NDArray | None, optional
+            The row indices of the non-zero entries. If None, `sparray`
+            must be provided.
+        col_ind : NDArray | None, optional
+            The column indices of the non-zero entries. If None,
+            `sparray` must be provided.
+        shape : tuple[int, int] | None, optional
+            The shape of the matrix. If None, the shape of `sparray` is
+            used. If None and `sparray` is None, this must be provided.
         local_stack_shape : tuple, optional
             The shape of the local stack for this rank. Default is an
             empty tuple, which means no stack.
@@ -549,10 +564,12 @@ class DCSX:
             "hermitian", "skew-symmetric", "skew-hermitian", or None.
             Default is None.
         dtype : xp.dtype[xp.generic] | None, optional
-            The data type of the matrix elements. Default is
-            None and the data type of the input sparse array is used.
+            The data type of the matrix elements. Default is None and
+            the data type of the input sparse array is used.
         allocate : bool, optional
-            Whether to allocate the data array. Default is True.
+            Whether to allocate the data array. Default is True. If an
+            sparray is provided, its data is used to initialize the data
+            array.
 
         Returns
         -------
@@ -564,12 +581,38 @@ class DCSX:
         if comm.stack is None or comm.block is None:
             raise ValueError("Communicators must be initialized.")
 
-        coo = sparray.tocoo()
+        if sparray is not None:
+            sparray = sparray.tocoo()
+            if shape is not None and shape != sparray.shape:
+                raise ValueError(
+                    f"Provided shape {shape} does not match the shape of the sparse array {sparray.shape}."
+                )
+            shape = sparray.shape
+            index_dtype = sparray.col.dtype
 
-        index_dtype = coo.col.dtype
+            # Canonicalizes the COO format.
+            if not sparray.has_canonical_format:
+                sparray.sum_duplicates()
+            if not sparray.has_canonical_format:
+                raise ValueError("COO format is not canonical.")
 
-        rows = xp.array([coo.shape[0]], dtype=index_dtype)
-        cols = xp.array([coo.shape[1]], dtype=index_dtype)
+            row_ind = sparray.row
+            col_ind = sparray.col
+
+            dtype = sparray.data.dtype if dtype is None else dtype
+
+        else:
+            if dtype is None:
+                raise ValueError(
+                    "Data type must be provided " "if no sparse array is given."
+                )
+            if shape is None:
+                shape = (int(xp.max(row_ind)) + 1, int(xp.max(col_ind)) + 1)
+
+            index_dtype = row_ind.dtype
+
+        rows = xp.array([shape[0]], dtype=index_dtype)
+        cols = xp.array([shape[1]], dtype=index_dtype)
 
         all_rows = xp.zeros((comm.block.size), dtype=index_dtype)
         all_cols = xp.zeros((comm.block.size), dtype=index_dtype)
@@ -592,12 +635,16 @@ class DCSX:
         row_offsets = get_host(xp.cumsum(row_offsets))
 
         _csx = CSX.from_sparray(
-            coo,
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=shape,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
-            dtype=coo.data.dtype if dtype is None else dtype,
+            dtype=dtype,
             allocate=allocate,
         )
+        if sparray is not None and allocate:
+            _csx.data = sparray.data
 
         dcsx = cls(
             _csx=_csx,

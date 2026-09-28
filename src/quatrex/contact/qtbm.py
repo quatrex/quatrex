@@ -14,7 +14,7 @@ from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
 from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
-from qttools.datastructures.csx_routines import allgather_csx
+from qttools.datastructures.csx_routines import allgather_csx, remove_duplicate_entries
 from qttools.datastructures.dcsx import DCSX
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
@@ -825,18 +825,14 @@ class QTBMContact(BaseContact):
         row_ind = np.concatenate(row_ind)
         col_ind = np.concatenate(col_ind)
         cols = self.device.hamiltonians[(0, 0, 0)].cols
-        indices = row_ind * cols + col_ind
-        indices = xp.unique(indices)
-        row_ind = indices // cols
-        col_ind = indices % cols
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
         h_k = DCSX.from_sparray(
-            sparray=sparse.coo_matrix(
-                (xp.empty_like(row_ind, dtype=xp.complex128), (row_ind, col_ind)),
-                shape=self.device.hamiltonians[(0, 0, 0)].shape,
-                copy=False,
-            ),
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=self.device.hamiltonians[(0, 0, 0)].shape,
             symmetry="hermitian",
+            dtype=xp.complex128,
         )
 
         row_ind = [s_r.row_ind for s_r in self.device.overlap_matrices.values()]
@@ -845,18 +841,14 @@ class QTBMContact(BaseContact):
         row_ind = np.concatenate(row_ind)
         col_ind = np.concatenate(col_ind)
         cols = self.device.overlap_matrices[(0, 0, 0)].cols
-        indices = row_ind * cols + col_ind
-        indices = xp.unique(indices)
-        row_ind = indices // cols
-        col_ind = indices % cols
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
         s_k = DCSX.from_sparray(
-            sparray=sparse.coo_matrix(
-                (xp.empty_like(row_ind, dtype=xp.complex128), (row_ind, col_ind)),
-                shape=self.device.overlap_matrices[(0, 0, 0)].shape,
-                copy=False,
-            ),
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=self.device.overlap_matrices[(0, 0, 0)].shape,
             symmetry="hermitian",
+            dtype=xp.complex128,
         )
 
         for m, kpoint in enumerate(self.device.kpoints):

@@ -2,47 +2,15 @@
 
 """Extended Compressed Sparse Row (CSX) format with stack support."""
 
+from __future__ import annotations
+
 import numpy as np
 
 from qttools import NDArray, sparse, xp
+from qttools.datastructures.csx_routines import make_canonical_coo
 from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.kernels import inplace
 from qttools.utils.gpu_utils import free_mempool
-
-
-def _make_canonical_coo(
-    row_ind: NDArray,
-    col_ind: NDArray,
-    data: NDArray,
-    cols: int,
-) -> tuple[NDArray, NDArray, NDArray]:
-    """Returns the canonical COO format of the given indices and data.
-
-    Parameters
-    ----------
-    row_ind : NDArray
-        The row indices of the COO format.
-    col_ind : NDArray
-        The column indices of the COO format.
-    data : NDArray
-        The data of the COO format.
-    cols : int
-        The number of columns in the matrix.
-
-    Returns
-    -------
-    tuple[NDArray, NDArray, NDArray]
-        The canonical COO format of the given indices and data.
-
-    """
-    # Sort the indices and data to get the canonical format
-    flat_idx = row_ind * cols + col_ind
-    sort_idx = xp.argsort(flat_idx)
-    row_ind = row_ind[sort_idx]
-    col_ind = col_ind[sort_idx]
-    data = data[..., sort_idx]
-
-    return row_ind, col_ind, data
 
 
 class CSX:
@@ -231,7 +199,7 @@ class CSX:
 
     def expand_symmetry(
         self,
-    ) -> "CSX":
+    ) -> CSX:
         if self.symmetry is None:
             raise ValueError("Symmetrization is only relevant for symmetric matrices.")
 
@@ -244,11 +212,11 @@ class CSX:
         new_col_ind = xp.concatenate(new_col_ind, axis=-1)
         new_data = xp.concatenate(new_data, axis=-1)
 
-        new_row_ind, new_col_ind, new_data = _make_canonical_coo(
+        new_row_ind, new_col_ind, new_data = make_canonical_coo(
             row_ind=new_row_ind,
             col_ind=new_col_ind,
-            data=new_data,
             cols=self.cols,
+            data=new_data,
         )
 
         csx = CSX(
@@ -299,7 +267,7 @@ class CSX:
 
     def add_(
         self,
-        other: "CSX",
+        other: CSX,
         prefactor: int | float | np.number = 1.0,
         cache: bool = True,
         cache_id: int | None = None,
@@ -472,7 +440,7 @@ class CSX:
 
         return out
 
-    def transpose(self) -> "CSX":
+    def transpose(self) -> CSX:
         """Returns the transpose of the matrix as a new CSX object.
 
         Returns
@@ -498,7 +466,7 @@ class CSX:
 
         return csx
 
-    def conjugate(self) -> "CSX":
+    def conjugate(self) -> CSX:
         """Returns the conjugate of the matrix as a new CSX object.
 
         Returns
@@ -597,11 +565,11 @@ class CSX:
             tile_row = xp.concatenate([tile_row, tile_row_t])
             tile_col = xp.concatenate([tile_col, tile_col_t])
 
-            tile_row, tile_col, tile_data = _make_canonical_coo(
+            tile_row, tile_col, tile_data = make_canonical_coo(
                 row_ind=tile_row,
                 col_ind=tile_col,
-                data=tile_data,
                 cols=tile_shape[1],
+                data=tile_data,
             )
 
         return tile_data, tile_row, tile_col, tile_shape
@@ -611,7 +579,7 @@ class CSX:
         row_ind: NDArray | None = None,
         col_ind: NDArray | None = None,
         unsymmetrize: bool = False,
-    ) -> "CSX":
+    ) -> CSX:
         """Returns a tile of the matrix as a new CSX object.
 
         Note
@@ -690,12 +658,15 @@ class CSX:
     @classmethod
     def from_sparray(
         cls,
-        sparray: sparse.spmatrix,
+        sparray: sparse.spmatrix | None = None,
+        row_ind: NDArray | None = None,
+        col_ind: NDArray | None = None,
+        shape: tuple[int, int] | None = None,
         local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
         dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
-    ) -> "CSX":
+    ) -> CSX:
         """Allocates a CSX matrix from a sparse array.
 
         Note
@@ -711,8 +682,18 @@ class CSX:
 
         Parameters
         ----------
-        sparray : sparse.spmatrix
-            The sparse array to convert to CSX format.
+        sparray : sparse.spmatrix | None, optional
+            The sparse array to convert to CSX format. If None,
+            `row_ind` and `col_ind` must be provided.
+        row_ind : NDArray | None, optional
+            The row indices of the non-zero entries. If None, `sparray`
+            must be provided.
+        col_ind : NDArray | None, optional
+            The column indices of the non-zero entries. If None,
+            `sparray` must be provided.
+        shape : tuple[int, int] | None, optional
+            The shape of the matrix. If None, the shape of `sparray` is
+            used. If None and `sparray` is None, this must be provided.
         local_stack_shape : tuple, optional
             The shape of the local stack for this rank. Default is an
             empty tuple, which means no stack.
@@ -724,7 +705,8 @@ class CSX:
             The data type of the matrix elements. Default is None and
             the data type of the input sparse array is used.
         allocate : bool, optional
-            Whether to allocate the data array. Default is True.
+            Whether to allocate the data array. Default is True. Even if
+            allocated, the data will be uninitialized.
 
         Returns
         -------
@@ -732,31 +714,65 @@ class CSX:
             The CSX matrix.
 
         """
+        if sparray is None and (row_ind is None or col_ind is None):
+            raise ValueError(
+                "Either a sparse array or row and column indices must be provided."
+            )
+        if sparray is not None and (row_ind is not None or col_ind is not None):
+            raise ValueError(
+                "Cannot provide both a sparse array and row/column indices."
+            )
 
-        coo = sparray.tocoo()
+        if sparray is not None:
+            sparray = sparray.tocoo()
+            if shape is not None and shape != sparray.shape:
+                raise ValueError(
+                    f"Provided shape {shape} does not match the shape of the sparse array {sparray.shape}."
+                )
+            shape = sparray.shape
+            index_dtype = sparray.col.dtype
 
-        index_dtype = coo.col.dtype
+            # Canonicalizes the COO format.
+            if not sparray.has_canonical_format:
+                sparray.sum_duplicates()
+            if not sparray.has_canonical_format:
+                raise ValueError("COO format is not canonical.")
 
-        rows = xp.array([coo.shape[0]], dtype=index_dtype)
-        cols = xp.array([coo.shape[1]], dtype=index_dtype)
+            row_ind = sparray.row
+            col_ind = sparray.col
+
+            dtype = sparray.data.dtype if dtype is None else dtype
+
+        else:
+            if dtype is None:
+                raise ValueError(
+                    "Data type must be provided " "if no sparse array is given."
+                )
+            if shape is None:
+                shape = (int(xp.max(row_ind)) + 1, int(xp.max(col_ind)) + 1)
+
+            index_dtype = row_ind.dtype
+
+        # Small sanity check. This should never be triggered since we
+        # check for this at the beginning of the function.
+        if row_ind is None or col_ind is None:
+            raise ValueError("Both row_ind and col_ind must be provided.")
+
+        rows = xp.array([shape[0]], dtype=index_dtype)
+        cols = xp.array([shape[1]], dtype=index_dtype)
 
         # NOTE: This is not necessary since the inputs should already be
         # upper if needed.
         if symmetry:
-            coo = sparse.triu(coo, format="coo")
-
-        # Canonicalizes the COO format.
-        if not coo.has_canonical_format:
-            coo.sum_duplicates()
-
-        if not coo.has_canonical_format:
-            raise ValueError("COO format is not canonical.")
-
-        row_ind = coo.row
-        col_ind = coo.col
+            # Check that non lower triangular entries exists.
+            if xp.any(row_ind > col_ind):
+                raise ValueError(
+                    "The input matrix is not upper triangular. "
+                    "Cannot create a symmetric CSX matrix."
+                )
 
         csx = cls(
-            dtype=coo.data.dtype if dtype is None else dtype,
+            dtype=dtype,
             rows=int(rows[0]),
             cols=int(cols[0]),
             local_stack_shape=local_stack_shape,
@@ -767,6 +783,7 @@ class CSX:
 
         if allocate:
             csx.allocate_data()
-            csx.data = coo.data
+            if sparray is not None:
+                csx.data = sparray.data
 
         return csx

@@ -175,7 +175,7 @@ class TestInplace:
         # randomly mask the `coo` matrix to create a new sparse matrix with a subset of the sparsity pattern of `coo`
         rng = xp.random.default_rng(seed=42)
         # choose a random subset of the non-zero entries of `coo` to keep
-        mask = rng.choice([False, True], size=coo.nnz)
+        mask = rng.random(coo.nnz) > 0.5
         coo = sparse.coo_matrix(
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
@@ -209,7 +209,7 @@ class TestInplace:
         # with a subset of the sparsity pattern of `coo`
         rng = xp.random.default_rng(seed=42)
         # choose a random subset of the non-zero entries of `coo` to keep
-        mask = rng.choice([False, True], size=coo.nnz)
+        mask = rng.random(coo.nnz) > 0.5
         coo = sparse.coo_matrix(
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
@@ -295,10 +295,10 @@ class TestAccess:
         rows = xp.arange(size)
         cols = xp.arange(size)
 
-        mask = rng.choice([False, True], size=size)
+        mask = rng.random(size=size) > 0.5
         rows = rows[mask]
 
-        mask = rng.choice([False, True], size=size)
+        mask = rng.random(size=size) > 0.5
         cols = cols[mask]
 
         test_tile = a.get_tile(rows, cols).toarray()
@@ -329,10 +329,10 @@ class TestAccess:
         rows = xp.arange(size)
         cols = xp.arange(size)
 
-        mask = rng.choice([False, True], size=size)
+        mask = rng.random(size=size) > 0.5
         rows = rows[mask]
 
-        mask = rng.choice([False, True], size=size)
+        mask = rng.random(size=size) > 0.5
         cols = cols[mask]
 
         test_tile = a.get_tile(rows, cols, unsymmetrize=True).toarray()

@@ -8,10 +8,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import numpy as np
+from mpi4py import MPI
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
-from qttools.comm import comm
+from qttools.comm import comm as quatrex_comm
+from qttools.comm.comm import _SubCommunicator
 from qttools.datastructures.csx_routines import allgather_csx
 from qttools.datastructures.dcsx import DCSX
 from qttools.nevp import NEVP, Beyn, Full
@@ -144,6 +146,10 @@ class QTBMContact(BaseContact):
         Temperature of the contact in K.
     obc_solver : obc.Spectral
         Configured open boundary condition solver.
+    comm : _SubCommunicator | None
+        MPI subcommunicator for the contact, used for parallel OBC
+        calculations. None if the contact has no local orbital indices on
+        the current rank.
 
     """
 
@@ -177,8 +183,8 @@ class QTBMContact(BaseContact):
 
         """
 
-        start = row_offsets[comm.block.rank]
-        end = row_offsets[comm.block.rank + 1]
+        start = row_offsets[quatrex_comm.block.rank]
+        end = row_offsets[quatrex_comm.block.rank + 1]
 
         self.local_orbital_indices = (
             self.orbital_indices[
@@ -194,6 +200,23 @@ class QTBMContact(BaseContact):
             ]
             - start
         )
+
+        # build a subcommunicator based on local_orbital_indices
+        self.comm = None
+        color = 1 if len(self.local_orbital_indices) > 0 else MPI.UNDEFINED
+        key = quatrex_comm.block.rank
+        comm = quatrex_comm.block._mpi_comm.Split(color, key)
+        if comm != MPI.COMM_NULL:
+            self.comm = _SubCommunicator(comm, quatrex_comm.block._config)
+
+            count = len(self.local_orbital_indices)
+            counts = np.zeros(self.comm.size, dtype=np.int64)
+            self.comm.all_gather(
+                np.array(count, dtype=np.int64),
+                counts,
+                backend="device_mpi",
+            )
+            self.row_offsets = np.array([0] + list(np.cumsum(counts)), dtype=np.int64)
 
     def get_coupling_matrix(
         self,
@@ -221,6 +244,19 @@ class QTBMContact(BaseContact):
             contact's transverse repetitions.
 
         """
+        if self.comm is None:
+            raise RuntimeError(
+                "Contact subcommunicator is not initialized.\n"
+                "Ensure that the contact has local orbital indices on this rank."
+            )
+
+        if matrix.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix must be unsymmetrized (symmetry=None) "
+                "for coupling matrix extraction."
+            )
+
         m_xx = self._get_contact_blocks(
             matrix=matrix,
         )
@@ -452,7 +488,7 @@ class QTBMContact(BaseContact):
     def _get_contact_blocks(
         self,
         matrix: DCSX,
-    ) -> dict[sparse.spmatrix]:
+    ) -> dict[sparse.spmatrix] | None:
         """Slices the given matrix into a dictionary of submatrices
         corresponding to the unit cell orbital indices.
 
@@ -463,9 +499,11 @@ class QTBMContact(BaseContact):
 
         Returns
         -------
-        dict
+        dict | None
             A dictionary mapping (i, j, k) tuples to the sliced
             submatrices corresponding to the unit cell orbital indices.
+            Returns None if the contact has no local orbital indices on
+            the current rank.
 
         """
         m_origin = matrix.get_tile(
@@ -473,13 +511,13 @@ class QTBMContact(BaseContact):
             unsymmetrize=True,
         )
 
-        # Allgather over all ranks
-        # NOTE: Possible that only ranks owning the OBC solve them.
-        # Parallize over them like in SCBA. Need to make a communicator
-        # for this.
         # NOTE: Possible to cache here the offsets in both nnz and
         # shape.
-        m_origin = allgather_csx(m_origin, comm.block, axis=0.0)
+        m_origin = allgather_csx(
+            m_origin,
+            self.comm,
+            axis=0.0,
+        )
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
@@ -496,14 +534,15 @@ class QTBMContact(BaseContact):
         M: DCSX,
         k_outer: tuple[float, float, float],
         return_modes_only: bool = False,
-    ) -> OBCResult:
+    ) -> OBCResult | None:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
         ----------
         M : DCSX
             The system matrix from which to extract coupling elements.
-            It should have dimensions (n_device_orbitals, n_device_orbitals).
+            It should have dimensions (n_device_orbitals,
+            n_device_orbitals).
         k_outer : tuple[float, float, float]
             The k-point in the transport direction.
         return_modes_only : bool, optional
@@ -512,11 +551,23 @@ class QTBMContact(BaseContact):
 
         Returns
         -------
-        ContactOBCResult
+        ContactOBCResult | None
             An object containing the computed OBC results, including
             injection modes, self-energy, and Bloch modes as applicable.
+            Returns None if the contact has no local orbital indices on
+            the current rank.
 
         """
+        if self.comm is None:
+            return None
+
+        if M.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix M must be unsymmetrized (symmetry=None) "
+                "for OBC computation."
+            )
+
         if k_outer[self.transport_direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
@@ -532,6 +583,8 @@ class QTBMContact(BaseContact):
         m_xx = self._get_contact_blocks(
             matrix=M,
         )
+        if m_xx is None:
+            return None
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions
@@ -746,6 +799,12 @@ class QTBMContact(BaseContact):
             The eigenvalues for the contact band structure.
 
         """
+        if self.comm is None:
+            raise RuntimeError(
+                "Contact subcommunicator is not initialized.\n"
+                "Ensure that the contact has local orbital indices on this rank."
+            )
+
         e_k = xp.zeros(
             (
                 len(kpoints_transport),

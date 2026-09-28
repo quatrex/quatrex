@@ -355,13 +355,18 @@ class QTBM(TransportSolver):
 
         self.sigma_update_indices = {}
         for contact in self.device.contacts:
-            self.sigma_update_indices[contact] = self.system_matrix._get_update_indices(
-                contact_rows[contact.name],
-                contact_cols[contact.name],
-            )
+            if contact.comm is not None:
+                self.sigma_update_indices[contact] = (
+                    self.system_matrix._get_update_indices(
+                        contact_rows[contact.name],
+                        contact_cols[contact.name],
+                    )
+                )
 
     def _get_obc_result_info(
-        self, obc_results: dict[QTBMContact, OBCResult], energy_ind: int
+        self,
+        obc_results: dict[QTBMContact, OBCResult],
+        energy_ind: int,
     ):
         """Extracts the number of injected and reflected modes for each
         contact at a given energy index.
@@ -370,7 +375,8 @@ class QTBM(TransportSolver):
         ----------
         obc_results : dict[QTBMContact, OBCResult]
             Dictionary mapping each contact to its corresponding OBC
-            result containing injection and reflection data.
+            result containing injection and reflection data. The
+            dictionary is empty on ranks without boundary orbitals.
         energy_ind : int
             The energy index for which to extract the information.
 
@@ -384,18 +390,31 @@ class QTBM(TransportSolver):
             contact at the given energy index.
 
         """
-        num_injected = np.zeros(len(obc_results), dtype=np.int32)
-        num_reflected = np.zeros(len(obc_results), dtype=np.int32)
-        for i, obc_result in enumerate(obc_results.values()):
-            num_injected[i] = obc_result.injection[energy_ind].shape[1]
-            if obc_result.reflection is not None:
-                num_reflected[i] = obc_result.reflection[energy_ind].shape[1]
+        local_num_injected = np.zeros(len(self.device.contacts), dtype=np.int32)
+        local_num_reflected = np.zeros(len(self.device.contacts), dtype=np.int32)
+        for i, contact in enumerate(self.device.contacts):
+            if contact in obc_results:
+                obc_result = obc_results[contact]
+                local_num_injected[i] = obc_result.injection[energy_ind].shape[1]
+                if obc_result.reflection is not None:
+                    local_num_reflected[i] = obc_result.reflection[energy_ind].shape[1]
+
+        num_injected = np.zeros_like(local_num_injected)
+        num_reflected = np.zeros_like(local_num_reflected)
+        comm.block.all_reduce(
+            local_num_injected, num_injected, op="max", backend="device_mpi"
+        )
+        comm.block.all_reduce(
+            local_num_reflected, num_reflected, op="max", backend="device_mpi"
+        )
 
         return num_injected, num_reflected
 
     @profiler.profile("QTBM: Assemble RHS", level="default")
     def _assemble_rhs(
-        self, obc_results: dict[QTBMContact, OBCResult], energy_ind: int
+        self,
+        obc_results: dict[QTBMContact, OBCResult],
+        energy_ind: int,
     ) -> NDArray:
         """Assembles the right-hand side vector for the linear system.
 
@@ -424,10 +443,20 @@ class QTBM(TransportSolver):
             )
 
         rhs = xp.zeros(
-            (self.device.num_orbitals, total_num_injected + num_reflected.sum()),
+            (
+                (
+                    self.device.row_offsets[comm.block.rank + 1]
+                    - self.device.row_offsets[comm.block.rank]
+                ),
+                total_num_injected + num_reflected.sum(),
+            ),
             dtype=xp.complex128,
             order="F",
         )
+
+        # No OBCs on this rank, return the zero rhs
+        if len(obc_results) == 0:
+            return rhs
 
         offsets_injected = np.hstack((0, np.cumsum(num_injected)))
         offsets_reflected = total_num_injected + np.hstack(
@@ -435,16 +464,41 @@ class QTBM(TransportSolver):
         )
 
         # Add the injection vector in the contact elements of the rhs
-        for i, (contact, obc_result) in enumerate(obc_results.items()):
-            rhs[
-                contact.orbital_indices, offsets_injected[i] : offsets_injected[i + 1]
-            ] = obc_result.injection[energy_ind]
-            if self.low_rank_obc:
-                # Add the reflections.
+        for i, contact in enumerate(self.device.contacts):
+            if contact in obc_results:
+                if contact.comm is None:
+                    raise RuntimeError(
+                        "Contact subcommunicator is not initialized.\n"
+                        "Ensure that the contact has local orbital indices on this rank."
+                    )
+
+                obc_result = obc_results[contact]
+
+                local_injection = obc_result.injection[energy_ind][
+                    contact.row_offsets[contact.comm.rank] : contact.row_offsets[
+                        contact.comm.rank + 1
+                    ],
+                    :,
+                ]
+
                 rhs[
-                    contact.orbital_indices,
-                    offsets_reflected[i] : offsets_reflected[i + 1],
-                ] = obc_result.reflection[energy_ind]
+                    contact.local_orbital_indices,
+                    offsets_injected[i] : offsets_injected[i + 1],
+                ] = local_injection
+                if self.low_rank_obc:
+
+                    local_reflection = obc_result.reflection[energy_ind][
+                        contact.row_offsets[contact.comm.rank] : contact.row_offsets[
+                            contact.comm.rank + 1
+                        ],
+                        :,
+                    ]
+
+                    # Add the reflections.
+                    rhs[
+                        contact.local_orbital_indices,
+                        offsets_reflected[i] : offsets_reflected[i + 1],
+                    ] = local_reflection
 
         rhs = xp.asfortranarray(rhs)
 
@@ -612,10 +666,25 @@ class QTBM(TransportSolver):
 
         """
 
+        # TODO: This shouldnt work if only specific ranks have the obc
+        # results.
+
+        phi_inv_reflected = {
+            contact.name: obc_result.phi_inv_reflected[energy_ind]
+            for contact, obc_result in obc_results.items()
+        }
+        # TODO: Some so efficient to do pickled allgather.
+        # Unpack all gathered dictionaries into a single unified dictionary
+        phi_inv_reflected = {
+            key: val
+            for d in comm.block._mpi_comm.allgather(phi_inv_reflected)
+            for key, val in d.items()
+        }
+
         data = xp.concatenate(
             [
-                obc_result.phi_inv_reflected[energy_ind].flatten()
-                for obc_result in obc_results.values()
+                phi_inv_reflected[contact.name].flatten()
+                for contact in self.device.contacts
             ],
         )
 
@@ -623,12 +692,12 @@ class QTBM(TransportSolver):
             [
                 xp.repeat(
                     xp.arange(start, stop),
-                    obc_result.phi_inv_reflected[energy_ind].shape[1],
+                    phi_inv_reflected[contact.name].shape[1],
                 )
-                for start, stop, obc_result in zip(
+                for start, stop, contact in zip(
                     offsets_reflected[:-1],
                     offsets_reflected[1:],
-                    obc_results.values(),
+                    self.device.contacts,
                 )
             ]
         )
@@ -637,9 +706,9 @@ class QTBM(TransportSolver):
             [
                 xp.tile(
                     xp.asarray(contact.orbital_indices),
-                    obc_result.phi_inv_reflected[energy_ind].shape[0],
+                    phi_inv_reflected[contact.name].shape[0],
                 )
-                for contact, obc_result in obc_results.items()
+                for contact in self.device.contacts
             ]
         )
 
@@ -689,11 +758,18 @@ class QTBM(TransportSolver):
         )
 
         # Generate the eigenvalue matrix
+        # TODO: Some so efficient to do pickled allgather.
+        eig_reflected = {
+            contact.name: obc_result.eig_reflected[energy_ind]
+            for contact, obc_result in obc_results.items()
+        }
+        eig_reflected = {
+            key: val
+            for d in comm.block._mpi_comm.allgather(eig_reflected)
+            for key, val in d.items()
+        }
         eig_tot = xp.concatenate(
-            [
-                obc_result.eig_reflected[energy_ind]
-                for obc_result in obc_results.values()
-            ]
+            [eig_reflected[contact.name] for contact in self.device.contacts]
         )
 
         if "real" in self.system_matrix_type:
@@ -745,47 +821,63 @@ class QTBM(TransportSolver):
             contact_in,
             contact_out,
         ), transmission in self.observables.transmissions.items():
-            # Get the all the wavefunctions injected from contact 1 and
-            # extract the elements inside contact 2
 
-            # Wavefunctions injected from contact_in and evaluated at contact_out
-            phi_nt = phi[
-                contact_out.local_orbital_indices, injection_slices[contact_in]
-            ]
-            phi_nt = comm.block.all_gather_v(phi_nt, axis=0)
+            out = xp.zeros((1,), dtype=xp.float64)
 
-            # Compute the transmission
-            if phi_nt.size == 0:
-                continue
+            if len(contact_out.local_orbital_indices) > 0:
 
-            obc_result = obc_results[contact_out]
-            if self.low_rank_obc:
-                S_P = obc_result.reflection @ (
-                    xp.diag(1 / obc_result.eig_reflected)
-                    @ (obc_result.phi_inv_reflected @ phi_nt)
-                )
+                # Get the all the wavefunctions injected from contact 1 and
+                # extract the elements inside contact 2
 
-            else:
-                S_P = xp.zeros_like(phi_nt)
-                # This upscales the self-energy if the contact
-                # has periodicity in the transverse directions
-                ny, nz = contact_out.transverse_repetition_grid
-                indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
-                indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+                # Wavefunctions injected from contact_in and evaluated at contact_out
+                phi_nt = phi[
+                    contact_out.local_orbital_indices, injection_slices[contact_in]
+                ]
+                phi_nt = contact_out.comm.all_gather_v(phi_nt, axis=0)
 
-                indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
-                indices_z = xp.tile(indices_z, (ny, ny))
+                # Compute the transmission
+                if phi_nt.size == 0:
+                    continue
 
-                for (ky, kz), sigma in obc_result.sigma_obc_k.items():
-                    S_P += kron_matmul(
-                        xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
-                        sigma,
-                        phi_nt,
+                obc_result = obc_results[contact_out]
+                if self.low_rank_obc:
+                    S_P = obc_result.reflection @ (
+                        xp.diag(1 / obc_result.eig_reflected)
+                        @ (obc_result.phi_inv_reflected @ phi_nt)
                     )
 
-            transmission[kpoint_ind, global_energy_ind] = xp.trace(
-                -2 * xp.imag(phi_nt.T.conj() @ S_P)
-            )
+                else:
+                    S_P = xp.zeros_like(phi_nt)
+                    # This upscales the self-energy if the contact
+                    # has periodicity in the transverse directions
+                    ny, nz = contact_out.transverse_repetition_grid
+                    indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
+                    indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+
+                    indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
+                    indices_z = xp.tile(indices_z, (ny, ny))
+
+                    for (ky, kz), sigma in obc_result.sigma_obc_k.items():
+                        S_P += kron_matmul(
+                            xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
+                            sigma,
+                            phi_nt,
+                        )
+
+                out = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
+
+            # Discover the root rank for the transmission output. This
+            # is necessary because the contact_out may not have any
+            # local orbitals on some ranks.
+            root_candidate = np.ones((1,), dtype=np.int32) * -1
+            if len(contact_out.local_orbital_indices) > 0:
+                if contact_out.comm.rank == 0:
+                    root_candidate[0] = comm.block.rank
+
+            root = np.zeros((1,), dtype=np.int32)
+            comm.block.all_reduce(root_candidate, root, op="max", backend="device_mpi")
+            comm.block.bcast(out, root=root[0])
+            transmission[kpoint_ind, global_energy_ind] = out
 
     # def _compute_spillover_error(
     #     self,
@@ -958,19 +1050,10 @@ class QTBM(TransportSolver):
                     phi_cont += kron_matmul(
                         xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
                         value,
-                        comm.block.all_gather_v(phi[local_orbital_indices, :], axis=0),
+                        contact.comm.all_gather_v(
+                            phi[local_orbital_indices, :], axis=0
+                        ),
                     )
-
-            # TODO: This is a bit hacky. Should be done inside the
-            # contact.
-            count = len(local_orbital_indices)
-            counts = np.zeros(comm.block.size, dtype=xp.int64)
-            comm.block.all_gather(
-                np.array(count, dtype=xp.int64),
-                counts,
-                backend="device_mpi",
-            )
-            offsets = np.array([0] + list(np.cumsum(counts)), dtype=xp.int64)
 
             # Add the spill over from the overlap
             phi_ortho[local_orbital_indices, :] += (
@@ -981,7 +1064,12 @@ class QTBM(TransportSolver):
                     )
                 )
                 @ phi_cont
-            )[offsets[comm.block.rank] : offsets[comm.block.rank + 1], :]
+            )[
+                contact.row_offsets[contact.comm.rank] : contact.row_offsets[
+                    contact.comm.rank + 1
+                ],
+                :,
+            ]
 
         # Conjugate of the orthongonalized wavefunction
         xp.conjugate(phi_ortho, out=phi_ortho)
@@ -1055,10 +1143,12 @@ class QTBM(TransportSolver):
         num_injected, __ = self._get_obc_result_info(obc_results, local_energy_ind)
         offsets_injected = np.hstack((0, np.cumsum(num_injected)))
 
-        injection_slices = {
-            contact: slice(offsets_injected[i], offsets_injected[i + 1])
-            for i, contact in enumerate(obc_results.keys())
-        }
+        injection_slices = {}
+
+        for i, contact in enumerate(self.device.contacts):
+            injection_slices[contact] = slice(
+                offsets_injected[i], offsets_injected[i + 1]
+            )
 
         energy_obc_results = {
             contact: obc_result[local_energy_ind]
@@ -1323,21 +1413,24 @@ class QTBM(TransportSolver):
                         with profiler.profile_range(
                             label="QTBM: Boundary conditions", level="default"
                         ):
+                            # NOTE: Currently, need the full system
+                            # matrix to be able to compute the
+                            # self-energy. This is due to when
+                            # boundaries stretch across ranks.
+                            bare_system_matrix = (
+                                self.bare_system_matrix.expand_symmetry()
+                            )
+
                             for contact in self.device.contacts:
-                                obc_results[contact] = contact.compute_boundary(
-                                    self.bare_system_matrix,
+                                obc_result = contact.compute_boundary(
+                                    bare_system_matrix,
                                     list(kpoint * 2 * np.pi),
                                     return_modes_only=self.low_rank_obc,
                                 )
+                                if obc_result is not None:
+                                    obc_results[contact] = obc_result
 
-                        # TODO: Only assemble the local part of the RHS
                         rhs = self._assemble_rhs(obc_results, energy_ind)
-                        rhs = rhs[
-                            self.device.row_offsets[
-                                comm.block.rank
-                            ] : self.device.row_offsets[comm.block.rank + 1],
-                            :,
-                        ]
 
                         if rhs.size == 0:
                             # No modes are injected at this energy, so we

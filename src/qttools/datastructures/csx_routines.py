@@ -2,11 +2,98 @@
 
 """Includes routines for handling CSX matrices."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.comm.comm import _SubCommunicator, pad_buffer
-from qttools.datastructures.csx import CSX, _make_canonical_coo
+
+if TYPE_CHECKING:
+    # Adjust this import path to where CSX is actually defined
+    from qttools.datastructures.csx import CSX
+
+
+def remove_duplicate_entries(
+    row_ind: NDArray,
+    col_ind: NDArray,
+    cols: int,
+):
+    """Removes duplicate entries from the given COO format indices.
+
+    Note
+    ----
+    Also, makes the indices canonical by sorting them in lexicographical
+    order.
+
+    Parameters
+    ----------
+    row_ind : NDArray
+        The row indices of the COO format.
+    col_ind : NDArray
+        The column indices of the COO format.
+    cols : int
+        The number of columns in the matrix.
+
+    Returns
+    -------
+    tuple[NDArray, NDArray]
+        The row and column indices of the COO format with duplicates
+        removed.
+
+    """
+    # NOTE: This could lead to overflow if the matrix is too large.
+    flat_idx = row_ind * cols + col_ind
+
+    # Sort first so the result satisfies the CSX canonical ordering.
+    sort_idx = xp.argsort(flat_idx)
+    sorted_flat_idx = flat_idx[sort_idx]
+    keep = xp.concatenate(
+        (xp.array([True]), sorted_flat_idx[1:] != sorted_flat_idx[:-1])
+    )
+    unique_idx = sort_idx[keep]
+
+    return row_ind[unique_idx], col_ind[unique_idx]
+
+
+def make_canonical_coo(
+    row_ind: NDArray,
+    col_ind: NDArray,
+    cols: int,
+    data: NDArray | None = None,
+) -> tuple[NDArray, NDArray] | tuple[NDArray, NDArray, NDArray]:
+    """Returns the canonical COO format of the given indices and data.
+
+    Parameters
+    ----------
+    row_ind : NDArray
+        The row indices of the COO format.
+    col_ind : NDArray
+        The column indices of the COO format.
+    cols : int
+        The number of columns in the matrix.
+    data : NDArray, optional
+        The data of the COO format. If None, only the indices are
+        returned.
+
+    Returns
+    -------
+    tuple[NDArray, NDArray] | tuple[NDArray, NDArray, NDArray]
+        The canonical COO format of the given indices and data. If
+        `data` is None, only the indices are returned.
+
+    """
+    # Sort the indices and data to get the canonical format
+    flat_idx = row_ind * cols + col_ind
+    sort_idx = xp.argsort(flat_idx)
+    row_ind = row_ind[sort_idx]
+    col_ind = col_ind[sort_idx]
+    if data is None:
+        return row_ind, col_ind
+    data = data[..., sort_idx]
+    return row_ind, col_ind, data
 
 
 def allgather_csx(
@@ -32,6 +119,8 @@ def allgather_csx(
         The allgathered CSX matrix.
 
     """
+    from qttools.datastructures.csx import CSX
+
     # make axis positive
     if axis < 0:
         axis += 2
@@ -111,7 +200,12 @@ def allgather_csx(
     # NOTE: When allgathering along rows, the result should be already
     # canonical.
     if axis == 1:
-        row_ind, col_ind, data = _make_canonical_coo(row_ind, col_ind, data, cols)
+        row_ind, col_ind, data = make_canonical_coo(
+            row_ind=row_ind,
+            col_ind=col_ind,
+            cols=cols,
+            data=data,
+        )
 
     csx = CSX(
         dtype=data.dtype,

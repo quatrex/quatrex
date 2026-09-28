@@ -860,7 +860,7 @@ class QTBM(TransportSolver):
             root = np.zeros((1,), dtype=np.int32)
             comm.block.all_reduce(root_candidate, root, op="max", backend="device_mpi")
             comm.block.bcast(out, root=root[0])
-            transmission[kpoint_ind, global_energy_ind] = out
+            transmission[kpoint_ind, global_energy_ind] = out[0]
 
     # def _compute_spillover_error(
     #     self,

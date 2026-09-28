@@ -40,28 +40,44 @@ def _create_coo_csx(
     size: int,
     local_stack_shape: tuple,
     symmetry: str | None = None,
+    from_indices: bool = False,
 ) -> tuple[sparse.coo_matrix, CSX]:
     """Returns a random complex sparse array
     and a CSX matrix with the same sparsity pattern.
     """
     coo = _create_coo(size, symmetry=symmetry)
+    coo = coo.tocoo()
+    coo.sum_duplicates()
 
-    csx = CSX.from_sparray(
-        sparray=coo,
-        local_stack_shape=local_stack_shape,
-        symmetry=symmetry,
-    )
+    if from_indices:
+        csx = CSX.from_sparray(
+            row_ind=coo.row,
+            col_ind=coo.col,
+            shape=coo.shape,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+            dtype=coo.dtype,
+        )
+    else:
+        csx = CSX.from_sparray(
+            sparray=coo,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+    csx.data = coo.data
     return coo, csx
 
 
 class TestCreation:
     """Tests the creation methods of CSX."""
 
+    @pytest.mark.parametrize("from_indices", [True, False])
     def test_from_sparray(
         self,
         size: int,
         local_stack_shape: tuple,
         symmetry: str | None,
+        from_indices: bool,
     ):
         """Tests the creation of CSX matrices from sparse arrays."""
 
@@ -69,6 +85,7 @@ class TestCreation:
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
+            from_indices=from_indices,
         )
         dense_dcsx = csx._to_dense()
         if symmetry is not None:

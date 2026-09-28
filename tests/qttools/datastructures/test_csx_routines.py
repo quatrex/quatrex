@@ -78,6 +78,7 @@ def _create_coo_csx(
         local_stack_shape=local_stack_shape,
         symmetry=symmetry,
     )
+    csx.data = coo.data
     return coo, csx
 
 

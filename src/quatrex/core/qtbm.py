@@ -9,6 +9,7 @@ import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.datastructures.csx_routines import remove_duplicate_entries
 from qttools.datastructures.dcsx import DCSX
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
@@ -247,32 +248,23 @@ class QTBM(TransportSolver):
         rows = self.device.hamiltonians[0, 0, 0].rows
         cols = self.device.hamiltonians[0, 0, 0].cols
 
-        # Compress the indices from 2d to 1d (1d-unique is faster)
-        indices = row_ind * cols + col_ind
-        indices = xp.unique(indices)
-
-        # Decompress the unique indices back to 2d
-        row_ind = indices // cols
-        col_ind = indices % cols
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
         if self.device.matrices_complex:
             symmetry = "hermitian"
         else:
             symmetry = "symmetric"
 
-        # TODO: Directly pass in row and col indices.
-        sparray = sparse.coo_matrix(
-            (xp.empty_like(row_ind, dtype=xp.bool_), (row_ind, col_ind)),
-            shape=(rows, cols),
-        )
-
         # Allocate system matrix
         if "real" in self.system_matrix_type:
             system_matrix_dtype = xp.float64
         else:
             system_matrix_dtype = xp.complex128
+
         self.bare_system_matrix = DCSX.from_sparray(
-            sparray=sparray,
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=(rows, cols),
             symmetry=symmetry,
             allocate=False,
             dtype=system_matrix_dtype,
@@ -328,19 +320,8 @@ class QTBM(TransportSolver):
         rows = self.device.hamiltonians[0, 0, 0].rows
         cols = self.device.hamiltonians[0, 0, 0].cols
 
-        # Compress the indices from 2d to 1d (1d-unique is faster)
-        indices = row_ind * cols + col_ind
-        indices = xp.unique(indices)
-
-        # Decompress the unique indices back to 2d
-        row_ind = indices // cols
-        col_ind = indices % cols
-
-        # TODO: Directly pass in row and col indices.
-        sparray = sparse.coo_matrix(
-            (xp.empty_like(row_ind, dtype=xp.bool_), (row_ind, col_ind)),
-            shape=(rows, cols),
-        )
+        # Remove duplicate entries
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
         # Allocate system matrix
         if "real" in self.system_matrix_type:
@@ -348,7 +329,9 @@ class QTBM(TransportSolver):
         else:
             system_matrix_dtype = xp.complex128
         self.system_matrix = DCSX.from_sparray(
-            sparray=sparray,
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=(rows, cols),
             allocate=False,
             dtype=system_matrix_dtype,
         )
@@ -864,7 +847,7 @@ class QTBM(TransportSolver):
                             phi_nt,
                         )
 
-                out = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
+                out[:] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
 
             # Discover the root rank for the transmission output. This
             # is necessary because the contact_out may not have any

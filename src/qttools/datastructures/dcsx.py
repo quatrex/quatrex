@@ -237,8 +237,8 @@ class DCSX:
         if self.symmetry is None:
             raise ValueError("Graph analysis is only relevant for symmetric matrices.")
 
-        is_neighbour = xp.zeros((1, comm.block.size), dtype=bool)
-        num_neighbour_indices = xp.zeros((1, comm.block.size), dtype=self.index_type)
+        is_neighbour = np.zeros((1, comm.block.size), dtype=bool)
+        num_neighbour_indices = np.zeros((1, comm.block.size), dtype=self.index_type)
         neighbour_indices = {}
 
         col_ind = self.col_ind
@@ -254,9 +254,15 @@ class DCSX:
                 num_neighbour_indices[0, rank] = len(indices)
                 neighbour_indices[rank] = indices
 
-        self.is_neighbour = comm.block.all_gather_v(is_neighbour, axis=0)
-        self.num_neighbour_indices = comm.block.all_gather_v(
-            num_neighbour_indices, axis=0
+        self.is_neighbour = np.empty(
+            (comm.block.size, comm.block.size), dtype=is_neighbour.dtype
+        )
+        self.num_neighbour_indices = np.empty(
+            (comm.block.size, comm.block.size), dtype=num_neighbour_indices.dtype
+        )
+        comm.block.all_gather(is_neighbour, self.is_neighbour, backend="device_mpi")
+        comm.block.all_gather(
+            num_neighbour_indices, self.num_neighbour_indices, backend="device_mpi"
         )
         # symmetrize the graph
         self.is_neighbour |= self.is_neighbour.T

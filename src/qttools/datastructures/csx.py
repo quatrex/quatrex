@@ -367,7 +367,7 @@ class CSX:
                 raise ValueError("Other must have the same number of rows as self.")
 
             # scale rowwise
-            other = xp.squeeze(other)
+            other = xp.squeeze(other, axis=1)
             self.data *= other[self.row_ind]
 
         else:

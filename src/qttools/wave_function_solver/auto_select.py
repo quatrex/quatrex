@@ -3,7 +3,8 @@
 """Includes method to auto-select the best wave function solver."""
 
 from qttools import xp
-from qttools.comm import comm
+from qttools.comm import comm as quatrex_comm
+from qttools.comm.comm import _SubCommunicator
 from qttools.wave_function_solver.cudss import cuDSS, cudss_available
 from qttools.wave_function_solver.mumps import MUMPS, mumps_available
 from qttools.wave_function_solver.pardiso import PARDISO, pardiso_available
@@ -11,7 +12,12 @@ from qttools.wave_function_solver.solver import WFSolver
 from qttools.wave_function_solver.superlu import SuperLU
 
 
-def auto_select_solver(matrix_type: str, matrix_view: str) -> WFSolver:
+def auto_select_solver(
+    matrix_type: str,
+    matrix_view: str,
+    comm: _SubCommunicator,
+    local_rows: tuple,
+) -> WFSolver:
     """Auto-selects the solver based on the matrix type.
 
     On GPU, cuDSS is the preferred solver if available. If cuDSS is not
@@ -31,6 +37,10 @@ def auto_select_solver(matrix_type: str, matrix_view: str) -> WFSolver:
         The type of the matrix.
     matrix_view : str
         The view of the matrix.
+    comm : _SubCommunicator
+        The communicator for parallel execution.
+    local_rows : tuple
+        The range of local rows for the current process.
 
     Returns
     -------
@@ -40,21 +50,26 @@ def auto_select_solver(matrix_type: str, matrix_view: str) -> WFSolver:
     """
     if xp.__name__ == "cupy":
         if cudss_available:
-            if comm.rank == 0:
+            if quatrex_comm.rank == 0:
                 print("Auto-selecting cuDSS solver.", flush=True)
-            return cuDSS(matrix_type=matrix_type, matrix_view=matrix_view)
+            return cuDSS(
+                matrix_type=matrix_type,
+                matrix_view=matrix_view,
+                comm=comm,
+                local_rows=local_rows,
+            )
 
         if matrix_type in ["real_symmetric_indefinite", "complex_hermitian_indefinite"]:
             raise ValueError(
                 "On GPU, cuDSS is the only general solver that supports symmetric matrices"
             )
 
-        if comm.rank == 0:
+        if quatrex_comm.rank == 0:
             print("Auto-selecting SuperLU solver as fallback.", flush=True)
         return SuperLU(matrix_type=matrix_type, matrix_view=matrix_view)
 
     if pardiso_available:
-        if comm.rank == 0:
+        if quatrex_comm.rank == 0:
             print("Auto-selecting PARDISO solver.", flush=True)
         return PARDISO(matrix_type=matrix_type, matrix_view=matrix_view)
 
@@ -64,10 +79,10 @@ def auto_select_solver(matrix_type: str, matrix_view: str) -> WFSolver:
         )
 
     if mumps_available:
-        if comm.rank == 0:
+        if quatrex_comm.rank == 0:
             print("Auto-selecting MUMPS solver as fallback.", flush=True)
         return MUMPS(matrix_type=matrix_type, matrix_view=matrix_view)
 
-    if comm.rank == 0:
+    if quatrex_comm.rank == 0:
         print("Auto-selecting SuperLU solver as fallback.", flush=True)
     return SuperLU(matrix_type=matrix_type, matrix_view=matrix_view)

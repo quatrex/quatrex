@@ -36,11 +36,13 @@ except ImportError:
 import os
 
 import numpy as np
+from mpi4py import MPI
 
 from qttools import NDArray, sparse
+from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import synchronize_current_stream
+from qttools.utils.gpu_utils import get_array_module_name, synchronize_current_stream
 from qttools.wave_function_solver.solver import WFSolver
 
 profiler = Profiler()
@@ -112,6 +114,13 @@ class cuDSS(WFSolver):
 
         self.analyzed = False
         self.factorized = False
+        self._matrix_handle = None
+        self._solution_handle = None
+        self._rhs_handle = None
+        self._comm = comm
+
+        self._indptr_ptr = None
+        self._indices_ptr = None
 
         # Comm and local_rows must be provided together or not at all.
         if (comm is None) != (local_rows is None):
@@ -166,9 +175,33 @@ class cuDSS(WFSolver):
         if threading_lib is not None:
             cudss.set_threading_layer(self._solver_handle, threading_lib)
 
+    def close(self):
+        """Frees all cuDSS solver handles and internal data structures."""
+        if getattr(self, "_matrix_handle", None) is not None:
+            cudss.matrix_destroy(self._matrix_handle)
+            self._matrix_handle = None
+        if hasattr(self, "_solver_data") and self._solver_data is not None:
+            cudss.data_destroy(self._solver_handle, self._solver_data)
+            self._solver_data = None
+        if hasattr(self, "_solver_config") and self._solver_config is not None:
+            cudss.config_destroy(self._solver_config)
+            self._solver_config = None
+        if hasattr(self, "_solver_handle") and self._solver_handle is not None:
+            cudss.destroy(self._solver_handle)
+            self._solver_handle = None
+        if hasattr(self, "_solution_handle") and self._solution_handle is not None:
+            cudss.matrix_destroy(self._solution_handle)
+            self._solution_handle = None
+        if hasattr(self, "_rhs_handle") and self._rhs_handle is not None:
+            cudss.matrix_destroy(self._rhs_handle)
+            self._rhs_handle = None
+
+    def __del__(self):
+        self.close()
+
     def _create_cudss_csr(self, a: sparse.csr_matrix) -> int:
-        """Creates a cuDSS matrix wrapper for the sparse system matrix a
-        in CSR format.
+        """Creates a new cuDSS CSR descriptor (see _update_cudss_csr
+        for reuse).
 
         Parameters
         ----------
@@ -201,12 +234,17 @@ class cuDSS(WFSolver):
         # the rows.
         nrows = ncols = a.shape[1]
 
+        nnz = a.nnz
+        # TODO: Official documentation says nnz should be global.
+        # if self._comm is not None:
+        #     nnz = self._comm._mpi_comm.allreduce(nnz)
+
         csr_handle = cudss.matrix_create_csr(
             nrows=nrows,
             ncols=ncols,
-            nnz=a.nnz,
-            row_start=a.indptr.data.ptr,  # Beginning of row offset array
-            row_end=0,  # Not used in standard CSR
+            nnz=nnz,
+            row_start=a.indptr.data.ptr,
+            row_end=0,
             col_indices=a.indices.data.ptr,
             values=a.data.data.ptr,
             offset_type=nvmath.CudaDataType.CUDA_R_32I,
@@ -221,6 +259,23 @@ class cuDSS(WFSolver):
             cudss.matrix_set_distribution_row1d(csr_handle, *self.local_rows)
 
         return csr_handle
+
+    def _update_cudss_csr(self, a: sparse.csr_matrix):
+        """Updates the cuDSS CSR descriptor with the new matrix data.
+
+        Parameters
+        ----------
+        a : sparse.csr_matrix
+            The sparse system matrix in CSR format.
+
+        """
+        cudss.matrix_set_csr_pointers(
+            self._matrix_handle,
+            a.indptr.data.ptr,
+            0,
+            a.indices.data.ptr,
+            a.data.data.ptr,
+        )
 
     def _create_cudss_array(self, arr: NDArray, nrows_global: int) -> int:
         """Create a cuDSS wrapper for a dense array.
@@ -295,7 +350,7 @@ class cuDSS(WFSolver):
         )
         synchronize_current_stream()
 
-    @profiler.profile("cuDSS: analysis", level="default")
+    @profiler.profile("cuDSS: analysis", level="default", comm=quatrex_comm.block)
     def _analyze(self, matrix: int, solution: int, rhs: int):
         """Performs symbolic factorization of the system.
 
@@ -311,7 +366,7 @@ class cuDSS(WFSolver):
         """
         self._execute_phase(cudss.Phase.ANALYSIS, matrix, solution, rhs)
 
-    @profiler.profile("cuDSS: factorization", level="default")
+    @profiler.profile("cuDSS: factorization", level="default", comm=quatrex_comm.block)
     def _factorize(self, matrix: int, solution: int, rhs: int):
         """Performs numeric factorization of the system.
 
@@ -342,7 +397,7 @@ class cuDSS(WFSolver):
         """
         self._execute_phase(cudss.Phase.SOLVE, matrix, solution, rhs)
 
-    @profiler.profile("cuDSS solve", level="default")
+    @profiler.profile("cuDSS solve", level="default", comm=quatrex_comm.block)
     def solve(
         self,
         a: sparse.csr_matrix,
@@ -396,25 +451,93 @@ class cuDSS(WFSolver):
                 "Expected 1 or 2 dimensions."
             )
 
+        if get_array_module_name(b) != "cupy":
+            raise ValueError(
+                "Right-hand side b must be a CuPy array on the GPU. "
+                "Please transfer it to the GPU before calling this method."
+            )
+        if get_array_module_name(a) != "cupyx":
+            raise ValueError(
+                "System matrix a must be a CuPy sparse CSR matrix on the GPU. "
+                "Please transfer it to the GPU before calling this method."
+            )
+
+        # b needs to be fortran contiguous for cuDSS
+        b = cp.asfortranarray(b)
+
         x = cp.zeros_like(b)
+        x = cp.asfortranarray(x)
 
         # Set up the linear system.
-        matrix = self._create_cudss_csr(a)
-        solution = self._create_cudss_array(x, nrows_global=a.shape[1])
-        rhs = self._create_cudss_array(b, nrows_global=a.shape[1])
+        # Dense descriptors are cheap and their column count changes, so
+        # they are recreated on every call.
+        if reuse_analysis:
+            # It seems for reuse of analysis only indices need to stay
+            # at the same memory location. The data can be updated.
+            if self._indptr_ptr is None:
+                self._indptr_ptr = a.indptr.data.ptr
+            elif self._indptr_ptr != a.indptr.data.ptr:
+                raise ValueError(
+                    "Cannot reuse analysis with a different matrix row pointer. "
+                    "Please ensure that the matrix row pointer has not changed since the last analysis."
+                )
+            if self._indices_ptr is None:
+                self._indices_ptr = a.indices.data.ptr
+            elif self._indices_ptr != a.indices.data.ptr:
+                raise ValueError(
+                    "Cannot reuse analysis with a different matrix column indices pointer. "
+                    "Please ensure that the matrix column indices have not changed since the last analysis."
+                )
 
-        if not self.analyzed or not reuse_analysis:
-            self._analyze(matrix, solution, rhs)
+        # NOTE: Check if we need to redo analysis if the number
+        # of right-hand sides has changed.
+        local_redo = (
+            not reuse_analysis or not self.analyzed or self._matrix_handle is None
+        )
+        if self._comm is not None:
+            redo_analysis = bool(
+                self._comm._mpi_comm.allreduce(int(local_redo), op=MPI.MAX)
+            )
+
+            # Print a warning when local and global disagree
+            if redo_analysis != local_redo:
+                print(
+                    f"Warning: local redo_analysis ({local_redo}) "
+                    f"does not match global redo_analysis ({redo_analysis}).\n"
+                    "This may indicate a mismatch in the local row distribution\n"
+                    "or a change in the number of right-hand sides across processes.\n",
+                    "On process: ",
+                    quatrex_comm.rank,
+                    flush=True,
+                )
+
+        else:
+            redo_analysis = local_redo
+
+        self._solution_handle = self._create_cudss_array(x, nrows_global=a.shape[1])
+        self._rhs_handle = self._create_cudss_array(b, nrows_global=a.shape[1])
+
+        if redo_analysis:
+            for h in [self._matrix_handle]:
+                if h is not None:
+                    cudss.matrix_destroy(h)
+            self._matrix_handle = self._create_cudss_csr(a)
+            self._analyze(self._matrix_handle, self._solution_handle, self._rhs_handle)
             self.analyzed = True
+            self.factorized = False
+        else:
+            # NOTE: Unsure here since it seems we need to keep the
+            # pointers to the row and column indices the same for cuDSS
+            # to reuse the analysis. Seems the update does not do what
+            # we would expect.
+            self._update_cudss_csr(a)
 
-        if not self.factorized or not reuse_factorization:
-            self._factorize(matrix, solution, rhs)
+        if redo_analysis or not self.factorized or not reuse_factorization:
+            self._factorize(
+                self._matrix_handle, self._solution_handle, self._rhs_handle
+            )
             self.factorized = True
 
-        self._solve(matrix, solution, rhs)
-
-        # Free GPU memory used for cuDSS linear system.
-        for handle in [matrix, rhs, solution]:
-            cudss.matrix_destroy(handle)
+        self._solve(self._matrix_handle, self._solution_handle, self._rhs_handle)
 
         return x.reshape(b_shape)

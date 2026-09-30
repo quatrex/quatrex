@@ -10,7 +10,7 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures.csx_routines import make_canonical_coo
 from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.kernels import inplace
-from qttools.utils.gpu_utils import free_mempool
+from qttools.utils.gpu_utils import free_mempool, get_pointer
 
 
 class CSX:
@@ -76,9 +76,9 @@ class CSX:
 
         # NOTE: We currently do not populate the `row_ptr` array. This
         # is because we do not use it in any of the operations.
-        self.row_ptr = row_ptr
-        self.row_ind = row_ind
-        self.col_ind = col_ind
+        self._row_ptr = row_ptr
+        self._row_ind = row_ind
+        self._col_ind = col_ind
         self._data = None
 
         self.nnz = len(self.col_ind)
@@ -88,6 +88,10 @@ class CSX:
         # Addition cache. Used to cache to avoid repeated finding of the
         # indices for the addition operation.
         self._add_cache: dict[int, NDArray] = {}
+
+    # NOTE: We do not want to allow to overwrite the pointers to the
+    # data arrays. This is because we want to manage the memory
+    # ourselves.
 
     @property
     def data(self) -> NDArray:
@@ -100,8 +104,51 @@ class CSX:
     def data(self, value: NDArray) -> None:
         """Sets the local data."""
         if self._data is None:
+            # NOTE: This we explicitly manage ourself.
             raise ValueError("Data has not been allocated yet.")
         self._data[...] = value
+
+    @property
+    def row_ptr(self) -> NDArray:
+        """Returns the local row pointer array."""
+        if self._row_ptr is None:
+            raise ValueError("Row pointer has not been allocated yet.")
+        return self._row_ptr
+
+    @row_ptr.setter
+    def row_ptr(self, value: NDArray) -> None:
+        """Sets the local row pointer array."""
+        if self._row_ptr is None:
+            self._row_ptr = xp.empty(self.rows + 1, dtype=self.index_type)
+        self._row_ptr[...] = value
+
+    @property
+    def row_ind(self) -> NDArray:
+        """Returns the local row indices array."""
+        if self._row_ind is None:
+            raise ValueError("Row indices have not been allocated yet.")
+        return self._row_ind
+
+    @row_ind.setter
+    def row_ind(self, value: NDArray) -> None:
+        """Sets the local row indices array."""
+        if self._row_ind is None:
+            self._row_ind = xp.empty(self.nnz, dtype=self.index_type)
+        self._row_ind[...] = value
+
+    @property
+    def col_ind(self) -> NDArray:
+        """Returns the local column indices array."""
+        if self._col_ind is None:
+            raise ValueError("Column indices have not been allocated yet.")
+        return self._col_ind
+
+    @col_ind.setter
+    def col_ind(self, value: NDArray) -> None:
+        """Sets the local column indices array."""
+        if self._col_ind is None:
+            self._col_ind = xp.empty(self.nnz, dtype=self.index_type)
+        self._col_ind[...] = value
 
     def allocate_data(self) -> None:
         """Allocates the local data array."""
@@ -193,9 +240,94 @@ class CSX:
         if self.local_stack_shape != ():
             raise ValueError("Cannot convert a stacked CSX to COO.")
 
-        return sparse.coo_matrix(
-            (self.data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
+        out = sparse.coo_matrix(
+            (self.data, (self.row_ind, self.col_ind)),
+            shape=(self.rows, self.cols),
+            copy=False,
         )
+        # TODO: Make these tests work.
+        # # Check that pointers are the same.
+        # if get_pointer(out.row) != get_pointer(self.row_ind):
+        #     raise ValueError(
+        #         "The row indices of the COO matrix "
+        #         "do not match the row indices of the CSX matrix."
+        #     )
+        # if get_pointer(out.col) != get_pointer(self.col_ind):
+        #     raise ValueError(
+        #         "The column indices of the COO matrix "
+        #         "do not match the column indices of the CSX matrix."
+        #     )
+        # if get_pointer(out.data) != get_pointer(self.data):
+        #     raise ValueError(
+        #         "The data of the COO matrix "
+        #         "does not match the data of the CSX matrix."
+        #     )
+
+        return out
+
+    def tocsr(self) -> sparse.csr_matrix:
+        """Returns the local matrix in CSR format.
+
+        Note
+        ----
+        This is made to match the `scipy.sparse` API. It does not
+        perform any communication.
+
+        Note
+        ----
+        Only possible with a non-stacked CSX. Could be amended by
+        returning a list of COO matrices.
+
+        Returns
+        -------
+        sparse.csr_matrix
+            The local matrix in CSR format.
+
+        """
+        if self.local_stack_shape != ():
+            raise ValueError("Cannot convert a stacked CSX to CSR.")
+
+        if self._row_ptr is None:
+            # TODO: Not the most efficient way to get the _row_ptr.
+            # TODO: If the resulting type here is different from the index type
+            # we should warn.
+            self._row_ptr = (
+                sparse.coo_matrix(
+                    (
+                        xp.ones_like(self.row_ind, dtype=xp.bool_),
+                        (self.row_ind, self.col_ind),
+                    ),
+                    shape=(self.rows, self.cols),
+                    copy=False,
+                )
+                .tocsr()
+                .indptr.astype(self.index_type)
+            )
+
+        out = sparse.csr_matrix(
+            (self.data, self.col_ind, self.row_ptr),
+            shape=(self.rows, self.cols),
+            copy=False,
+        )
+
+        # Check that pointers are the same. This is needed for the solvers.
+        if get_pointer(out.indptr) != get_pointer(self.row_ptr):
+            raise ValueError(
+                "The row pointer of the CSR matrix "
+                "does not match the row pointer of the CSX matrix."
+            )
+        if get_pointer(out.indices) != get_pointer(self.col_ind):
+            raise ValueError(
+                "The column indices of the CSR matrix "
+                "do not match the column indices of the CSX matrix."
+            )
+        if get_pointer(out.data) != get_pointer(self.data):
+            raise ValueError(
+                "The data of the CSR matrix "
+                "does not match the data of the CSX matrix."
+            )
+
+        return out
 
     def expand_symmetry(
         self,
@@ -411,9 +543,9 @@ class CSX:
         if other.ndim == 2 and other.shape[0] != self.cols:
             raise ValueError("Other must have the same number of columns as self.")
 
-        if self.row_ptr is None:
-            # TODO: Not the most efficient way to get the row_ptr.
-            self.row_ptr = (
+        if self._row_ptr is None:
+            # TODO: Not the most efficient way to get the _row_ptr.
+            self._row_ptr = (
                 sparse.coo_matrix(
                     (
                         xp.ones_like(self.row_ind, dtype=xp.bool_),
@@ -423,7 +555,7 @@ class CSX:
                     copy=False,
                 )
                 .tocsr()
-                .indptr
+                .indptr.astype(self.index_type)
             )
 
         out = xp.empty(

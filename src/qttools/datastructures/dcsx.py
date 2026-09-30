@@ -62,6 +62,7 @@ class DCSX:
         "_get_update_indices",
         "multiply_",
         "tocoo",
+        "tocsr",
     ]
 
     def __init__(

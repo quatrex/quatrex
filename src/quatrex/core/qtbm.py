@@ -171,6 +171,7 @@ class QTBM(TransportSolver):
             self.config.electron.solver,
             matrix_type=self.system_matrix_type,
             matrix_view=self.system_matrix_view,
+            row_offsets=self.device.row_offsets,
         )
 
         # TODO Preferred_matrix_type is not used at the moment
@@ -188,6 +189,7 @@ class QTBM(TransportSolver):
         solver_config: SolverConfig,
         matrix_type: str,
         matrix_view: str,
+        row_offsets: NDArray,
     ) -> WFSolver:
         """Configures the wavefunction solver based on the config.
 
@@ -199,8 +201,11 @@ class QTBM(TransportSolver):
             The type of the system matrix, describing properties like
             symmetry and definiteness.
         matrix_view : str
-            The view of the system matrix sparsity, indicating which part
-            of the matrix to use for symmetric matrices.
+            The view of the system matrix sparsity, indicating which
+            part of the matrix to use for symmetric matrices.
+        row_offsets : NDArray
+            The row offsets partitioning the system matrix across MPI
+            ranks.
 
         Returns
         -------
@@ -208,18 +213,29 @@ class QTBM(TransportSolver):
             The configured wavefunction solver instance.
 
         """
+        local_rows = (row_offsets[comm.block.rank], row_offsets[comm.block.rank + 1])
         if solver_config.direct_solver == "mumps":
             return MUMPS(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "superlu":
             return SuperLU(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "cudss":
-            return cuDSS(matrix_type=matrix_type, matrix_view=matrix_view)
+            return cuDSS(
+                matrix_type=matrix_type,
+                matrix_view=matrix_view,
+                comm=comm.block,
+                local_rows=local_rows,
+            )
         if solver_config.direct_solver == "pardiso":
             return PARDISO(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "thomas":
             return Thomas(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "auto":
-            return auto_select_solver(matrix_type=matrix_type, matrix_view=matrix_view)
+            return auto_select_solver(
+                matrix_type=matrix_type,
+                matrix_view=matrix_view,
+                comm=comm.block,
+                local_rows=local_rows,
+            )
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -328,9 +344,12 @@ class QTBM(TransportSolver):
             system_matrix_dtype = xp.float64
         else:
             system_matrix_dtype = xp.complex128
+
+        # TODO: Force int32 for resuing factorization.
+        # We should call scipy to get the right type.
         self.system_matrix = DCSX.from_sparray(
-            row_ind=row_ind,
-            col_ind=col_ind,
+            row_ind=row_ind.astype(xp.int32),
+            col_ind=col_ind.astype(xp.int32),
             shape=(rows, cols),
             allocate=False,
             dtype=system_matrix_dtype,
@@ -697,7 +716,9 @@ class QTBM(TransportSolver):
 
         return sparse.csr_matrix((data, (rows, cols)), shape=shape, dtype=xp.complex128)
 
-    @profiler.profile("QTBM: Recover full-rank wavefunction", level="default")
+    @profiler.profile(
+        "QTBM: Recover full-rank wavefunction", level="default", comm=comm.block
+    )
     def _recover_full_rank_wavefunction(
         self,
         phi: NDArray,
@@ -1087,7 +1108,7 @@ class QTBM(TransportSolver):
 
         self.bare_system_matrix.free_data()
 
-    @profiler.profile("QTBM: Compute observables", level="default")
+    @profiler.profile("QTBM: Compute observables", level="default", comm=comm.block)
     def _compute_observables(
         self,
         phi: NDArray,
@@ -1418,6 +1439,9 @@ class QTBM(TransportSolver):
                         if rhs.size == 0:
                             # No modes are injected at this energy, so we
                             # can skip the calculation.
+                            # NOTE: We should not syncronize after this
+                            # point through the stack comm as not all
+                            # ranks continue here.
                             continue
 
                         if not self.low_rank_obc:
@@ -1446,36 +1470,12 @@ class QTBM(TransportSolver):
                         )
 
                         # Solve for the wavefunction
-                        # NOTE: Initially just allgather for testing.
-                        data = comm.block.all_gather_v(system_matrix.data, axis=0)
-                        col_indices = comm.block.all_gather_v(
-                            system_matrix.col_ind, axis=0
-                        )
-                        row_indices = comm.block.all_gather_v(
-                            system_matrix.row_ind
-                            + self.device.row_offsets[comm.block.rank],
-                            axis=0,
-                        )
-                        system_matrix = sparse.coo_matrix(
-                            (data, (row_indices, col_indices)),
-                            shape=(system_matrix.shape[-1], system_matrix.shape[-1]),
-                        )
-                        system_matrix = system_matrix.tocsr()
-
-                        rhs = comm.block.all_gather_v(rhs, axis=0)
-
                         phi = self.solver.solve(
-                            system_matrix,
+                            system_matrix.tocsr(),
                             rhs,
                             reuse_analysis=True,
                             reuse_factorization=False,
                         )
-                        phi = phi[
-                            self.device.row_offsets[
-                                comm.block.rank
-                            ] : self.device.row_offsets[comm.block.rank + 1],
-                            :,
-                        ]
 
                         if self.low_rank_obc:
                             phi = self._recover_full_rank_wavefunction(

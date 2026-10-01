@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.sparse import get_index_dtype
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -253,13 +254,13 @@ class QTBM(TransportSolver):
                 row_ind.append(mat.row_ind)
                 col_ind.append(mat.col_ind)
 
-        # TODO: Check if we need to default to int64 i.e. estimate from
-        # the nnz. This can be an ugly bug if the nnz of the system
-        # matrix is larger than 2^31-1 while the individual matrices are
-        # smaller than 2^31-1. This can happen for large systems with
-        # many contacts.
-        row_ind = xp.concatenate(row_ind, axis=-1)
-        col_ind = xp.concatenate(col_ind, axis=-1)
+        nnz = np.sum([len(ind) for ind in row_ind])
+        index_type = get_index_dtype(maxval=nnz)
+        row_ind = [ind.astype(index_type) for ind in row_ind]
+        col_ind = [ind.astype(index_type) for ind in col_ind]
+
+        row_ind = xp.concatenate(row_ind, axis=-1, dtype=index_type)
+        col_ind = xp.concatenate(col_ind, axis=-1, dtype=index_type)
 
         rows = self.device.hamiltonians[0, 0, 0].rows
         cols = self.device.hamiltonians[0, 0, 0].cols
@@ -277,9 +278,11 @@ class QTBM(TransportSolver):
         else:
             system_matrix_dtype = xp.complex128
 
+        index_type = get_index_dtype(maxval=len(row_ind))
+
         self.bare_system_matrix = DCSX.from_sparray(
-            row_ind=row_ind,
-            col_ind=col_ind,
+            row_ind=row_ind.astype(index_type),
+            col_ind=col_ind.astype(index_type),
             shape=(rows, cols),
             symmetry=symmetry,
             allocate=False,
@@ -325,13 +328,13 @@ class QTBM(TransportSolver):
             )
             col_ind.append(contact_cols[contact.name])
 
-        # TODO: Check if we need to default to int64 i.e. estimate from
-        # the nnz. This can be an ugly bug if the nnz of the system
-        # matrix is larger than 2^31-1 while the individual matrices are
-        # smaller than 2^31-1. This can happen for large systems with
-        # many contacts.
-        row_ind = xp.concatenate(row_ind, axis=-1)
-        col_ind = xp.concatenate(col_ind, axis=-1)
+        nnz = np.sum([len(ind) for ind in row_ind])
+        index_type = get_index_dtype(maxval=nnz)
+        row_ind = [ind.astype(index_type) for ind in row_ind]
+        col_ind = [ind.astype(index_type) for ind in col_ind]
+
+        row_ind = xp.concatenate(row_ind, axis=-1, dtype=index_type)
+        col_ind = xp.concatenate(col_ind, axis=-1, dtype=index_type)
 
         rows = self.device.hamiltonians[0, 0, 0].rows
         cols = self.device.hamiltonians[0, 0, 0].cols
@@ -345,11 +348,11 @@ class QTBM(TransportSolver):
         else:
             system_matrix_dtype = xp.complex128
 
-        # TODO: Force int32 for resuing factorization.
-        # We should call scipy to get the right type.
+        index_type = get_index_dtype(maxval=len(row_ind))
+
         self.system_matrix = DCSX.from_sparray(
-            row_ind=row_ind.astype(xp.int32),
-            col_ind=col_ind.astype(xp.int32),
+            row_ind=row_ind.astype(index_type),
+            col_ind=col_ind.astype(index_type),
             shape=(rows, cols),
             allocate=False,
             dtype=system_matrix_dtype,

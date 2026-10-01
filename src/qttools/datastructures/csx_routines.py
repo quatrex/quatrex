@@ -44,18 +44,17 @@ def remove_duplicate_entries(
         removed.
 
     """
-    # NOTE: This could lead to overflow if the matrix is too large.
-    flat_idx = row_ind * cols + col_ind
+    sort_idx = xp.lexsort(xp.stack((col_ind, row_ind)))
 
-    # Sort first so the result satisfies the CSX canonical ordering.
-    sort_idx = xp.argsort(flat_idx)
-    sorted_flat_idx = flat_idx[sort_idx]
-    keep = xp.concatenate(
-        (xp.array([True]), sorted_flat_idx[1:] != sorted_flat_idx[:-1])
+    sorted_rows = row_ind[sort_idx]
+    sorted_cols = col_ind[sort_idx]
+
+    is_diff = (sorted_rows[1:] != sorted_rows[:-1]) | (
+        sorted_cols[1:] != sorted_cols[:-1]
     )
-    unique_idx = sort_idx[keep]
+    keep = xp.concatenate((xp.array([True], dtype=bool), is_diff))
 
-    return row_ind[unique_idx], col_ind[unique_idx]
+    return sorted_rows[keep], sorted_cols[keep]
 
 
 def make_canonical_coo(
@@ -86,8 +85,8 @@ def make_canonical_coo(
 
     """
     # Sort the indices and data to get the canonical format
-    flat_idx = row_ind * cols + col_ind
-    sort_idx = xp.argsort(flat_idx)
+    sort_idx = xp.lexsort(xp.stack((col_ind, row_ind)))
+
     row_ind = row_ind[sort_idx]
     col_ind = col_ind[sort_idx]
     if data is None:

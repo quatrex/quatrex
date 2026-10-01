@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.sparse import get_index_dtype
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.csx_routines import make_canonical_coo
@@ -340,8 +341,13 @@ class CSX:
         new_col_ind = [self.col_ind] + [self.row_ind[indices]]
         new_data = [self.data] + [symmetry_ops[self.symmetry](self.data[..., indices])]
 
-        new_row_ind = xp.concatenate(new_row_ind, axis=-1)
-        new_col_ind = xp.concatenate(new_col_ind, axis=-1)
+        nnz = np.sum([len(ind) for ind in new_row_ind])
+        index_type = get_index_dtype(maxval=nnz)
+        new_row_ind = [ind.astype(index_type) for ind in new_row_ind]
+        new_col_ind = [ind.astype(index_type) for ind in new_col_ind]
+
+        new_row_ind = xp.concatenate(new_row_ind, axis=-1, dtype=index_type)
+        new_col_ind = xp.concatenate(new_col_ind, axis=-1, dtype=index_type)
         new_data = xp.concatenate(new_data, axis=-1)
 
         new_row_ind, new_col_ind, new_data = make_canonical_coo(
@@ -386,11 +392,16 @@ class CSX:
             `other`.
 
         """
-        # flatten row cols into a sortable integer key
-        other_keys = row_ind * self.cols + col_ind
-        self_keys = self.row_ind * self.cols + self.col_ind
+        r_self = self.row_ind.astype(xp.int64)
+        c_self = self.col_ind.astype(xp.int64)
 
-        update_indices = xp.searchsorted(self_keys, other_keys)
+        r_other = row_ind.astype(xp.int64)
+        c_other = col_ind.astype(xp.int64)
+
+        self_keys = (r_self << 32) | (c_self & 0xFFFFFFFF)
+        other_keys = (r_other << 32) | (c_other & 0xFFFFFFFF)
+
+        update_indices = xp.searchsorted(self_keys, other_keys).astype(self.index_type)
 
         if not xp.array_equal(self_keys[update_indices], other_keys):
             raise AssertionError("`other` has entries not present in `self`.")
@@ -693,9 +704,18 @@ class CSX:
             )
             tile_data_t = symmetry_ops[self.symmetry](tile_data_t)
 
+            nnz = len(tile_row) + len(tile_row_t)
+            index_type = get_index_dtype(maxval=nnz)
+
             tile_data = xp.concatenate([tile_data, tile_data_t], axis=-1)
-            tile_row = xp.concatenate([tile_row, tile_row_t])
-            tile_col = xp.concatenate([tile_col, tile_col_t])
+            tile_row = xp.concatenate(
+                [tile_row.astype(index_type), tile_row_t.astype(index_type)],
+                dtype=index_type,
+            )
+            tile_col = xp.concatenate(
+                [tile_col.astype(index_type), tile_col_t.astype(index_type)],
+                dtype=index_type,
+            )
 
             tile_row, tile_col, tile_data = make_canonical_coo(
                 row_ind=tile_row,

@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.sparse import get_index_dtype
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.csx import CSX
+from qttools.datastructures.csx_routines import make_canonical_coo
 from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.utils.gpu_utils import get_host
 
@@ -361,16 +363,22 @@ class DCSX:
                 symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
             )
 
-        new_row_ind = xp.concatenate(new_row_ind, axis=-1)
-        new_col_ind = xp.concatenate(new_col_ind, axis=-1)
+        nnz = np.sum([len(ind) for ind in new_row_ind])
+        index_type = get_index_dtype(maxval=nnz)
+        new_row_ind = [ind.astype(index_type) for ind in new_row_ind]
+        new_col_ind = [ind.astype(index_type) for ind in new_col_ind]
+
+        new_row_ind = xp.concatenate(new_row_ind, axis=-1, dtype=index_type)
+        new_col_ind = xp.concatenate(new_col_ind, axis=-1, dtype=index_type)
         new_data = xp.concatenate(new_data, axis=-1)
 
         # Sort the indices and data to get the canonical format
-        flat_idx = new_row_ind * self.cols + new_col_ind
-        sort_idx = xp.argsort(flat_idx)
-        new_row_ind = new_row_ind[sort_idx]
-        new_col_ind = new_col_ind[sort_idx]
-        new_data = new_data[..., sort_idx]
+        new_row_ind, new_col_ind, new_data = make_canonical_coo(
+            row_ind=new_row_ind,
+            col_ind=new_col_ind,
+            cols=self.cols,
+            data=new_data,
+        )
 
         _csx = CSX(
             dtype=self.dtype,

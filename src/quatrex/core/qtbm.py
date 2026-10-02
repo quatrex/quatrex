@@ -54,16 +54,21 @@ class Observables:
     excess_hole_density : NDArray, optional
         Orbital-resolved excess hole density.
 
+    bond_currents : NDArray, optional
+        Bond current values for each bond (couple of orbitals) in the device, if full current calculation is enabled.
     """
 
     electron_ldos: dict[QTBMContact, NDArray] = field(default_factory=dict)
     transmissions: dict[tuple[QTBMContact, QTBMContact], NDArray] = field(
         default_factory=dict
     )
-
     contact_currents: dict[tuple[QTBMContact, QTBMContact], NDArray] | None = None
     excess_electron_density: NDArray | None = None
     excess_hole_density: NDArray | None = None
+
+    bond_currents: xp.ndarray = field(
+        default_factory=lambda: xp.zeros(0, dtype=xp.float64)
+    )
 
 
 class QTBM(TransportSolver):
@@ -115,9 +120,13 @@ class QTBM(TransportSolver):
 
         # Get the electron energies.
         self.electron_energies = get_electron_energies(config)
+        self.dEp = xp.diff(self.electron_energies, append=self.electron_energies[-1])
+        self.dEn = xp.diff(self.electron_energies, prepend=self.electron_energies[0])
 
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
+        self.local_dEp = get_local_slice(self.dEp)
+        self.local_dEn = get_local_slice(self.dEn)
 
         # Look for all the combinations of contacts
         for contact_in in self.device.contacts:
@@ -177,6 +186,13 @@ class QTBM(TransportSolver):
         ]
 
         self._allocate_system_matrix()
+
+        if self.config.qtbm.full_current:
+            self.observables.bond_currents = xp.zeros(
+                (self.system_matrix.nnz,),
+                dtype=xp.float64,
+            )
+
         free_mempool()
 
     @staticmethod
@@ -821,6 +837,49 @@ class QTBM(TransportSolver):
                 -2 * xp.imag(phi_nt.T.conj() @ S_P)
             )
 
+    def _update_bond_currents(
+        self,
+        phi: NDArray,
+        injection_slices: dict,
+        global_energy_ind: int,
+    ):
+        """Updates the bond currents observable.
+
+        Parameters
+        ----------
+        phi : NDArray
+            Wavefunction solution matrix. Each column represents a
+            wavefunction for a specific injection mode.
+        injection_slices : dict
+            Dictionary of slices for each contact where each slice
+            corresponds to the contact's injection modes.
+        global_energy_ind : int
+            Energy index in the global energy array for storing results.
+        """
+        for contact in self.device.contacts:
+
+            alpha = (
+                2
+                * (
+                    self.local_dEp[global_energy_ind]
+                    + self.local_dEn[global_energy_ind]
+                )
+                * (e / h)
+                / self.device.num_kpoints
+                * fermi_dirac(
+                    self.local_energies[global_energy_ind] - contact.fermi_level,
+                    contact.temperature,
+                )
+            ).item()
+
+            input_phi = phi[:, injection_slices[contact]]
+            inplace.add_bond_resolved_current(
+                self.observables.bond_currents,
+                self.system_matrix,
+                input_phi,
+                alpha,
+            )
+
     def _compute_ldos(
         self,
         phi: NDArray,
@@ -1102,6 +1161,14 @@ class QTBM(TransportSolver):
             kpoint_ind,
         )
 
+        if self.config.qtbm.full_current:
+            # Compute the bond currents
+            self._update_bond_currents(
+                phi,
+                injection_slices,
+                global_energy_ind,
+            )
+
     def _compute_current(self):
         """Computes the electron current from the transmission data."""
 
@@ -1196,6 +1263,20 @@ class QTBM(TransportSolver):
                         )
                         if self.config.qtbm.atom_resolved_outputs
                         else self.observables.excess_hole_density
+                    ),
+                )
+            if self.config.qtbm.full_current:
+                bond_currents_matrix = self.system_matrix.tocoo()
+                bond_currents_matrix.data[:] = self.observables.bond_currents
+
+                from scipy import sparse as sps
+
+                sps.save_npz(
+                    f"{output_dir}/orbital_current_matrix.npz",
+                    (
+                        bond_currents_matrix.get()
+                        if hasattr(bond_currents_matrix, "get")
+                        else bond_currents_matrix
                     ),
                 )
 
@@ -1404,6 +1485,13 @@ class QTBM(TransportSolver):
             self.observables.electron_ldos[contact] = comm.stack.all_gather_v(
                 ldos, axis=2
             )
+
+        if self.config.qtbm.full_current:
+            # Reduce the bond currents across all processes to get the total bond currents
+            # all_reduce_v is not present, so we need a temporary array
+            temp = xp.empty_like(self.observables.bond_currents)
+            comm.stack.all_reduce(self.observables.bond_currents, temp)
+            self.observables.bond_currents = temp
 
         self.observables.contact_currents = self._compute_current()
         (

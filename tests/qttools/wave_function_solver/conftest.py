@@ -132,9 +132,9 @@ SOLVER_SPECS = [
                     "pc_factor_mat_solver_type": "superlu_dist",
                 }
             },
-            supports_reuse_analysis=True,
-            supports_reuse_factorization=True,
-            factorization_needs_analysis=True,
+            supports_reuse_analysis=False,
+            supports_reuse_factorization=False,
+            factorization_needs_analysis=False,
             # NOTE: Not the most comprehensive test for PETSc, since it
             # can handle real *or* complex matrices, just not both
             # within the same build. Assuming here that the scalar type

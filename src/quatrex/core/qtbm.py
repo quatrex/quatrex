@@ -843,35 +843,33 @@ class QTBM(TransportSolver):
                 phi_nt = contact_out.comm.all_gather_v(phi_nt, axis=0)
 
                 # Compute the transmission
-                if phi_nt.size == 0:
-                    continue
-
-                obc_result = obc_results[contact_out]
-                if self.low_rank_obc:
-                    S_P = obc_result.reflection @ (
-                        xp.diag(1 / obc_result.eig_reflected)
-                        @ (obc_result.phi_inv_reflected @ phi_nt)
-                    )
-
-                else:
-                    S_P = xp.zeros_like(phi_nt)
-                    # This upscales the self-energy if the contact
-                    # has periodicity in the transverse directions
-                    ny, nz = contact_out.transverse_repetition_grid
-                    indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
-                    indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
-
-                    indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
-                    indices_z = xp.tile(indices_z, (ny, ny))
-
-                    for (ky, kz), sigma in obc_result.sigma_obc_k.items():
-                        S_P += kron_matmul(
-                            xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
-                            sigma,
-                            phi_nt,
+                if phi_nt.size != 0:
+                    obc_result = obc_results[contact_out]
+                    if self.low_rank_obc:
+                        S_P = obc_result.reflection @ (
+                            xp.diag(1 / obc_result.eig_reflected)
+                            @ (obc_result.phi_inv_reflected @ phi_nt)
                         )
 
-                out[:] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
+                    else:
+                        S_P = xp.zeros_like(phi_nt)
+                        # This upscales the self-energy if the contact
+                        # has periodicity in the transverse directions
+                        ny, nz = contact_out.transverse_repetition_grid
+                        indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
+                        indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+
+                        indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
+                        indices_z = xp.tile(indices_z, (ny, ny))
+
+                        for (ky, kz), sigma in obc_result.sigma_obc_k.items():
+                            S_P += kron_matmul(
+                                xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
+                                sigma,
+                                phi_nt,
+                            )
+
+                    out[:] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
 
             # Discover the root rank for the transmission output. This
             # is necessary because the contact_out may not have any
@@ -1057,9 +1055,7 @@ class QTBM(TransportSolver):
                     phi_cont += kron_matmul(
                         xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
                         value,
-                        contact.comm.all_gather_v(
-                            phi[local_orbital_indices, :], axis=0
-                        ),
+                        phi[orbital_indices, :],
                     )
 
             # Add the spill over from the overlap

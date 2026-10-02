@@ -6356,6 +6356,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#qttools.wave_function_solver.PETSc" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;PETSc
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PETSc">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#qttools.wave_function_solver.PETSc.solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;solve
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#qttools.wave_function_solver.WFSolver" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6516,6 +6544,13 @@
           </div>
         </li>
         <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="qttools.wave_function_solver.petsc" href="petsc/#qttools.wave_function_solver.petsc">petsc</a></code></b>
+          –
+          <div class="doc-md-description">
+            
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
           <b><code><a class="autorefs autorefs-internal" title="qttools.wave_function_solver.solver" href="solver/#qttools.wave_function_solver.solver">solver</a></code></b>
           –
           <div class="doc-md-description">
@@ -6564,6 +6599,13 @@
           –
           <div class="doc-md-description">
             <p>Wave function solver using PARDISO for sparse matrix solving.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;PETSc&lt;/span&gt;" href="./#qttools.wave_function_solver.PETSc">PETSc</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p>Wavefunction solver using PETSc for sparse matrix solving.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">
@@ -7197,6 +7239,245 @@ factorization.</p>
 )          –
           <div class="doc-md-description">
             <p>The solution vector.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="qttools.wave_function_solver.PETSc" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <span class="doc doc-object-name doc-class-name">PETSc</span>
+
+
+<a href="#qttools.wave_function_solver.PETSc" class="headerlink" title="Permanent link">#</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">PETSc</span><span class="p">(</span><span class="n">matrix_type</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">matrix_view</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">comm</span><span class="p">:</span> <span class="n"><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">local_rows</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#int">int</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#int">int</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">petsc_options</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;WFSolver&lt;/span&gt;" href="solver/#qttools.wave_function_solver.solver.WFSolver">WFSolver</a></code></p>
+
+
+
+        <p>Wavefunction solver using PETSc for sparse matrix solving.</p>
+<p>For distributed solves, the user must provide a communicator and the
+local row distribution. The local row distribution is specified as a
+tuple of the form (start_row, end_row) for each process.</p>
+<p>Note that PETSc assumes that vectors always have a contiguous range
+of vector entries stored on each MPI rank. Rank 0 will always own
+the first <code>local_rows[1]</code> entries, rank 1 will own the next
+<code>local_rows[1] - local_rows[0]</code> entries, and so on. The user must
+ensure that the local row distribution is consistent with this
+assumption.</p>
+
+
+<details class="note" open>
+  <summary>Note</summary>
+  <p>petsc4py can be built against multiple different architectures. The
+specific PETSc architecture to be used at runtime can be set using
+the <code>PETSC_ARCH</code> environment variable.</p>
+</details>
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>matrix_type</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The type of the system matrix. This describes properties like
+symmetry and definiteness. If None, the solver will use a
+general matrix type.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>matrix_view</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The view of the system matrix sparsity. This solver supports
+'full' and 'upper' views. If None, the solver will use the PETSc
+default for the given <code>matrix_type</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>comm</code></b>
+              (<code><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The communicator for distributed solves. If None, the solver
+will assume a single-rank solve. This must be provided together
+with local_rows.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>local_rows</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>A tuple specifying the local row distribution for distributed
+solves. If None, the solver will assume a single-rank solve.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>petsc_options</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>A dictionary of PETSc options to set. If None, the solver will
+use the default PETSc options. This can be used to set options
+like the solver type, preconditioner, and tolerances. To select
+an external direct solver, something like <code>{ksp_type: "preonly",
+"pc_type": "lu", "pc_factor_mat_solver_type": "superlu_dist"}</code>
+can be used. See the PETSc documentation for more details on
+available options.</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+
+<p><span class="doc-section-title">Methods:</span></p>
+    <ul>
+          <li class="doc-section-item field-body">
+            <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-method&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-function-name&quot;&gt;solve&lt;/span&gt;" href="./#qttools.wave_function_solver.PETSc.solve">solve</a></code></b>
+            –
+            <div class="doc-md-description">
+              <p>Solves the sparse linear system a @ x = b using PETSc.</p>
+            </div>
+          </li>
+    </ul>
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="qttools.wave_function_solver.PETSc.solve" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">solve</span>
+
+
+<a href="#qttools.wave_function_solver.PETSc.solve" class="headerlink" title="Permanent link">#</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">solve</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n"><span title="qttools.sparse.csr_matrix">csr_matrix</span></span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">,</span> <span class="n">reuse_analysis</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">reuse_factorization</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Solves the sparse linear system a @ x = b using PETSc.</p>
+
+
+<details class="note" open>
+  <summary>Note</summary>
+  <p>PETSc only accepts right-hand side arrays on the host. If the
+input array is a CuPy array, it will be transferred to the host
+before solving. The solution will also be returned in the same
+format as the input array (i.e., if the input is a CuPy array,
+the solution will be a CuPy array).</p>
+</details>
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>a</code></b>
+              (<code><span title="qttools.sparse.csr_matrix">csr_matrix</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The sparse system matrix in CSR format.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>b</code></b>
+              (<code><span title="qttools.NDArray">NDArray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The dense right-hand side array with shape (n, batchsize).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>reuse_analysis</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Whether to reuse the symbolic factorization from a previous
+solve. Default is False. This is useful when solving
+multiple linear systems with the same sparsity pattern but
+different numerical values. Currently, this is not supported.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>reuse_factorization</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Whether to reuse the numerical factorization from a previous
+solve. Default is False. This can only be True if
+reuse_analysis is also True. Note that this must only be
+True if the matrix values have not changed since the last
+factorization. Currently, this is not supported.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+<b><code>x</code></b> (              <code><span title="qttools.NDArray">NDArray</span></code>
+)          –
+          <div class="doc-md-description">
+            <p>The solution array with shape (n, batchsize).</p>
           </div>
         </li>
     </ul>

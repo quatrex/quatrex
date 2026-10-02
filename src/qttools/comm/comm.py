@@ -92,13 +92,22 @@ GPU_AWARE_MPI = _check_gpu_aware_mpi()
 
 _backends = ("nccl", "host_mpi", "device_mpi")
 
-_default_config = {
-    "all_to_all": "host_mpi",
-    "all_gather": "host_mpi",
-    "all_reduce": "host_mpi",
-    "bcast": "host_mpi",
-    "send_recv": "host_mpi",
-}
+if xp.__name__ == "cupy":
+    _default_config = {
+        "all_to_all": "host_mpi",
+        "all_gather": "host_mpi",
+        "all_reduce": "host_mpi",
+        "bcast": "host_mpi",
+        "send_recv": "host_mpi",
+    }
+elif xp.__name__ == "numpy":
+    _default_config = {
+        "all_to_all": "device_mpi",
+        "all_gather": "device_mpi",
+        "all_reduce": "device_mpi",
+        "bcast": "device_mpi",
+        "send_recv": "device_mpi",
+    }
 
 _mpi_ops = {
     "sum": MPI.SUM,

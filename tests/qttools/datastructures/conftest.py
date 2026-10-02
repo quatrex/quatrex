@@ -14,6 +14,11 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
+SIZES = [
+    pytest.param(10, id="size-10"),
+    pytest.param(20, id="size-20"),
+    pytest.param(21, id="size-21"),
+]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -40,6 +45,14 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
+LOCAL_STACK_SHAPES = [
+    pytest.param(tuple(), id="no-stack"),
+    pytest.param((10,), id="1D-stack"),
+    pytest.param((7, 2), id="2D-stack"),
+    pytest.param((9, 2, 4), id="3D-stack"),
+]
+
+
 NUM_INDS = [
     pytest.param(5, id="5-inds"),
     pytest.param(10, id="10-inds"),
@@ -65,6 +78,11 @@ SYMMETRY = [
     pytest.param("hermitian", id="hermitian"),
     pytest.param("symmetric", id="symmetric"),
 ]
+
+
+@pytest.fixture(params=SIZES)
+def size(request: pytest.FixtureRequest) -> int:
+    return request.param
 
 
 @pytest.fixture(params=BLOCK_SIZES)
@@ -99,6 +117,11 @@ def num_inds(request):
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
+    return request.param
+
+
+@pytest.fixture(params=LOCAL_STACK_SHAPES)
+def local_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param
 
 

@@ -350,7 +350,6 @@ class cuDSS(WFSolver):
         )
         synchronize_current_stream()
 
-    @profiler.profile("cuDSS: analysis", level="default", comm=quatrex_comm.block)
     def _analyze(self, matrix: int, solution: int, rhs: int):
         """Performs symbolic factorization of the system.
 
@@ -364,9 +363,13 @@ class cuDSS(WFSolver):
             The cuDSS handle for the right-hand side array.
 
         """
-        self._execute_phase(cudss.Phase.ANALYSIS, matrix, solution, rhs)
+        # NOTE: We want to profile inside the method to be able to set
+        # the communicator.
+        with profiler.profile_range(
+            label="cuDSS: analysis", level="default", comm=self._comm
+        ):
+            self._execute_phase(cudss.Phase.ANALYSIS, matrix, solution, rhs)
 
-    @profiler.profile("cuDSS: factorization", level="default", comm=quatrex_comm.block)
     def _factorize(self, matrix: int, solution: int, rhs: int):
         """Performs numeric factorization of the system.
 
@@ -380,7 +383,10 @@ class cuDSS(WFSolver):
             The cuDSS handle for the right-hand side array.
 
         """
-        self._execute_phase(cudss.Phase.FACTORIZATION, matrix, solution, rhs)
+        with profiler.profile_range(
+            label="cuDSS: factorization", level="default", comm=self._comm
+        ):
+            self._execute_phase(cudss.Phase.FACTORIZATION, matrix, solution, rhs)
 
     def _solve(self, matrix: int, solution: int, rhs: int):
         """Solves the linear system a @ x = b.
@@ -395,9 +401,11 @@ class cuDSS(WFSolver):
             The cuDSS handle for the right-hand side array.
 
         """
-        self._execute_phase(cudss.Phase.SOLVE, matrix, solution, rhs)
+        with profiler.profile_range(
+            label="cuDSS: solve", level="default", comm=self._comm
+        ):
+            self._execute_phase(cudss.Phase.SOLVE, matrix, solution, rhs)
 
-    @profiler.profile("cuDSS solve", level="default", comm=quatrex_comm.block)
     def solve(
         self,
         a: sparse.csr_matrix,
@@ -431,113 +439,119 @@ class cuDSS(WFSolver):
             The solution array with shape (n, batchsize).
 
         """
-        if reuse_factorization and not reuse_analysis:
-            raise ValueError(
-                "Cannot reuse total factorization without reusing symbolic factorization."
-            )
-        if a.dtype != b.dtype:
-            raise ValueError(
-                f"Data type of a ({a.dtype}) does not match data type of b ({b.dtype}). "
-                "Please ensure they have the same data type."
-            )
+        with profiler.profile_range(
+            label="cuDSS: solve", level="default", comm=self._comm
+        ):
 
-        b_shape = b.shape
-
-        if b.ndim == 1:
-            b = b.reshape(-1, 1)
-        elif b.ndim > 2:
-            raise ValueError(
-                f"Right-hand side b has invalid number of dimensions {b.ndim}. "
-                "Expected 1 or 2 dimensions."
-            )
-
-        if get_array_module_name(b) != "cupy":
-            raise ValueError(
-                "Right-hand side b must be a CuPy array on the GPU. "
-                "Please transfer it to the GPU before calling this method."
-            )
-        if get_array_module_name(a) != "cupyx":
-            raise ValueError(
-                "System matrix a must be a CuPy sparse CSR matrix on the GPU. "
-                "Please transfer it to the GPU before calling this method."
-            )
-
-        # b needs to be fortran contiguous for cuDSS
-        b = cp.asfortranarray(b)
-
-        x = cp.zeros_like(b)
-        x = cp.asfortranarray(x)
-
-        # Set up the linear system.
-        # Dense descriptors are cheap and their column count changes, so
-        # they are recreated on every call.
-        if reuse_analysis:
-            # It seems for reuse of analysis only indices need to stay
-            # at the same memory location. The data can be updated.
-            if self._indptr_ptr is None:
-                self._indptr_ptr = a.indptr.data.ptr
-            elif self._indptr_ptr != a.indptr.data.ptr:
+            if reuse_factorization and not reuse_analysis:
                 raise ValueError(
-                    "Cannot reuse analysis with a different matrix row pointer. "
-                    "Please ensure that the matrix row pointer has not changed since the last analysis."
+                    "Cannot reuse total factorization without reusing symbolic factorization."
                 )
-            if self._indices_ptr is None:
-                self._indices_ptr = a.indices.data.ptr
-            elif self._indices_ptr != a.indices.data.ptr:
+            if a.dtype != b.dtype:
                 raise ValueError(
-                    "Cannot reuse analysis with a different matrix column indices pointer. "
-                    "Please ensure that the matrix column indices have not changed since the last analysis."
+                    f"Data type of a ({a.dtype}) does not match data type of b ({b.dtype}). "
+                    "Please ensure they have the same data type."
                 )
 
-        # NOTE: Check if we need to redo analysis if the number
-        # of right-hand sides has changed.
-        local_redo = (
-            not reuse_analysis or not self.analyzed or self._matrix_handle is None
-        )
-        if self._comm is not None:
-            redo_analysis = bool(
-                self._comm._mpi_comm.allreduce(int(local_redo), op=MPI.MAX)
-            )
+            b_shape = b.shape
 
-            # Print a warning when local and global disagree
-            if redo_analysis != local_redo:
-                print(
-                    f"Warning: local redo_analysis ({local_redo}) "
-                    f"does not match global redo_analysis ({redo_analysis}).\n"
-                    "This may indicate a mismatch in the local row distribution\n"
-                    "or a change in the number of right-hand sides across processes.\n",
-                    "On process: ",
-                    quatrex_comm.rank,
-                    flush=True,
+            if b.ndim == 1:
+                b = b.reshape(-1, 1)
+            elif b.ndim > 2:
+                raise ValueError(
+                    f"Right-hand side b has invalid number of dimensions {b.ndim}. "
+                    "Expected 1 or 2 dimensions."
                 )
 
-        else:
-            redo_analysis = local_redo
+            if get_array_module_name(b) != "cupy":
+                raise ValueError(
+                    "Right-hand side b must be a CuPy array on the GPU. "
+                    "Please transfer it to the GPU before calling this method."
+                )
+            if get_array_module_name(a) != "cupyx":
+                raise ValueError(
+                    "System matrix a must be a CuPy sparse CSR matrix on the GPU. "
+                    "Please transfer it to the GPU before calling this method."
+                )
 
-        self._solution_handle = self._create_cudss_array(x, nrows_global=a.shape[1])
-        self._rhs_handle = self._create_cudss_array(b, nrows_global=a.shape[1])
+            # b needs to be fortran contiguous for cuDSS
+            b = cp.asfortranarray(b)
 
-        if redo_analysis:
-            for h in [self._matrix_handle]:
-                if h is not None:
-                    cudss.matrix_destroy(h)
-            self._matrix_handle = self._create_cudss_csr(a)
-            self._analyze(self._matrix_handle, self._solution_handle, self._rhs_handle)
-            self.analyzed = True
-            self.factorized = False
-        else:
-            # NOTE: Unsure here since it seems we need to keep the
-            # pointers to the row and column indices the same for cuDSS
-            # to reuse the analysis. Seems the update does not do what
-            # we would expect.
-            self._update_cudss_csr(a)
+            x = cp.zeros_like(b)
+            x = cp.asfortranarray(x)
 
-        if redo_analysis or not self.factorized or not reuse_factorization:
-            self._factorize(
-                self._matrix_handle, self._solution_handle, self._rhs_handle
+            # Set up the linear system.
+            # Dense descriptors are cheap and their column count changes, so
+            # they are recreated on every call.
+            if reuse_analysis:
+                # It seems for reuse of analysis only indices need to stay
+                # at the same memory location. The data can be updated.
+                if self._indptr_ptr is None:
+                    self._indptr_ptr = a.indptr.data.ptr
+                elif self._indptr_ptr != a.indptr.data.ptr:
+                    raise ValueError(
+                        "Cannot reuse analysis with a different matrix row pointer. "
+                        "Please ensure that the matrix row pointer has not changed since the last analysis."
+                    )
+                if self._indices_ptr is None:
+                    self._indices_ptr = a.indices.data.ptr
+                elif self._indices_ptr != a.indices.data.ptr:
+                    raise ValueError(
+                        "Cannot reuse analysis with a different matrix column indices pointer. "
+                        "Please ensure that the matrix column indices have not changed since the last analysis."
+                    )
+
+            # NOTE: Check if we need to redo analysis if the number
+            # of right-hand sides has changed.
+            local_redo = (
+                not reuse_analysis or not self.analyzed or self._matrix_handle is None
             )
-            self.factorized = True
+            if self._comm is not None:
+                redo_analysis = bool(
+                    self._comm._mpi_comm.allreduce(int(local_redo), op=MPI.MAX)
+                )
 
-        self._solve(self._matrix_handle, self._solution_handle, self._rhs_handle)
+                # Print a warning when local and global disagree
+                if redo_analysis != local_redo:
+                    print(
+                        f"Warning: local redo_analysis ({local_redo}) "
+                        f"does not match global redo_analysis ({redo_analysis}).\n"
+                        "This may indicate a mismatch in the local row distribution\n"
+                        "or a change in the number of right-hand sides across processes.\n",
+                        "On process: ",
+                        quatrex_comm.rank,
+                        flush=True,
+                    )
 
-        return x.reshape(b_shape)
+            else:
+                redo_analysis = local_redo
+
+            self._solution_handle = self._create_cudss_array(x, nrows_global=a.shape[1])
+            self._rhs_handle = self._create_cudss_array(b, nrows_global=a.shape[1])
+
+            if redo_analysis:
+                for h in [self._matrix_handle]:
+                    if h is not None:
+                        cudss.matrix_destroy(h)
+                self._matrix_handle = self._create_cudss_csr(a)
+                self._analyze(
+                    self._matrix_handle, self._solution_handle, self._rhs_handle
+                )
+                self.analyzed = True
+                self.factorized = False
+            else:
+                # NOTE: Unsure here since it seems we need to keep the
+                # pointers to the row and column indices the same for cuDSS
+                # to reuse the analysis. Seems the update does not do what
+                # we would expect.
+                self._update_cudss_csr(a)
+
+            if redo_analysis or not self.factorized or not reuse_factorization:
+                self._factorize(
+                    self._matrix_handle, self._solution_handle, self._rhs_handle
+                )
+                self.factorized = True
+
+            self._solve(self._matrix_handle, self._solution_handle, self._rhs_handle)
+
+            return x.reshape(b_shape)

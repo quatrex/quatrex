@@ -103,12 +103,6 @@ class Mock(WFSolver):
             The solution array with shape (n, batchsize).
 
         """
-        if reuse_analysis or reuse_factorization:
-            raise NotImplementedError(
-                "MockDist solver does not support reuse_analysis or "
-                "reuse_factorization."
-            )
-
         if self._comm is not None:
             a = a.tocoo()
             data = a.data

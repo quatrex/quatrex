@@ -4,16 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from qttools import xp
-from qttools.wave_function_solver import (
-    MUMPS,
-    PARDISO,
-    PETSc,
-    SuperLU,
-    Thomas,
-    WFSolver,
-    cuDSS,
-)
+from qttools import wave_function_solver, xp
 
 NUM_ROWS = [
     pytest.param(27, id="27-rows"),
@@ -45,7 +36,7 @@ petsc_available = importlib.util.find_spec("petsc4py") is not None
 
 @dataclass(frozen=True)
 class WFSolverSpec:
-    solver_type: type[WFSolver]
+    solver_type: type[wave_function_solver.WFSolver]
     sparse_format: str
     order: str = "C"
     solver_options: dict[str, object] = field(default_factory=dict)
@@ -62,7 +53,7 @@ class WFSolverSpec:
 SOLVER_SPECS = [
     pytest.param(
         WFSolverSpec(
-            solver_type=SuperLU,
+            solver_type=wave_function_solver.SuperLU,
             sparse_format="csc",
             supports_reuse_factorization=True,
         ),
@@ -70,7 +61,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=MUMPS,
+            solver_type=wave_function_solver.MUMPS,
             sparse_format="coo",
             supports_reuse_analysis=True,
             supports_reuse_factorization=True,
@@ -86,7 +77,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=PARDISO,
+            solver_type=wave_function_solver.PARDISO,
             sparse_format="csr",
             supports_reuse_analysis=True,
             supports_reuse_factorization=True,
@@ -102,7 +93,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=cuDSS,
+            solver_type=wave_function_solver.cuDSS,
             sparse_format="csr",
             order="F",
             supports_reuse_analysis=True,
@@ -122,7 +113,21 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=PETSc,
+            solver_type=wave_function_solver.Mock,
+            sparse_format="csr",
+            order="F",
+            supports_reuse_analysis=False,
+            supports_reuse_factorization=False,
+            factorization_needs_analysis=False,
+            supports_symmetric=True,
+            supports_hermitian=True,
+            supports_distributed=True,
+        ),
+        id="mock",
+    ),
+    pytest.param(
+        WFSolverSpec(
+            solver_type=wave_function_solver.PETSc,
             sparse_format="csr",
             order="F",
             solver_options={
@@ -152,7 +157,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=Thomas,
+            solver_type=wave_function_solver.Thomas,
             sparse_format="csr",
             use_banded=True,
             supports_reuse_analysis=True,

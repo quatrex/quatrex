@@ -8,11 +8,11 @@ import numpy as np
 
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig, SCSPConfig
-from quatrex.core.qtbm import QTBM
 from quatrex.core.transport import TransportSolver
 from quatrex.device import BaseDevice
 from quatrex.electrostatics.electrostatics import ElectrostaticSolver
 from quatrex.electrostatics.mixer import DIIS, Mixer, UnderRelaxation
+from quatrex.qtbm.qtbm import QTBM
 
 
 class SCSP:
@@ -82,7 +82,7 @@ class SCSP:
 
         """
         if config.formalism == "wf":
-            from quatrex.core.qtbm import QTBM
+            from quatrex.qtbm.qtbm import QTBM
 
             return QTBM(config, device)
 

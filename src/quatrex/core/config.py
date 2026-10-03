@@ -505,9 +505,14 @@ class SolverConfig(BaseModel):
         "cudss",
         "pardiso",
         "thomas",
+        "petsc",
+        "mock",
         "auto",
     ] = "auto"
     """The direct solver to use in `wf` simulations.
+
+    TODO: Update this for distributed solvers.
+    TODO: The config for `wf` and `negf` should be separated.
 
     If set to `"auto"`, the solver is automatically chosen based on the
     matrix type and the available direct solver libraries.

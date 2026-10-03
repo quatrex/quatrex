@@ -1,14 +1,13 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 """Includes the core class for QTBM calculations."""
-
 import os
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.sparse import get_index_dtype
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, wave_function_solver, xp
 from qttools.comm import comm
 from qttools.datastructures.csx_routines import remove_duplicate_entries
 from qttools.datastructures.dcsx import DCSX
@@ -18,18 +17,8 @@ from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
-from qttools.wave_function_solver import (
-    MUMPS,
-    PARDISO,
-    SuperLU,
-    Thomas,
-    WFSolver,
-    auto_select_solver,
-    cuDSS,
-    preferred_sparse_format,
-)
 from quatrex.contact.qtbm import OBCResult, QTBMContact
-from quatrex.core.config import QuatrexConfig, SolverConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
@@ -168,17 +157,12 @@ class QTBM(TransportSolver):
             self.system_matrix_view = "full"
             self.system_matrix_type = "complex_nonsymmetric"
 
-        self.solver = self._configure_solver(
-            self.config.electron.solver,
+        self._solver, self._solver_runtime_config = self._configure_solver(
+            self.config.electron.solver.direct_solver,
             matrix_type=self.system_matrix_type,
             matrix_view=self.system_matrix_view,
             row_offsets=self.device.row_offsets,
         )
-
-        # TODO Preferred_matrix_type is not used at the moment
-        self.matrix_type = preferred_sparse_format[
-            self.config.electron.solver.direct_solver
-        ]
 
         self._allocate_bare_system_matrix()
         if not self.low_rank_obc:
@@ -187,17 +171,17 @@ class QTBM(TransportSolver):
 
     @staticmethod
     def _configure_solver(
-        solver_config: SolverConfig,
+        solver_name: str,
         matrix_type: str,
         matrix_view: str,
         row_offsets: NDArray,
-    ) -> WFSolver:
+    ) -> wave_function_solver.WFSolver:
         """Configures the wavefunction solver based on the config.
 
         Parameters
         ----------
-        solver_config : SolverConfig
-            The solver configuration containing solver type and options.
+        solver_name : str
+            The name of the solver to use for solving the linear system.
         matrix_type : str
             The type of the system matrix, describing properties like
             symmetry and definiteness.
@@ -214,31 +198,48 @@ class QTBM(TransportSolver):
             The configured wavefunction solver instance.
 
         """
+        runtime_config = {
+            "reuse_analysis": True,
+            "reuse_factorization": False,
+        }
+
         local_rows = (row_offsets[comm.block.rank], row_offsets[comm.block.rank + 1])
-        if solver_config.direct_solver == "mumps":
-            return MUMPS(matrix_type=matrix_type, matrix_view=matrix_view)
-        if solver_config.direct_solver == "superlu":
-            return SuperLU(matrix_type=matrix_type, matrix_view=matrix_view)
-        if solver_config.direct_solver == "cudss":
-            return cuDSS(
-                matrix_type=matrix_type,
-                matrix_view=matrix_view,
-                comm=comm.block,
-                local_rows=local_rows,
-            )
-        if solver_config.direct_solver == "pardiso":
-            return PARDISO(matrix_type=matrix_type, matrix_view=matrix_view)
-        if solver_config.direct_solver == "thomas":
-            return Thomas(matrix_type=matrix_type, matrix_view=matrix_view)
-        if solver_config.direct_solver == "auto":
-            return auto_select_solver(
-                matrix_type=matrix_type,
-                matrix_view=matrix_view,
-                comm=comm.block,
-                local_rows=local_rows,
+
+        distributed = {
+            "cudss": wave_function_solver.cuDSS,
+            "petsc": wave_function_solver.PETSc,
+            "mock": wave_function_solver.Mock,
+            "auto": wave_function_solver.auto_select_solver,
+        }
+        serial = {
+            "mumps": wave_function_solver.MUMPS,
+            "superlu": wave_function_solver.SuperLU,
+            "pardiso": wave_function_solver.PARDISO,
+            "thomas": wave_function_solver.Thomas,
+        }
+
+        kwargs = {"matrix_type": matrix_type, "matrix_view": matrix_view}
+
+        if solver_name in serial:
+            return serial[solver_name](**kwargs), runtime_config
+
+        if solver_name in distributed:
+            if solver_name in ("petsc", "auto"):
+                kwargs["petsc_options"] = {
+                    "ksp_type": "preonly",
+                    "pc_type": "lu",
+                    "pc_factor_mat_solver_type": "superlu_dist",
+                }
+            return (
+                distributed[solver_name](
+                    **kwargs,
+                    comm=comm.block,
+                    local_rows=local_rows,
+                ),
+                runtime_config,
             )
 
-        raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
+        raise ValueError(f"Unknown direct solver: {solver_name}")
 
     @profiler.profile("QTBM: Allocate bare system matrix", level="debug")
     def _allocate_bare_system_matrix(self):
@@ -1469,11 +1470,13 @@ class QTBM(TransportSolver):
                         )
 
                         # Solve for the wavefunction
-                        phi = self.solver.solve(
+                        # TODO: `_solver_runtime_config` should be part
+                        # of the solver initialization, not passed every
+                        # time.
+                        phi = self._solver.solve(
                             system_matrix.tocsr(),
                             rhs,
-                            reuse_analysis=True,
-                            reuse_factorization=False,
+                            **self._solver_runtime_config,
                         )
 
                         if self.low_rank_obc:

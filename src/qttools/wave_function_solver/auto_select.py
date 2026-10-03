@@ -18,6 +18,7 @@ def _select_distributed_solver(
     matrix_view: str,
     comm: _SubCommunicator,
     local_rows: tuple,
+    **kwargs,
 ) -> WFSolver:
     """Selects the best wave function solver for distributed execution.
 
@@ -31,6 +32,8 @@ def _select_distributed_solver(
         The communicator for parallel execution.
     local_rows : tuple
         The range of local rows for the current process.
+    kwargs : dict
+        Additional keyword arguments to pass to the solver constructor.
 
     Returns
     -------
@@ -62,6 +65,7 @@ def _select_distributed_solver(
         matrix_view=matrix_view,
         comm=comm,
         local_rows=local_rows,
+        petsc_options=kwargs.get("petsc_options", {}),
     )
 
 
@@ -78,10 +82,6 @@ def _select_non_distributed_solver(
         The type of the matrix.
     matrix_view : str
         The view of the matrix.
-    comm : _SubCommunicator
-        The communicator for parallel execution.
-    local_rows : tuple
-        The range of local rows for the current process.
 
     Returns
     -------
@@ -132,6 +132,7 @@ def auto_select_solver(
     matrix_view: str,
     comm: _SubCommunicator,
     local_rows: tuple,
+    **kwargs,
 ) -> WFSolver:
     """Auto-selects the solver based on the matrix type.
 
@@ -159,6 +160,8 @@ def auto_select_solver(
         The communicator for parallel execution.
     local_rows : tuple
         The range of local rows for the current process.
+    kwargs : dict
+        Additional keyword arguments to pass to the solver constructor.
 
     Returns
     -------
@@ -172,6 +175,7 @@ def auto_select_solver(
             matrix_view=matrix_view,
             comm=comm,
             local_rows=local_rows,
+            **kwargs,
         )
 
     return _select_non_distributed_solver(

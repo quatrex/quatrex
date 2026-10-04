@@ -4,7 +4,9 @@
 
 import warnings
 
-from qttools import NDArray, sparse, xp
+import numpy as np
+
+from qttools import NDArray, sparse
 from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
 from qttools.wave_function_solver.auto_select import _select_non_distributed_solver
@@ -103,16 +105,23 @@ class Mock(WFSolver):
             The solution array with shape (n, batchsize).
 
         """
+        if (reuse_factorization or reuse_analysis) and quatrex_comm.rank == 0:
+            warnings.warn(
+                "MockDist solver does not support reuse_analysis or "
+                "reuse_factorization. These options will be ignored.",
+                UserWarning,
+            )
+
         if self._comm is not None:
             a = a.tocoo()
             data = a.data
             row_ind = a.row
             col_ind = a.col
 
-            local_length = xp.array(a.shape[0])
-            recv_buffer = xp.empty((self._comm.size,), dtype=local_length.dtype)
-            self._comm.all_gather(local_length, recv_buffer)
-            row_offsets = xp.array([0] + list(xp.cumsum(recv_buffer)))
+            local_length = np.array(a.shape[0])
+            recv_buffer = np.empty((self._comm.size,), dtype=local_length.dtype)
+            self._comm.all_gather(local_length, recv_buffer, backend="device_mpi")
+            row_offsets = np.array([0] + list(np.cumsum(recv_buffer)))
 
             data = self._comm.all_gather_v(data, axis=0)
             row_ind = self._comm.all_gather_v(
@@ -129,8 +138,8 @@ class Mock(WFSolver):
         out = self._solver.solve(
             a,
             b,
-            reuse_analysis=reuse_analysis,
-            reuse_factorization=reuse_factorization,
+            reuse_analysis=False,
+            reuse_factorization=False,
         )
 
         if self._comm is not None:

@@ -6,7 +6,6 @@ formalism = "wf"
 [compute.comm]
 block_comm_size = 3
 # Needed for non-blocking send-recv
-block_send_recv = "device_mpi"
 
 [device]
 transport_direction = "a"

@@ -159,7 +159,7 @@ class TestConversion:
 class TestInplace:
     """Tests for the inplace methods of CSX."""
 
-    def test_add_symmetric(
+    def test_add_(
         self,
         size: int,
         local_stack_shape: tuple,
@@ -179,41 +179,6 @@ class TestInplace:
         coo = sparse.coo_matrix(
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
-
-        b = CSX.from_sparray(
-            sparray=coo,
-            local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
-        )
-
-        a_dense = a._to_dense()
-        b_dense = b._to_dense()
-
-        a.add_(b)
-
-        assert xp.allclose(a._to_dense(), a_dense + b_dense)
-
-    def test_add_nonsymmetric(
-        self,
-        size: int,
-        local_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can add a symmetric CSX matrix to a non-symmetric CSX matrix."""
-        coo, a = _create_coo_csx(
-            size=size,
-            local_stack_shape=local_stack_shape,
-        )
-
-        # randomly mask the `coo` matrix to create a new sparse matrix
-        # with a subset of the sparsity pattern of `coo`
-        rng = xp.random.default_rng(seed=42)
-        # choose a random subset of the non-zero entries of `coo` to keep
-        mask = rng.random(coo.nnz) > 0.5
-        coo = sparse.coo_matrix(
-            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
-        )
-        coo = sparse.triu(coo)
 
         b = CSX.from_sparray(
             sparray=coo,
@@ -281,13 +246,11 @@ class TestAccess:
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
     ):
         """Tests that we can get a tile from a CSX matrix."""
         coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
@@ -308,64 +271,21 @@ class TestAccess:
 
         assert xp.allclose(test_tile, ref_tile)
 
-    def test_get_tile_unsymmetrize(
-        self,
-        size: int,
-        local_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can get a tile from a CSX matrix and unsymmetrize it."""
-        if symmetry is None:
-            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
-
-        coo, a = _create_coo_csx(
-            size=size,
-            local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
-        )
-
-        rng = xp.random.default_rng(seed=42)
-
-        rows = xp.arange(size)
-        cols = xp.arange(size)
-
-        mask = rng.random(size=size) > 0.5
-        rows = rows[mask]
-
-        mask = rng.random(size=size) > 0.5
-        cols = cols[mask]
-
-        test_tile = a.get_tile(rows, cols, unsymmetrize=True).toarray()
-
-        dense = coo.toarray()
-        dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
-        ref_tile = dense[rows, :][:, cols]
-        ref_tile = xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape)
-
-        assert xp.allclose(test_tile, ref_tile)
-
-    @pytest.mark.parametrize("unsymmetrize", [True, False])
     def test_get_tile_empty(
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
-        unsymmetrize: bool,
     ):
         """Tests that we can get an empty tile from a CSX matrix."""
-
-        if unsymmetrize and symmetry is None:
-            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
 
         __, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rows = xp.array([], dtype=xp.int64)
 
-        test_tile = a.get_tile(rows, unsymmetrize=unsymmetrize).toarray()
+        test_tile = a.get_tile(rows).toarray()
 
         assert test_tile.shape[-2] == 0
         assert test_tile.shape[-1] == a.cols
@@ -379,14 +299,12 @@ class TestOperations:
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
         rhs_size: tuple,
     ):
         """Tests that we can multiply a CSX matrix with another array."""
         coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
@@ -397,8 +315,6 @@ class TestOperations:
         out = a @ rhs
         dense = coo.toarray()
         ref = dense @ rhs
-        if symmetry is not None:
-            ref += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2) @ rhs
 
         ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
 

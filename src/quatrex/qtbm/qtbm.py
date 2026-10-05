@@ -129,7 +129,7 @@ class QTBM(TransportSolver):
                     dtype=xp.float64,
                 )
 
-        self.bare_system_matrix_view = "upper"
+        bare_system_matrix_view = "upper"
         # Check if we can use real arithmetic for the system matrix
         # and solvers (only possible for reduced method with real
         # Hamiltonian and no k-point shift)
@@ -149,29 +149,35 @@ class QTBM(TransportSolver):
                         "Using real arithmetic for the solver.",
                         flush=True,
                     )
-            self.bare_system_matrix_type = "real_symmetric_indefinite"
+            bare_system_matrix_type = "real_symmetric_indefinite"
 
         else:
-            self.bare_system_matrix_type = "complex_hermitian_indefinite"
+            bare_system_matrix_type = "complex_hermitian_indefinite"
 
         if self.low_rank_obc:
-            self.system_matrix_view = self.bare_system_matrix_view
-            self.system_matrix_type = self.bare_system_matrix_type
+            system_matrix_view = bare_system_matrix_view
+            system_matrix_type = bare_system_matrix_type
         else:
-            self.system_matrix_view = "full"
-            self.system_matrix_type = "complex_nonsymmetric"
+            system_matrix_view = "full"
+            system_matrix_type = "complex_nonsymmetric"
+
+        self.system_matrix_is_real = "real" in system_matrix_type
 
         self._solver, self._solver_runtime_config = self._configure_solver(
             self.config.electron.solver.direct_solver,
-            matrix_type=self.system_matrix_type,
-            matrix_view=self.system_matrix_view,
+            matrix_type=system_matrix_type,
+            matrix_view=system_matrix_view,
             row_offsets=self.device.row_offsets,
             petsc_options=self.config.electron.solver.petsc_options,
         )
 
-        self._allocate_bare_system_matrix()
+        self._allocate_bare_system_matrix(
+            np.float64 if "real" in bare_system_matrix_type else np.complex128
+        )
         if not self.low_rank_obc:
-            self._allocate_system_matrix()
+            self._allocate_system_matrix(
+                np.float64 if "real" in system_matrix_type else np.complex128
+            )
         free_mempool()
 
     @staticmethod
@@ -250,9 +256,18 @@ class QTBM(TransportSolver):
         raise ValueError(f"Unknown direct solver: {solver_name}")
 
     @profiler.profile("QTBM: Allocate bare system matrix", level="debug")
-    def _allocate_bare_system_matrix(self):
-        """Allocates the bare system matrix."""
+    def _allocate_bare_system_matrix(
+        self, bare_system_matrix_dtype: type[np.float64] | type[np.complex128]
+    ):
+        """Allocates the bare system matrix.
 
+        Parameters
+        ----------
+        bare_system_matrix_dtype : type[np.float64] | type[np.complex128]
+            The data type for the bare system matrix, either real or
+            complex.
+
+        """
         # Concatenate all indices from the hamiltonians and overlaps
         # into a single array to find unique indices for allocation
         row_ind = []
@@ -276,33 +291,31 @@ class QTBM(TransportSolver):
 
         row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
-        if self.device.matrices_complex:
-            symmetry = "hermitian"
-        else:
-            symmetry = "symmetric"
-
         # Allocate system matrix
-        if "real" in self.bare_system_matrix_type:
-            system_matrix_dtype = xp.float64
-        else:
-            system_matrix_dtype = xp.complex128
-
         index_type = get_index_dtype(maxval=len(row_ind))
 
         self.bare_system_matrix = DCSX.from_sparray(
             row_ind=row_ind.astype(index_type),
             col_ind=col_ind.astype(index_type),
             shape=(rows, cols),
-            symmetry=symmetry,
+            symmetry="hermitian",
             allocate=False,
-            dtype=system_matrix_dtype,
+            dtype=bare_system_matrix_dtype,
         )
 
     # TODO: Investigate performance of the system matrix allocation
     @profiler.profile("QTBM: Allocate system matrix", level="debug")
-    def _allocate_system_matrix(self):
-        """Allocates the system matrix."""
+    def _allocate_system_matrix(
+        self, system_matrix_dtype: type[np.float64] | type[np.complex128]
+    ):
+        """Allocates the system matrix.
 
+        Parameters
+        ----------
+        system_matrix_dtype : type[np.float64] | type[np.complex128]
+            The data type for the system matrix, either real or complex.
+
+        """
         if self.low_rank_obc:
             raise ValueError(
                 "Full system matrix allocation is not needed for low-rank OBCs."
@@ -352,11 +365,6 @@ class QTBM(TransportSolver):
         row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
 
         # Allocate system matrix
-        if "real" in self.system_matrix_type:
-            system_matrix_dtype = xp.float64
-        else:
-            system_matrix_dtype = xp.complex128
-
         index_type = get_index_dtype(maxval=len(row_ind))
 
         self.system_matrix = DCSX.from_sparray(
@@ -518,7 +526,7 @@ class QTBM(TransportSolver):
 
         # If system matrix is real, convert the RHS to real with twice
         # the number of columns
-        if "real" in self.system_matrix_type:
+        if self.system_matrix_is_real:
             rhs = xp.ascontiguousarray(rhs)
             rhs = rhs.view(np.float64)
             rhs = xp.asfortranarray(rhs)
@@ -561,7 +569,7 @@ class QTBM(TransportSolver):
                         -1.0,
                     )
 
-    def _add_quantity(
+    def _add_quantity_to_bare(
         self,
         matrices: dict[tuple[int, int, int], DCSX],
         kpoint: xp.complex128,
@@ -589,7 +597,7 @@ class QTBM(TransportSolver):
             # up matrix can be symmetric while the individual matrices
             # are not.
 
-            if "real" in self.bare_system_matrix_type:
+            if self.bare_system_matrix.dtype == xp.float64:
                 if m_r.dtype != xp.float64:
                     raise ValueError(
                         "Real system matrix optimization is enabled, but the "
@@ -600,17 +608,17 @@ class QTBM(TransportSolver):
                         "Real system matrix optimization is enabled, but the "
                         "prefactor is complex."
                     )
-                prefactor = np.float64(
+                _prefactor = np.float64(
                     np.cos(2 * np.pi * np.dot(kpoint, r)) * prefactor
                 )
             else:
-                prefactor = np.complex128(
+                _prefactor = np.complex128(
                     np.exp(2j * np.pi * np.dot(kpoint, r)) * prefactor
                 )
 
             self.bare_system_matrix.add_(
                 m_r,
-                prefactor=prefactor,
+                prefactor=_prefactor,
             )
 
     @profiler.profile("QTBM: Assemble system matrix", level="default")
@@ -637,7 +645,7 @@ class QTBM(TransportSolver):
         # inplace assemble.
         # TODO: Simplify this when there is identity overlap matrix
         # E * S
-        self._add_quantity(
+        self._add_quantity_to_bare(
             self.device.overlap_matrices,
             kpoint,
         )
@@ -661,7 +669,7 @@ class QTBM(TransportSolver):
 
         # Add the Hamiltonian
         # -H
-        self._add_quantity(
+        self._add_quantity_to_bare(
             self.device.hamiltonians,
             kpoint,
             prefactor=-1.0,
@@ -802,7 +810,7 @@ class QTBM(TransportSolver):
             [eig_reflected[contact.name] for contact in self.device.contacts]
         )
 
-        if "real" in self.system_matrix_type:
+        if self.system_matrix_is_real:
             phi = xp.ascontiguousarray(phi)
             phi = phi.view(xp.complex128)
             phi = xp.asfortranarray(phi)
@@ -921,7 +929,7 @@ class QTBM(TransportSolver):
     #     error = contact.get_coupling_matrix(bare_system_matrix) @ phi_cont
 
     #     phi = comm.block.all_gather_v(phi, axis=0)
-    #     if "real" in self.system_matrix_type:
+    #     if self.system_matrix_is_real:
     #         # For real system matrix, we need to convert phi to real
     #         # before multiplying with the system matrix, and then
     #         # convert back to complex
@@ -943,7 +951,7 @@ class QTBM(TransportSolver):
     #             contact.get_coupling_matrix(bare_system_matrix, transpose=True)
     #             @ phi_cont
     #         )
-    #         if "real" in self.system_matrix_type:
+    #         if self.system_matrix_is_real:
     #             # For real system matrix, we need to convert phi to
     #             # real before multiplying with the system matrix,
     #             # and then convert back to complex
@@ -1023,7 +1031,7 @@ class QTBM(TransportSolver):
         # symmetric, but not r-point matrices.
         self.bare_system_matrix.allocate_data()
         self.bare_system_matrix.data = 0.0
-        self._add_quantity(
+        self._add_quantity_to_bare(
             self.device.overlap_matrices,
             kpoint,
         )
@@ -1508,10 +1516,10 @@ class QTBM(TransportSolver):
                             # contacts.
                             self.system_matrix.allocate_data()
                             self.system_matrix.data = 0.0
-                            # The `add_` method implicitly unsymmetrizes
-                            # the bare matrix. Up for discussion if this
-                            # should be more explicit.
-                            self.system_matrix.add_(self.bare_system_matrix)
+                            # We explicilty unsymmetrize the bare matrix.
+                            cache_id = id(self.bare_system_matrix)
+                            tmp = self.bare_system_matrix.expand_symmetry()
+                            self.system_matrix.add_(tmp, cache_id=cache_id)
                             self.bare_system_matrix.free_data()
 
                             self._add_sigma_to_system_matrix(

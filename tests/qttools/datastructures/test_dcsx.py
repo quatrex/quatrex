@@ -227,7 +227,7 @@ class TestConversionDist(TestConversion):
 class TestInplace:
     """Tests for the inplace methods of DCSX."""
 
-    def test_add_symmetric(
+    def test_add_(
         self,
         size: int,
         local_stack_shape: tuple,
@@ -247,45 +247,6 @@ class TestInplace:
         coo = sparse.coo_matrix(
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
-
-        local_sparray = coo.tocsr()[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
-
-        b = DCSX.from_sparray(
-            sparray=local_sparray,
-            local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
-        )
-
-        a_dense = a._to_dense()
-        b_dense = b._to_dense()
-
-        a.add_(b)
-
-        assert xp.allclose(a._to_dense(), a_dense + b_dense)
-
-    def test_add_nonsymmetric(
-        self,
-        size: int,
-        local_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can add a symmetric DCSX matrix to a non-symmetric DCSX matrix."""
-        __, coo, a = _create_coo_dcsx(
-            size=size,
-            local_stack_shape=local_stack_shape,
-        )
-
-        # randomly mask the `coo` matrix to create a new sparse matrix
-        # with a subset of the sparsity pattern of `coo`
-        rng = xp.random.default_rng(seed=42)
-        # choose a random subset of the non-zero entries of `coo` to keep
-        mask = rng.random(coo.nnz) > 0.5
-        coo = sparse.coo_matrix(
-            (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
-        )
-        coo = sparse.triu(coo)
 
         local_sparray = coo.tocsr()[
             a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
@@ -364,13 +325,11 @@ class TestAccess:
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
     ):
         """Tests that we can get a tile from a DCSX matrix."""
         local_coo, __, a = _create_coo_dcsx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
@@ -391,69 +350,21 @@ class TestAccess:
 
         assert xp.allclose(test_tile, ref_tile)
 
-    def test_get_tile_unsymmetrize(
-        self,
-        size: int,
-        local_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can get a tile from a DCSX matrix and unsymmetrize it."""
-        if symmetry is None:
-            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
-
-        __, coo, a = _create_coo_dcsx(
-            size=size,
-            local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
-        )
-
-        rng = xp.random.default_rng(seed=42)
-
-        rows = xp.arange(a.rows)
-        cols = xp.arange(a.cols)
-
-        mask = rng.random(a.rows) > 0.5
-        rows = rows[mask]
-
-        mask = rng.random(a.cols) > 0.5
-        cols = cols[mask]
-
-        test_tile = a.get_tile(rows, cols, unsymmetrize=True).toarray()
-
-        dense = coo.toarray()
-        dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
-
-        dense = dense[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
-
-        ref_tile = dense[rows, :][:, cols]
-        ref_tile = xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape)
-
-        assert xp.allclose(test_tile, ref_tile)
-
-    @pytest.mark.parametrize("unsymmetrize", [True, False])
     def test_get_tile_empty(
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
-        unsymmetrize: bool,
     ):
         """Tests that we can get an empty tile from a DCSX matrix."""
-
-        if unsymmetrize and symmetry is None:
-            pytest.skip("Unsymmetrization is only relevant for symmetric matrices.")
 
         __, __, a = _create_coo_dcsx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rows = xp.array([], dtype=xp.int64)
 
-        test_tile = a.get_tile(rows, unsymmetrize=unsymmetrize).toarray()
+        test_tile = a.get_tile(rows).toarray()
 
         assert test_tile.shape[-2] == 0
         assert test_tile.shape[-1] == a.cols
@@ -474,14 +385,12 @@ class TestOperations:
         self,
         size: int,
         local_stack_shape: tuple,
-        symmetry: str | None,
         rhs_size: tuple,
     ):
         """Tests that we can get a tile from a DCSX matrix."""
         __, coo, a = _create_coo_dcsx(
             size=size,
             local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
@@ -492,8 +401,6 @@ class TestOperations:
         out = a @ rhs
 
         dense = coo.toarray()
-        if symmetry is not None:
-            dense += xp.triu(symmetry_ops[symmetry](dense), k=1).swapaxes(-1, -2)
 
         dense = dense[
             a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :

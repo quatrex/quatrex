@@ -258,7 +258,7 @@ class QTBMContact(BaseContact):
             )
 
         m_xx = self._get_contact_blocks(
-            matrix=matrix,
+            matrix=matrix if matrix.symmetry is None else matrix.unsymmetrize(),
         )
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
 
@@ -506,9 +506,15 @@ class QTBMContact(BaseContact):
             the current rank.
 
         """
+        if matrix.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix must be unsymmetrized (symmetry=None) "
+                "for contact block extraction."
+            )
+
         m_origin = matrix.get_tile(
             row_ind=self.local_origin_orbital_indices,
-            unsymmetrize=True,
         )
 
         # NOTE: Possible to cache here the offsets in both nnz and
@@ -580,8 +586,9 @@ class QTBMContact(BaseContact):
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
+
         m_xx = self._get_contact_blocks(
-            matrix=M,
+            matrix=M.unsymmetrize() if M.symmetry is not None else M,
         )
         if m_xx is None:
             return None
@@ -865,10 +872,10 @@ class QTBMContact(BaseContact):
                 s_k.add_(s_r, prefactor=phase)
 
             h_xx = self._get_contact_blocks(
-                matrix=h_k,
+                matrix=h_k if h_k.symmetry is None else h_k.expand_symmetry(),
             )
             s_xx = self._get_contact_blocks(
-                matrix=s_k,
+                matrix=s_k if s_k.symmetry is None else s_k.expand_symmetry(),
             )
 
             grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

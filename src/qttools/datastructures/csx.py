@@ -333,6 +333,15 @@ class CSX:
     def expand_symmetry(
         self,
     ) -> CSX:
+        """Symmetrizes the CSX matrix. This returns a new CSX matrix
+        that is the symmetrized version of the original matrix.
+
+        Returns
+        -------
+        CSX
+            The symmetrized CSX matrix.
+
+        """
         if self.symmetry is None:
             raise ValueError("Symmetrization is only relevant for symmetric matrices.")
 
@@ -466,11 +475,8 @@ class CSX:
         if other._data is None:
             raise ValueError("Other data has not been allocated yet.")
 
-        # In the case of adding a symmetric matrix to a non-symmetric
-        # one, we expand the symmetry of the symmetric matrix to match
-        # the non-symmetric one.
         if other.symmetry is not None and self.symmetry is None:
-            other = other.expand_symmetry()
+            raise ValueError("Cannot add a symmetric matrix to a non-symmetric one.")
 
         if cache_id is None:
             cache_id = id(other)
@@ -550,8 +556,7 @@ class CSX:
 
         """
         if self.symmetry is not None:
-            csx = self.expand_symmetry()
-            return csx.__matmul__(other)
+            raise ValueError("Cannot multiply a symmetric matrix. Unsymmetrize first.")
 
         if other.ndim not in [1, 2]:
             raise ValueError("Other must be a 1D or 2D array.")
@@ -649,7 +654,6 @@ class CSX:
         self,
         row_ind: NDArray,
         col_ind: NDArray,
-        unsymmetrize: bool = False,
         _exclude_diagonal: bool = False,
     ) -> tuple[NDArray, NDArray, NDArray, tuple[int, int]]:
         """Returns a tile of the matrix as COO format.
@@ -660,8 +664,6 @@ class CSX:
             The row indices of the tile.
         col_ind : NDArray
             The column indices of the tile.
-        unsymmetrize : bool, optional
-            Whether to unsymmetrize the tile if the matrix is symmetric.
         _exclude_diagonal : bool, optional
             Whether to exclude the diagonal entries from the tile. This
             is used internally when unsymmetrizing a symmetric matrix to
@@ -675,8 +677,8 @@ class CSX:
 
         """
 
-        if unsymmetrize and self.symmetry is None:
-            raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
+        if self.symmetry is not None:
+            raise ValueError("Cannot get a tile of a symmetric matrix.")
 
         tile_shape = (len(row_ind), len(col_ind))
 
@@ -697,53 +699,12 @@ class CSX:
         tile_row = new_row[mask]
         tile_col = new_col[mask]
 
-        # NOTE: This can only be entered if the matrix is symmetric and we
-        # want to unsymmetrize it.
-        if unsymmetrize:
-            # NOTE: Small sanity check. This should never be triggered
-            # since we check for this at the beginning of the function.
-            if self.symmetry is None:
-                raise ValueError("Cannot unsymmetrize a non-symmetric matrix.")
-
-            # NOTE: This is a bit hacky. We switch both the
-            # inputs/outputs to get the transpose of the tile. We strip
-            # out the diagonal since it's already present in
-            # `tile_data/row/col` above.
-            tile_data_t, tile_col_t, tile_row_t, _ = self._get_tile(
-                row_ind=col_ind,
-                col_ind=row_ind,
-                unsymmetrize=False,
-                _exclude_diagonal=True,
-            )
-            tile_data_t = symmetry_ops[self.symmetry](tile_data_t)
-
-            nnz = len(tile_row) + len(tile_row_t)
-            index_type = get_index_dtype(maxval=nnz)
-
-            tile_data = xp.concatenate([tile_data, tile_data_t], axis=-1)
-            tile_row = xp.concatenate(
-                [tile_row.astype(index_type), tile_row_t.astype(index_type)],
-                dtype=index_type,
-            )
-            tile_col = xp.concatenate(
-                [tile_col.astype(index_type), tile_col_t.astype(index_type)],
-                dtype=index_type,
-            )
-
-            tile_row, tile_col, tile_data = make_canonical_coo(
-                row_ind=tile_row,
-                col_ind=tile_col,
-                cols=tile_shape[1],
-                data=tile_data,
-            )
-
         return tile_data, tile_row, tile_col, tile_shape
 
     def get_tile(
         self,
         row_ind: NDArray | None = None,
         col_ind: NDArray | None = None,
-        unsymmetrize: bool = False,
     ) -> CSX:
         """Returns a tile of the matrix as a new CSX object.
 
@@ -760,10 +721,6 @@ class CSX:
         col_ind : NDArray | None
             The column indices of the tile. If None, all columns are
             included.
-        unsymmetrize : bool, optional
-            Whether to unsymmetrize the tile if the matrix is symmetric.
-            This keyword is ignored if the matrix is non-symmetric.
-            Default is False.
 
         Returns
         -------
@@ -771,8 +728,11 @@ class CSX:
             The tile as a new CSX object.
 
         """
-        if unsymmetrize and self.symmetry is None:
-            unsymmetrize = False
+        if self.symmetry is not None:
+            raise ValueError(
+                "Cannot get a tile of a symmetric matrix. "
+                "Unsymmetruize the matrix first using `expand_symmetry()`."
+            )
 
         if row_ind is None:
             row_ind = xp.arange(self.rows, dtype=self.index_type)
@@ -803,7 +763,6 @@ class CSX:
         tile_data, tile_row, tile_col, tile_shape = self._get_tile(
             row_ind=row_ind,
             col_ind=col_ind,
-            unsymmetrize=unsymmetrize,
         )
 
         tile_csx = CSX(

@@ -80,7 +80,8 @@ class QTBMDevice(BaseDevice):
         # NOTE: This can not be really unified with SCBA because of the `block` requirement in SCBA.
         # NOTE: Currently, the contacts need the full graph and thus the
         # conversion to `DCSX` is happening not in `_init_hamiltonian`.
-        # NOTE: We know at this point `h_r` is upper diagonal.
+        # NOTE: We know at this point `h_r` is upper diagonal and we
+        # pretend it's symmetric for assembly purposes.
         for r, h_r in self.hamiltonians.items():
             tmp = h_r[
                 self.row_offsets[comm.block.rank] : self.row_offsets[
@@ -91,6 +92,7 @@ class QTBMDevice(BaseDevice):
             self.hamiltonians[r] = DCSX.from_sparray(
                 sparray=tmp,
                 dtype=tmp.dtype,
+                symmetry="hermitian",
             )
 
         for r, s_r in self.overlap_matrices.items():
@@ -103,6 +105,7 @@ class QTBMDevice(BaseDevice):
             self.overlap_matrices[r] = DCSX.from_sparray(
                 sparray=tmp,
                 dtype=tmp.dtype,
+                symmetry="hermitian",
             )
 
     def _add_contacts(self):

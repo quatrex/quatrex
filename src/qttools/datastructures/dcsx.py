@@ -65,6 +65,9 @@ class DCSX:
         "multiply_",
         "tocoo",
         "tocsr",
+        "add_",
+        "_data",
+        "get_tile",
     ]
 
     def __init__(
@@ -286,16 +289,6 @@ class DCSX:
         """Symmetrizes the DCSX matrix. This returns a new DCSX matrix
         that is the symmetrized version of the original matrix.
 
-        Note
-        ----
-        For non-symmetric matrices, this will return the matrix
-        unchanged.
-
-        Note
-        ----
-        This method is intended to be used in the matrix assembly
-        process in QTBM.
-
         Returns
         -------
         DCSX
@@ -303,8 +296,7 @@ class DCSX:
 
         """
         if self.symmetry is None:
-            return self
-
+            raise ValueError("Symmetrization is only relevant for symmetric matrices.")
         if (
             self.is_neighbour is None
             or self.num_neighbour_indices is None
@@ -398,77 +390,6 @@ class DCSX:
 
         return dcsx
 
-    def add_(
-        self,
-        other: DCSX,
-        prefactor: int | float | np.number = 1.0,
-        cache: bool = True,
-        cache_id: int | None = None,
-    ) -> None:
-        """Adds another DCSX matrix to this one in place.
-
-        Note
-        ----
-        This method assumes that the sparsity pattern of `other` is a
-        subset of the sparsity pattern of `self`. If this is not the
-        case, a ValueError will be raised.
-
-        Warning
-        -------
-        We do not check if both matrices have the same symmetry. This is
-        because we want to allow partial addition of matrices with
-        different symmetries. The user is responsible for ensuring that
-        the addition is valid.
-
-        Warning
-        -------
-        We allow the addition of a non-symmetric matrix to a symmetric
-        one as long as the sparsity pattern match. This again is to
-        allow for partial addition of matrices that result in a
-        symmetric matrix. The user is responsible for ensuring that the
-        addition is valid.
-
-        Parameters
-        ----------
-        other : DCSX
-            The DCSX matrix to add to this one.
-        prefactor : int | float | np.number, optional
-            A prefactor to multiply `other` by before adding. Default is
-            1.0.
-        cache : bool, optional
-            Whether to cache the indices for the addition operation.
-            Default is True.
-        cache_id : int | None, optional
-            An optional cache ID to use for caching the indices. If
-            None, the ID of `other` will be used. Default is None.
-
-        """
-        # In the case of adding a symmetric matrix to a non-symmetric
-        # one, we expand the symmetry of the symmetric matrix to match
-        # the non-symmetric one.
-        # NOTE: We route here to the `DCSX` version of `expand_symmetry`
-        # since it involves communication between ranks.
-        if other.symmetry is not None and self.symmetry is None:
-
-            # Get the ID here since `expand_symmetry` will create a new
-            # object, but we want to keep the cache ID of the original
-            # object.
-            # i.e. `expand_symmetry` will be called again, but the
-            # update indices are the same again.
-            if cache_id is None:
-                cache_id = id(other)
-
-            other = other.expand_symmetry()
-
-        # Afterwards we can just use the `CSX` version of `add_` since
-        # the symmetries are now the same.
-        self._csx.add_(
-            other._csx,
-            prefactor=prefactor,
-            cache=cache,
-            cache_id=cache_id,
-        )
-
     def __matmul__(self, other: NDArray) -> NDArray:
         """Matrix multiplication with a 1D or 2D array.
 
@@ -491,61 +412,7 @@ class DCSX:
             `self.local_stack_shape + (self.rows,) + other.shape[1:]`.
 
         """
-        csx = self._csx
-        if self.symmetry is not None:
-            csx = self.expand_symmetry()._csx
-
-        return csx @ other
-
-    def get_tile(
-        self,
-        row_ind: NDArray | None = None,
-        col_ind: NDArray | None = None,
-        unsymmetrize: bool = False,
-    ) -> CSX:
-        """Returns a tile of the matrix as a new CSX object.
-
-        Note
-        ----
-        The output is a non-distributed CSX object. If needed, one needs
-        to manually gather the results.
-
-        Note
-        ----
-        We cannot directly return the method of the underlying `CSX`
-        object since the unsymmetrization needs to be done on the full
-        matrix, not just the local part.
-
-        Parameters
-        ----------
-        row_ind : NDArray | None
-            The row indices of the tile. If None, all rows are included.
-        col_ind : NDArray | None
-            The column indices of the tile. If None, all columns are
-            included.
-        unsymmetrize : bool, optional
-            Whether to unsymmetrize the tile if the matrix is symmetric.
-
-        Returns
-        -------
-        CSX
-            The tile as a new CSX object.
-
-        """
-        if not unsymmetrize:
-            return self._csx.get_tile(
-                row_ind=row_ind,
-                col_ind=col_ind,
-            )
-
-        # NOTE: This is expensive. It would be possible to only
-        # communicate the relevant entries, but for now we will keep it
-        # simple.
-        tmp = self.expand_symmetry()
-        return tmp.get_tile(
-            row_ind=row_ind,
-            col_ind=col_ind,
-        )
+        return self._csx @ other
 
     @classmethod
     def from_sparray(

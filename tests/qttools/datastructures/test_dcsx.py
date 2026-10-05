@@ -16,10 +16,6 @@ def configure_comm(request):
     """Setup any state specific to the execution of the given module."""
     block_comm_size = request.param
 
-    _default_config = {
-        "send_recv": "device_mpi",
-    }
-
     if global_comm.size < block_comm_size:
         pytest.skip(
             f"Skipping test for block comm size {block_comm_size} with global comm size {global_comm.size}."
@@ -28,8 +24,6 @@ def configure_comm(request):
     # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
         block_comm_size=block_comm_size,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
         override=True,
     )
 

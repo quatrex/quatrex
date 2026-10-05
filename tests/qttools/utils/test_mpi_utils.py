@@ -11,7 +11,6 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import sparse as sparse
 from qttools import xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.utils.hdf5_utils import save_hdf5_dict
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 
@@ -27,9 +26,6 @@ def setup_module():
     """setup any state specific to the execution of the given module."""
     comm.configure(
         block_comm_size=1,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

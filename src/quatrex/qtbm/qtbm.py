@@ -3,6 +3,7 @@
 """Includes the core class for QTBM calculations."""
 import os
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from scipy.sparse import get_index_dtype
@@ -94,13 +95,6 @@ class QTBM(TransportSolver):
         self.config = config
         self.low_rank_obc = config.qtbm.low_rank_obc
 
-        kpoint_grid = config.device.kpoint_grid
-        if self.device.gamma_only and kpoint_grid != (1, 1, 1):
-            raise ValueError(
-                "The device only has a Gamma point Hamiltonian, "
-                "but more than one k-point is configured."
-            )
-
         self.max_batch_size = self.config.qtbm.max_batch_size
 
         self.observables = Observables()
@@ -133,26 +127,34 @@ class QTBM(TransportSolver):
                 dtype=xp.float64,
             )
 
-        if self.low_rank_obc:
-            self.system_matrix_view = "upper"
-            # Check if we can use real arithmetic for the system matrix
-            # and solvers (only possible for reduced method with real
-            # Hamiltonian and no k-point shift)
-            if (
-                not self.device.matrices_complex
-                and self.config.device.kpoint_grid == (1, 1, 1)
-                and self.config.device.kpoint_shift == (0, 0, 0)
-            ):
-                if comm.rank == 0:
+        self.bare_system_matrix_view = "upper"
+        # Check if we can use real arithmetic for the system matrix
+        # and solvers (only possible for reduced method with real
+        # Hamiltonian and no k-point shift)
+        if (
+            not self.device.matrices_complex
+            and self.config.device.kpoint_grid == (1, 1, 1)
+            and self.config.device.kpoint_shift == (0, 0, 0)
+        ):
+            if comm.rank == 0:
+                print(
+                    "REAL SYSTEM MATRIX OPTIMIZATION ENABLED:\n"
+                    "Using real arithmetic for the bare system matrix.",
+                    flush=True,
+                )
+                if self.low_rank_obc:
                     print(
-                        "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: "
-                        "Using real arithmetic for the system matrix and solvers."
+                        "Using real arithmetic for the solver.",
+                        flush=True,
                     )
-                self.system_matrix_type = "real_symmetric_indefinite"
+            self.bare_system_matrix_type = "real_symmetric_indefinite"
 
-            else:
-                self.system_matrix_type = "complex_hermitian_indefinite"
+        else:
+            self.bare_system_matrix_type = "complex_hermitian_indefinite"
 
+        if self.low_rank_obc:
+            self.system_matrix_view = self.bare_system_matrix_view
+            self.system_matrix_type = self.bare_system_matrix_type
         else:
             self.system_matrix_view = "full"
             self.system_matrix_type = "complex_nonsymmetric"
@@ -162,6 +164,7 @@ class QTBM(TransportSolver):
             matrix_type=self.system_matrix_type,
             matrix_view=self.system_matrix_view,
             row_offsets=self.device.row_offsets,
+            petsc_options=self.config.electron.solver.petsc_options,
         )
 
         self._allocate_bare_system_matrix()
@@ -175,7 +178,8 @@ class QTBM(TransportSolver):
         matrix_type: str,
         matrix_view: str,
         row_offsets: NDArray,
-    ) -> wave_function_solver.WFSolver:
+        petsc_options: dict[str, Any] | None = None,
+    ) -> tuple[wave_function_solver.WFSolver, dict]:
         """Configures the wavefunction solver based on the config.
 
         Parameters
@@ -191,11 +195,14 @@ class QTBM(TransportSolver):
         row_offsets : NDArray
             The row offsets partitioning the system matrix across MPI
             ranks.
+        petsc_options : dict[str, Any], optional
+            Dictionary of PETSc options to configure the solver.
 
         Returns
         -------
-        WFSolver
-            The configured wavefunction solver instance.
+        tuple[WFSolver, dict]
+            A tuple containing the configured wavefunction solver
+            instance and a dictionary of runtime configuration options.
 
         """
         runtime_config = {
@@ -218,18 +225,17 @@ class QTBM(TransportSolver):
             "thomas": wave_function_solver.Thomas,
         }
 
-        kwargs = {"matrix_type": matrix_type, "matrix_view": matrix_view}
+        kwargs: dict[str, Any] = {
+            "matrix_type": matrix_type,
+            "matrix_view": matrix_view,
+        }
 
         if solver_name in serial:
             return serial[solver_name](**kwargs), runtime_config
 
         if solver_name in distributed:
-            if solver_name in ("petsc", "auto"):
-                kwargs["petsc_options"] = {
-                    "ksp_type": "preonly",
-                    "pc_type": "lu",
-                    "pc_factor_mat_solver_type": "superlu_dist",
-                }
+            if solver_name in ("petsc", "auto") and petsc_options is not None:
+                kwargs["petsc_options"] = petsc_options
             return (
                 distributed[solver_name](
                     **kwargs,
@@ -274,7 +280,7 @@ class QTBM(TransportSolver):
             symmetry = "symmetric"
 
         # Allocate system matrix
-        if "real" in self.system_matrix_type:
+        if "real" in self.bare_system_matrix_type:
             system_matrix_dtype = xp.float64
         else:
             system_matrix_dtype = xp.complex128
@@ -555,7 +561,6 @@ class QTBM(TransportSolver):
 
     def _add_quantity(
         self,
-        bare_system_matrix: DCSX,
         matrices: dict[tuple[int, int, int], DCSX],
         kpoint: xp.complex128,
         prefactor=1.0,
@@ -578,15 +583,32 @@ class QTBM(TransportSolver):
 
         """
         for r, m_r in matrices.items():
-            if bare_system_matrix.symmetry != m_r.symmetry:
-                raise ValueError(
-                    f"Symmetry mismatch between bare system matrix "
-                    f"({bare_system_matrix.symmetry}) and "
-                    f"matrix ({m_r.symmetry})."
+            # NOTE: Any symmetry test is a bit difficult since the added
+            # up matrix can be symmetric while the individual matrices
+            # are not.
+
+            if "real" in self.bare_system_matrix_type:
+                if m_r.dtype != xp.float64:
+                    raise ValueError(
+                        "Real system matrix optimization is enabled, but the "
+                        "matrix being added is complex."
+                    )
+                if np.imag(prefactor) != 0.0:
+                    raise ValueError(
+                        "Real system matrix optimization is enabled, but the "
+                        "prefactor is complex."
+                    )
+                prefactor = np.float64(
+                    np.cos(2 * np.pi * np.dot(kpoint, r)) * prefactor
                 )
-            bare_system_matrix.add_(
+            else:
+                prefactor = np.complex128(
+                    np.exp(2j * np.pi * np.dot(kpoint, r)) * prefactor
+                )
+
+            self.bare_system_matrix.add_(
                 m_r,
-                prefactor=np.exp(2j * np.pi * np.dot(kpoint, r)) * prefactor,
+                prefactor=prefactor,
             )
 
     @profiler.profile("QTBM: Assemble system matrix", level="default")
@@ -614,7 +636,6 @@ class QTBM(TransportSolver):
         # TODO: Simplify this when there is identity overlap matrix
         # E * S
         self._add_quantity(
-            self.bare_system_matrix,
             self.device.overlap_matrices,
             kpoint,
         )
@@ -639,7 +660,6 @@ class QTBM(TransportSolver):
         # Add the Hamiltonian
         # -H
         self._add_quantity(
-            self.bare_system_matrix,
             self.device.hamiltonians,
             kpoint,
             prefactor=-1.0,
@@ -990,7 +1010,6 @@ class QTBM(TransportSolver):
         self.bare_system_matrix.allocate_data()
         self.bare_system_matrix.data = 0.0
         self._add_quantity(
-            self.bare_system_matrix,
             self.device.overlap_matrices,
             kpoint,
         )

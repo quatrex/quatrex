@@ -413,6 +413,21 @@ class DCSX:
         subset of the sparsity pattern of `self`. If this is not the
         case, a ValueError will be raised.
 
+        Warning
+        -------
+        We do not check if both matrices have the same symmetry. This is
+        because we want to allow partial addition of matrices with
+        different symmetries. The user is responsible for ensuring that
+        the addition is valid.
+
+        Warning
+        -------
+        We allow the addition of a non-symmetric matrix to a symmetric
+        one as long as the sparsity pattern match. This again is to
+        allow for partial addition of matrices that result in a
+        symmetric matrix. The user is responsible for ensuring that the
+        addition is valid.
+
         Parameters
         ----------
         other : DCSX

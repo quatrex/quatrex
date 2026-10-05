@@ -533,6 +533,51 @@ class SolverConfig(BaseModel):
 
     """
 
+    petsc_options: dict[str, str | int | float | bool | None] | None = None
+    """The PETSc options to use when [`direct_solver`](#direct_solver)
+    is set to `"petsc"`.
+
+    See the official PETSc documentation for a list of available
+    options.
+
+    !!! Note
+        We currently only support the `"preonly"` KSP type with the
+        `"lu"` PC type. They are set by default and cannot be changed.
+        The only option that can be changed is the
+        `"pc_factor_mat_solver_type"` which can be set to `"mumps"`,
+        `"superlu_dist"`, or `"strumpack"`. By default, `"super_lu"` is used.
+
+    """
+
+    @model_validator(mode="after")
+    def _check_petsc_options(self):
+        if self.petsc_options and self.direct_solver != "petsc":
+            raise ValueError(
+                "PETSc options can only be used "
+                "when the direct solver is set to 'petsc'."
+            )
+
+        if self.direct_solver == "petsc":
+            # Set preonly and lu as default options if not already set
+            if self.petsc_options is None:
+                self.petsc_options = {}
+            if "ksp_type" not in self.petsc_options:
+                self.petsc_options["ksp_type"] = "preonly"
+            else:
+                if self.petsc_options["ksp_type"] != "preonly":
+                    raise ValueError("PETSc ksp_type must be 'preonly'.")
+
+            if "pc_type" not in self.petsc_options:
+                self.petsc_options["pc_type"] = "lu"
+            else:
+                if self.petsc_options["pc_type"] != "lu":
+                    raise ValueError("PETSc pc_type must be 'lu'.")
+
+            if "pc_factor_mat_solver_type" not in self.petsc_options:
+                self.petsc_options["pc_factor_mat_solver_type"] = "superlu_dist"
+
+        return self
+
 
 class OBCConfig(BaseModel):
     r"""Options for open-boundary conditions (OBCs).

@@ -423,6 +423,21 @@ class CSX:
         subset of the sparsity pattern of `self`. If this is not the
         case, a ValueError will be raised.
 
+        Warning
+        -------
+        We do not check if both matrices have the same symmetry. This is
+        because we want to allow partial addition of matrices with
+        different symmetries. The user is responsible for ensuring that
+        the addition is valid.
+
+        Warning
+        -------
+        We allow the addition of a non-symmetric matrix to a symmetric
+        one as long as the sparsity pattern match. This again is to
+        allow for partial addition of matrices that result in a
+        symmetric matrix. The user is responsible for ensuring that the
+        addition is valid.
+
         Parameters
         ----------
         other : CSX
@@ -438,8 +453,6 @@ class CSX:
             None, the ID of `other` will be used. Default is None.
 
         """
-        if self.symmetry is not None and other.symmetry is None:
-            raise ValueError("Cannot add a non-symmetric matrix to a symmetric matrix.")
         if self.rows != other.rows or self.cols != other.cols:
             raise ValueError(
                 "The shapes of the two matrices must be the same for addition."

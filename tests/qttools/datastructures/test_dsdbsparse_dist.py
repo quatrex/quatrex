@@ -8,7 +8,6 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures.dsdbsparse import DSDBSparse, symmetry_ops
 from qttools.utils.gpu_utils import get_array_module_name
 from qttools.utils.mpi_utils import get_section_sizes
@@ -27,9 +26,6 @@ def configure_comm(request):
     # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
         block_comm_size=block_comm_size,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

@@ -152,7 +152,7 @@ class _SubCommunicator:
     ----------
     mpi_comm : MPI.Comm
         The MPI communicator to use.
-    config : dict
+    config : dict, optional
         The configuration for the communication backend. The keys
         are the names of the communication operations and the values
         are the backends to use. The available backends are "nccl",
@@ -160,7 +160,11 @@ class _SubCommunicator:
 
     """
 
-    def __init__(self, mpi_comm: MPI.Comm, config: dict):
+    def __init__(
+        self,
+        mpi_comm: MPI.Comm,
+        config: dict = {},
+    ):
         """Initializes the communication backend."""
         _SubCommunicator._validate_config(config)
         self._config = _default_config.copy()
@@ -975,9 +979,9 @@ class QuatrexCommunicator:
     def configure(
         self,
         block_comm_size: int,
-        block_comm_config: dict,
-        stack_comm_config: dict,
-        global_comm_config: dict,
+        block_comm_config: dict = {},
+        stack_comm_config: dict = {},
+        global_comm_config: dict = {},
         override: bool = False,
     ):
         """Configures the communicator.
@@ -986,16 +990,18 @@ class QuatrexCommunicator:
         ----------
         block_comm_size : int
             The size of the block communicator.
-        block_comm_config : dict
-            The configuration for the block sub-communicator.
-        stack_comm_config : dict
-            The configuration for the stack sub-communicator.
-        global_comm_config : dict
-            The configuration for the global communicator.
+        block_comm_config : dict, optional
+            The configuration for the block sub-communicator. If not
+            provided, the default configuration will be used.
+        stack_comm_config : dict, optional
+            The configuration for the stack sub-communicator. If not
+            provided, the default configuration will be used.
+        global_comm_config : dict, optional
+            The configuration for the global communicator. If not
+            provided, the default configuration will be used.
         override : bool, optional
-            Whether to override a previous configuration. Defaul
-            is False.
-
+            Whether to override a previous configuration. Defaul is
+            False.
 
         Raises
         -------

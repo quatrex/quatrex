@@ -154,6 +154,120 @@ class DCSX:
 
         return dense
 
+    def _communicate_quantity_blocking(self, quantity: NDArray) -> dict[int, NDArray]:
+        """
+        Communicates a quantity to the neighbours.
+
+        The quantity can either be the row indices, column indices, or
+        the data. The quantity is communicated to the neighbours based
+        on the graph analysis performed in `_graph_analysis`.
+
+        Parameters
+        ----------
+        quantity : NDArray
+            The quantity to communicate.
+
+        Returns
+        -------
+        dict[int, NDArray]
+            A dictionary mapping the rank of each neighbour to the
+            received quantity.
+
+        """
+        if (
+            self.is_neighbour is None
+            or self.num_neighbour_indices is None
+            or self.neighbour_indices is None
+        ):
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        my_rank = comm.block.rank
+        recv_buffer = {}
+
+        # NOTE: We do not deadlock here since we send in ascending
+        # order.
+        # Blocking receives from lower-ranked neighbours
+        for rank in range(my_rank):
+            if self.is_neighbour[my_rank, rank]:
+                recv_buffer[rank] = xp.empty(
+                    quantity.shape[:-1] + (self.num_neighbour_indices[my_rank, rank],),
+                    dtype=quantity.dtype,
+                )
+                comm.block.recv(buf=recv_buffer[rank], source=rank)
+
+        # Blocking sends to higher-ranked neighbours
+        for rank in range(my_rank + 1, comm.block.size):
+            if self.is_neighbour[my_rank, rank]:
+                send_buffer = xp.ascontiguousarray(
+                    quantity[..., self.neighbour_indices[rank]]
+                )
+                comm.block.send(buf=send_buffer, dest=rank)
+
+        return recv_buffer
+
+    def _communicate_quantity_nonblocking(
+        self, quantity: NDArray
+    ) -> dict[int, NDArray]:
+        """
+        Communicates a quantity to the neighbours.
+
+        The quantity can either be the row indices, column indices, or
+        the data. The quantity is communicated to the neighbours based
+        on the graph analysis performed in `_graph_analysis`.
+
+        Parameters
+        ----------
+        quantity : NDArray
+            The quantity to communicate.
+
+        Returns
+        -------
+        dict[int, NDArray]
+            A dictionary mapping the rank of each neighbour to the
+            received quantity.
+
+        """
+        if (
+            self.is_neighbour is None
+            or self.num_neighbour_indices is None
+            or self.neighbour_indices is None
+        ):
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        my_rank = comm.block.rank
+        recv_buffer = {}
+
+        for rank in range(comm.block.size):
+            if rank < my_rank and self.is_neighbour[my_rank, rank]:
+                recv_buffer[rank] = xp.empty(
+                    quantity.shape[:-1] + (self.num_neighbour_indices[my_rank, rank],),
+                    dtype=quantity.dtype,
+                )
+
+        # First communicate the col indices
+        requests = []
+        send_buffers = []
+        comm.block.group_start(comm.block._config["send_recv"])
+        for rank in range(comm.block.size):
+            if rank == my_rank:
+                continue
+
+            # Post a send
+            if rank > my_rank and self.is_neighbour[my_rank, rank]:
+                send_buffer = xp.ascontiguousarray(
+                    quantity[..., self.neighbour_indices[rank]]
+                )
+                send_buffers.append(send_buffer)
+                requests.append(comm.block.isend(buf=send_buffer, dest=rank))
+
+            # Post a receive
+            if rank < my_rank and self.is_neighbour[my_rank, rank]:
+                requests.append(comm.block.irecv(buf=recv_buffer[rank], source=rank))
+
+        comm.block.group_end(comm.block._config["send_recv"], requests)
+
+        return recv_buffer
+
     def _communicate_quantity(self, quantity: NDArray) -> dict[int, NDArray]:
         """
         Communicates a quantity to the neighbours.
@@ -175,46 +289,13 @@ class DCSX:
 
         """
 
-        if (
-            self.is_neighbour is None
-            or self.num_neighbour_indices is None
-            or self.neighbour_indices is None
-        ):
-            raise ValueError("Graph analysis has not been performed yet.")
+        # When using host mpi, we need to do the communication with
+        # blocking sends and receives.
+        if comm.block._config["send_recv"] == "host_mpi":
+            return self._communicate_quantity_blocking(quantity)
 
-        recv_buffer = {}
-
-        for rank in range(comm.block.size):
-            if rank < comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
-                recv_buffer[rank] = xp.empty(
-                    quantity.shape[:-1]
-                    + (self.num_neighbour_indices[comm.block.rank, rank],),
-                    dtype=quantity.dtype,
-                )
-
-        # First communicate the col indices
-        requests = []
-        send_buffers = []
-        comm.block.group_start(comm.block._config["send_recv"])
-        for rank in range(comm.block.size):
-            if rank == comm.block.rank:
-                continue
-
-            # Post a send
-            if rank > comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
-                send_buffer = xp.ascontiguousarray(
-                    quantity[..., self.neighbour_indices[rank]]
-                )
-                send_buffers.append(send_buffer)
-                requests.append(comm.block.isend(buf=send_buffer, dest=rank))
-
-            # Post a receive
-            if rank < comm.block.rank and self.is_neighbour[comm.block.rank, rank]:
-                requests.append(comm.block.irecv(buf=recv_buffer[rank], source=rank))
-
-        comm.block.group_end(comm.block._config["send_recv"], requests)
-
-        return recv_buffer
+        else:
+            return self._communicate_quantity_nonblocking(quantity)
 
     def _graph_analysis(self):
         """Performs a graph analysis to determine the neighbours of this rank.

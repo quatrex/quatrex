@@ -6,9 +6,8 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import sparse, xp
 from qttools.comm import comm
-from qttools.datastructures.csx import CSX
+from qttools.datastructures.csx import CSX, symmetry_ops
 from qttools.datastructures.csx_routines import allgather_csx
-from qttools.datastructures.dsdbsparse import symmetry_ops
 
 
 @pytest.fixture(autouse=True, scope="module", params=[6, 3, 1])

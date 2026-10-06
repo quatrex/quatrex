@@ -9,9 +9,8 @@ from scipy.sparse import get_index_dtype
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.datastructures.csx import CSX
+from qttools.datastructures.csx import CSX, symmetry_ops
 from qttools.datastructures.csx_routines import make_canonical_coo
-from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.utils.gpu_utils import get_host
 
 
@@ -446,6 +445,10 @@ class DCSX:
         """
         if self.symmetry is None:
             raise ValueError("Symmetrization is only relevant for symmetric matrices.")
+        if self.symmetry == "upper-triangular":
+            raise ValueError(
+                "Symmetrization is not supported for upper-triangular matrices."
+            )
         if (
             self.is_neighbour is None
             or self.num_neighbour_indices is None

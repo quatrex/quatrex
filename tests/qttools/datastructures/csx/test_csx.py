@@ -1,31 +1,9 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import numpy as np
 import pytest
-from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import sparse, xp
-from qttools.comm import comm
-from qttools.datastructures.dcsx import DCSX
-from qttools.datastructures.dsdbsparse import symmetry_ops
-from qttools.utils.mpi_utils import get_section_sizes
-
-
-@pytest.fixture(autouse=True, scope="module", params=[6, 3, 1])
-def configure_comm(request):
-    """Setup any state specific to the execution of the given module."""
-    block_comm_size = request.param
-
-    if global_comm.size < block_comm_size:
-        pytest.skip(
-            f"Skipping test for block comm size {block_comm_size} with global comm size {global_comm.size}."
-        )
-
-    # Configure the comm singleton with the parameterized block_comm_size
-    comm.configure(
-        block_comm_size=block_comm_size,
-        override=True,
-    )
+from qttools.datastructures.csx import CSX, symmetry_ops
 
 
 def _create_coo(
@@ -57,48 +35,40 @@ def _create_coo(
     return coo
 
 
-def _create_coo_dcsx(
+def _create_coo_csx(
     size: int,
     local_stack_shape: tuple,
     symmetry: str | None = None,
     from_indices: bool = False,
-) -> tuple[sparse.coo_matrix, sparse.coo_matrix, DCSX]:
+) -> tuple[sparse.coo_matrix, CSX]:
     """Returns a random complex sparse array
-    and a DCSX matrix with the same sparsity pattern.
+    and a CSX matrix with the same sparsity pattern.
     """
-    coo = _create_coo(size, symmetry=symmetry) if global_comm.rank == 0 else None
-    coo = global_comm.bcast(coo, root=0)
-
-    section_sizes, __ = get_section_sizes(size, comm.block.size)
-    row_offsets = np.cumsum([0] + section_sizes)
-
-    local_sparray = coo.tocsr()[
-        row_offsets[comm.block.rank] : row_offsets[comm.block.rank + 1], :
-    ]
+    coo = _create_coo(size, symmetry=symmetry)
+    coo = coo.tocoo()
+    coo.sum_duplicates()
 
     if from_indices:
-        local_sparray = local_sparray.tocoo()
-        dcsx = DCSX.from_sparray(
-            row_ind=local_sparray.row,
-            col_ind=local_sparray.col,
-            shape=local_sparray.shape,
+        csx = CSX.from_sparray(
+            row_ind=coo.row,
+            col_ind=coo.col,
+            shape=coo.shape,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
-            dtype=local_sparray.dtype,
+            dtype=coo.dtype,
         )
     else:
-        dcsx = DCSX.from_sparray(
-            sparray=local_sparray,
+        csx = CSX.from_sparray(
+            sparray=coo,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
-    dcsx.data = local_sparray.data
-
-    return local_sparray, coo, dcsx
+    csx.data = coo.data
+    return coo, csx
 
 
 class TestCreation:
-    """Tests the creation methods of DCSX."""
+    """Tests the creation methods of CSX."""
 
     @pytest.mark.parametrize("from_indices", [True, False])
     def test_from_sparray(
@@ -108,15 +78,15 @@ class TestCreation:
         symmetry: str | None,
         from_indices: bool,
     ):
-        """Tests the creation of DCSX matrices from sparse arrays."""
+        """Tests the creation of CSX matrices from sparse arrays."""
 
-        __, coo, dcsx = _create_coo_dcsx(
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
             from_indices=from_indices,
         )
-        dense_dcsx = dcsx._to_dense()
+        dense_dcsx = csx._to_dense()
         if symmetry is not None:
             reference = coo.toarray() + xp.triu(
                 symmetry_ops[symmetry](coo.toarray()), k=1
@@ -125,21 +95,10 @@ class TestCreation:
             reference = coo.toarray()
 
         assert xp.array_equiv(reference, dense_dcsx)
-        if symmetry is not None:
-            assert xp.array_equiv(
-                dense_dcsx, symmetry_ops[symmetry](dense_dcsx).swapaxes(-1, -2)
-            )
-
-
-@pytest.mark.mpi(min_size=2)
-class TestCreationDist(TestCreation):
-    """Tests all tests of TestCreation in distributed setting."""
-
-    pass
 
 
 class TestConversion:
-    """Tests for the conversion methods of DCSX."""
+    """Tests for the conversion methods of CSX."""
 
     def test_to_dense(
         self,
@@ -147,8 +106,8 @@ class TestConversion:
         local_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can convert a DCSX matrix to dense."""
-        __, coo, dcsx = _create_coo_dcsx(
+        """Tests that we can convert a CSX matrix to dense."""
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
@@ -162,26 +121,7 @@ class TestConversion:
 
         reference = xp.broadcast_to(reference, local_stack_shape + (size, size))
 
-        assert xp.allclose(reference, dcsx._to_dense())
-
-    def test_graph_analysis(
-        self,
-        size: int,
-        local_stack_shape: tuple,
-        symmetry: str | None,
-    ):
-        """Tests that we can perform graph analysis on a DCSX matrix."""
-
-        if symmetry is None:
-            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
-
-        __, __, dcsx = _create_coo_dcsx(
-            size=size,
-            local_stack_shape=local_stack_shape,
-            symmetry=symmetry,
-        )
-        # Just check that it runs without errors or deadlocks.
-        dcsx._graph_analysis()
+        assert xp.allclose(reference, csx._to_dense())
 
     def test_expand_symmetry(
         self,
@@ -189,18 +129,18 @@ class TestConversion:
         local_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can expand the symmetry of a DCSX matrix."""
+        """Tests that we can expand the symmetry of a CSX matrix."""
 
-        if symmetry is None:
+        if symmetry is None or symmetry == "upper-triangular":
             pytest.skip("Graph analysis is only relevant for symmetric matrices.")
 
-        __, coo, dcsx = _create_coo_dcsx(
+        coo, csx = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
         # Just check that it runs without errors or deadlocks.
-        full_dcsx = dcsx.expand_symmetry()
+        full_dcsx = csx.expand_symmetry()
 
         test = full_dcsx._to_dense()
         reference = coo.toarray() + xp.triu(
@@ -211,15 +151,8 @@ class TestConversion:
         assert xp.allclose(test, reference)
 
 
-@pytest.mark.mpi(min_size=2)
-class TestConversionDist(TestConversion):
-    """Tests all tests of TestConversion in distributed setting."""
-
-    pass
-
-
 class TestInplace:
-    """Tests for the inplace methods of DCSX."""
+    """Tests for the inplace methods of CSX."""
 
     def test_add_(
         self,
@@ -227,8 +160,8 @@ class TestInplace:
         local_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can add a DCSX matrix to another DCSX matrix."""
-        __, coo, a = _create_coo_dcsx(
+        """Tests that we can add a CSX matrix to another CSX matrix."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
@@ -242,12 +175,8 @@ class TestInplace:
             (coo.data[mask], (coo.row[mask], coo.col[mask])), shape=coo.shape
         )
 
-        local_sparray = coo.tocsr()[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
-
-        b = DCSX.from_sparray(
-            sparray=local_sparray,
+        b = CSX.from_sparray(
+            sparray=coo,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
@@ -265,19 +194,19 @@ class TestInplace:
         local_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can multiply a DCSX matrix by a column-wise vector."""
-        local_coo, __, a = _create_coo_dcsx(
+        """Tests that we can multiply a CSX matrix by a column-wise vector."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
-        colwise = rng.uniform(size=a.cols) + 1j * rng.uniform(size=a.cols)
+        colwise = rng.uniform(size=size) + 1j * rng.uniform(size=size)
 
         a.multiply_(colwise)
-        coo = local_coo.multiply(colwise).toarray()
-        reference = xp.broadcast_to(coo, local_stack_shape + (a.rows, a.cols))
+        coo = coo.multiply(colwise).toarray()
+        reference = xp.broadcast_to(coo, local_stack_shape + (size, size))
 
         assert xp.allclose(a.toarray(), reference)
 
@@ -287,59 +216,52 @@ class TestInplace:
         local_stack_shape: tuple,
         symmetry: str | None,
     ):
-        """Tests that we can multiply a DCSX matrix by a row-wise vector."""
-        local_coo, __, a = _create_coo_dcsx(
+        """Tests that we can multiply a CSX matrix by a row-wise vector."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
         )
 
         rng = xp.random.default_rng(seed=42)
-        rowwise = rng.uniform(size=a.rows) + 1j * rng.uniform(size=a.rows)
+        rowwise = rng.uniform(size=size) + 1j * rng.uniform(size=size)
         rowwise = rowwise[:, None]
 
         a.multiply_(rowwise)
-        coo = local_coo.multiply(rowwise).toarray()
-        reference = xp.broadcast_to(coo, local_stack_shape + (a.rows, a.cols))
+        coo = coo.multiply(rowwise).toarray()
+        reference = xp.broadcast_to(coo, local_stack_shape + (size, size))
 
         assert xp.allclose(a.toarray(), reference)
 
 
-@pytest.mark.mpi(min_size=2)
-class TestInplaceDist(TestInplace):
-    """Tests all tests of TestInplace in distributed setting."""
-
-    pass
-
-
 class TestAccess:
-    """Tests for the access methods of DCSX."""
+    """Tests for the access methods of CSX."""
 
     def test_get_tile(
         self,
         size: int,
         local_stack_shape: tuple,
     ):
-        """Tests that we can get a tile from a DCSX matrix."""
-        local_coo, __, a = _create_coo_dcsx(
+        """Tests that we can get a tile from a CSX matrix."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
         )
 
         rng = xp.random.default_rng(seed=42)
 
-        rows = xp.arange(a.rows)
-        cols = xp.arange(a.cols)
+        rows = xp.arange(size)
+        cols = xp.arange(size)
 
-        mask = rng.random(a.rows) > 0.5
+        mask = rng.random(size=size) > 0.5
         rows = rows[mask]
 
-        mask = rng.random(a.cols) > 0.5
+        mask = rng.random(size=size) > 0.5
         cols = cols[mask]
 
         test_tile = a.get_tile(rows, cols).toarray()
 
-        ref_tile = local_coo.tocsr()[rows, :][:, cols].toarray()
+        ref_tile = coo.tocsr()[rows, :][:, cols].toarray()
         ref_tile = xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape)
 
         assert xp.allclose(test_tile, ref_tile)
@@ -349,9 +271,9 @@ class TestAccess:
         size: int,
         local_stack_shape: tuple,
     ):
-        """Tests that we can get an empty tile from a DCSX matrix."""
+        """Tests that we can get an empty tile from a CSX matrix."""
 
-        __, __, a = _create_coo_dcsx(
+        __, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
         )
@@ -364,25 +286,18 @@ class TestAccess:
         assert test_tile.shape[-1] == a.cols
 
 
-@pytest.mark.mpi(min_size=2)
-class TestAccessDist(TestAccess):
-    """Tests all tests of TestAccess in distributed setting."""
-
-    pass
-
-
 class TestOperations:
-    """Tests for the operation on DCSX matrices."""
+    """Tests for the operation on CSX matrices."""
 
     @pytest.mark.parametrize("rhs_size", [(10,), tuple()])
-    def test_local_matmul(
+    def test_matmul(
         self,
         size: int,
         local_stack_shape: tuple,
         rhs_size: tuple,
     ):
-        """Tests that we can get a tile from a DCSX matrix."""
-        __, coo, a = _create_coo_dcsx(
+        """Tests that we can multiply a CSX matrix with another array."""
+        coo, a = _create_coo_csx(
             size=size,
             local_stack_shape=local_stack_shape,
         )
@@ -393,20 +308,52 @@ class TestOperations:
         )
 
         out = a @ rhs
-
         dense = coo.toarray()
-
-        dense = dense[
-            a.row_offsets[comm.block.rank] : a.row_offsets[comm.block.rank + 1], :
-        ]
         ref = dense @ rhs
+
         ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
 
         assert xp.allclose(out, ref)
 
+    def test_transpose(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can transpose a CSX matrix."""
+        if symmetry is not None:
+            pytest.skip("Transposition is only relevant for non-symmetric matrices.")
 
-@pytest.mark.mpi(min_size=2)
-class TestOperationsDist(TestOperations):
-    """Tests all tests of TestOperations in distributed setting."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
 
-    pass
+        test = a.transpose().toarray()
+        dense = coo.toarray()
+        ref = dense.transpose()
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(test, ref)
+
+    def test_conjugate(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+        symmetry: str | None,
+    ):
+        """Tests that we can conjugate a CSX matrix."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+        )
+
+        test = a.conjugate().toarray()
+        dense = coo.toarray()
+        ref = dense.conjugate()
+        ref = xp.broadcast_to(ref, local_stack_shape + ref.shape)
+
+        assert xp.allclose(test, ref)

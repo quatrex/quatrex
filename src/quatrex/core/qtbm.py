@@ -132,7 +132,7 @@ class QTBM(TransportSolver):
         # and solvers (only possible for reduced method with real
         # Hamiltonian and no k-point shift)
         if (
-            not self.device.matrices_complex
+            not self.device.are_matrices_complex
             and self.config.device.kpoint_grid == (1, 1, 1)
             and self.config.device.kpoint_shift == (0, 0, 0)
         ):
@@ -240,7 +240,12 @@ class QTBM(TransportSolver):
             return serial[solver_name](**kwargs), runtime_config
 
         if solver_name in distributed:
-            if solver_name in ("petsc", "auto") and petsc_options is not None:
+            if solver_name in ("petsc", "auto"):
+                if petsc_options is None:
+                    raise ValueError(
+                        "PETSc options must be provided when "
+                        "potentially using the PETSc solver."
+                    )
                 kwargs["petsc_options"] = petsc_options
             return (
                 distributed[solver_name](

@@ -1,11 +1,9 @@
-simulation_dir = "."
 input_dir = "../inputs"
 
 formalism = "wf"
 
 [compute.comm]
 block_comm_size = 3
-# Needed for non-blocking send-recv
 
 [device]
 transport_direction = "a"
@@ -31,18 +29,6 @@ kpoint_shift = [0.0,0.1,0]
 
 
 [electron]
-
-    energy_window_min = -5
-    energy_window_max = -4
-    energy_window_num = 10
-
-    [electron.obc]
-    algorithm = "spectral"
-    num_ref_iterations = 10
-    nevp_solver = "full"
-    r_o = 1000
-    r_i = 0.9
-    m_0 = 100
-    num_quad_points = 64
-    min_decay = 1e-8
-    max_decay = 10
+energy_window_min = -5
+energy_window_max = -4
+energy_window_num = 10

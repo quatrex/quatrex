@@ -62,7 +62,7 @@ class QTBMDevice(BaseDevice):
     def __init__(self, config: QuatrexConfig) -> None:
         super().__init__(config)
 
-        self.matrices_complex: bool = False
+        self.are_matrices_complex: bool = False
         self._init_hamiltonian()
 
         self.row_offsets = self._get_row_offsets()
@@ -70,12 +70,21 @@ class QTBMDevice(BaseDevice):
         self._convert_to_dcsx()
 
     def _get_row_offsets(self) -> NDArray:
+        """Computes the row offsets for distributed execution.
+
+        Returns
+        -------
+        NDArray
+            Array of row offsets for each process in the communicator.
+
+        """
         section_sizes, __ = get_section_sizes(
             self.orbital_coordinates.shape[0], comm.block.size
         )
         return np.cumsum([0] + section_sizes)
 
     def _convert_to_dcsx(self):
+        """Converts Hamiltonian and overlap matrices to DCSX format."""
         # NOTE: In the first step, naively split the matrix by uniform by the number of rows.
         # NOTE: This can not be really unified with SCBA because of the `block` requirement in SCBA.
         # NOTE: Currently, the contacts need the full graph and thus the
@@ -208,7 +217,7 @@ class QTBMDevice(BaseDevice):
 
         # NOTE: `load_matrices` enforces that all of them have the same
         # type.
-        self.matrices_complex = (
+        self.are_matrices_complex = (
             self.hamiltonians[(0, 0, 0)].dtype == np.complex128
         ) or (self.overlap_matrices[(0, 0, 0)].dtype == np.complex128)
 

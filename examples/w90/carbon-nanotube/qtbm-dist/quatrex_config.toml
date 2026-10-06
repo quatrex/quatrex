@@ -1,16 +1,12 @@
-simulation_dir = "."
 input_dir = "../inputs"
 
-formalism = "wf" # "negf" or "wf"
+formalism = "wf"
 
 [compute.comm]
 block_comm_size = 3
-# Needed for non-blocking send-recv
 
 [device]
 transport_direction = "a"
-kpoint_grid = [1, 1, 1]
-num_orbitals_per_atom = { "X" = 1 }
 
     [[device.contacts]]
     name = "left"
@@ -28,24 +24,7 @@ num_orbitals_per_atom = { "X" = 1 }
     fermi_level = -3.7
     mid_gap_energy = -3.8
 
-[electron] # ===========================================================
-
-# Energy grid.
+[electron]
 energy_window_min = -6.5
 energy_window_max = -1.0
 energy_window_num = 10
-
-
-obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
-
-# Parameters for Beyn's method.
-obc.num_ref_iterations = 3
-obc.max_decay = 15
-obc.min_decay = 1e-3
-obc.r_o = 10
-obc.r_i = 0.8
-obc.m_0 = 31
-obc.num_quad_points = 31
-
-obc.residual_tolerance = 1e-4

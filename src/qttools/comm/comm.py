@@ -92,6 +92,10 @@ GPU_AWARE_MPI = _check_gpu_aware_mpi()
 
 _backends = ("nccl", "host_mpi", "device_mpi")
 
+# For cupy, the default backend is host mpi, since it should always be
+# available. nccl or gpu-aware mpi are not always available. For numpy,
+# the default backend is "device mpi" which is just normal mpi. It is
+# not host mpi, since that would lead to extra copies.
 if xp.__name__ == "cupy":
     _default_config = {
         "all_to_all": "host_mpi",
@@ -1000,7 +1004,7 @@ class QuatrexCommunicator:
             The configuration for the global communicator. If not
             provided, the default configuration will be used.
         override : bool, optional
-            Whether to override a previous configuration. Defaul is
+            Whether to override a previous configuration. Default is
             False.
 
         Raises

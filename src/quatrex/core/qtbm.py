@@ -332,9 +332,9 @@ class QTBM(TransportSolver):
 
         for operator in [self.device.hamiltonians, self.device.overlap_matrices]:
             for mat in operator.values():
-                mat = mat.expand_symmetry()
-                row_ind.append(mat.row_ind)
-                col_ind.append(mat.col_ind)
+                _row_ind, _col_ind, __ = mat.expand_sparsity()
+                row_ind.append(_row_ind)
+                col_ind.append(_col_ind)
 
         contact_rows = {}
         contact_cols = {}
@@ -538,35 +538,28 @@ class QTBM(TransportSolver):
 
     def _add_sigma_to_system_matrix(
         self,
-        system_matrix: DCSX,
         obc_results: dict[QTBMContact, OBCResult],
         energy_ind: int,
-        sigma_update_indices: dict,
     ) -> None:
         """Adds the contribution of a contact self-energy to the system
         matrix for a given contact.
 
         Parameters
         ----------
-        system_matrix : DCSX
-            The system matrix to which the self-energy will be added.
         obc_results : dict[QTBMContact, OBCResult]
             Dictionary of OBC results for each contact.
         energy_ind : int
             Index of the current energy being processed.
-        sigma_update_indices : dict
-            Dictionary mapping each contact to its corresponding update
-            indices in the system matrix.
 
         """
 
         for contact, obc_result in obc_results.items():
             for k_t, sigma in obc_result.sigma_obc_k.items():
-                if len(sigma_update_indices[contact]) > 0:
+                if len(self.sigma_update_indices[contact]) > 0:
                     inplace.scatter_add_scaled_obc(
-                        system_matrix.data,
+                        self.system_matrix.data,
                         sigma[energy_ind, :, :],
-                        sigma_update_indices[contact],
+                        self.sigma_update_indices[contact],
                         k_t,
                         contact.transverse_repetition_grid,
                         -1.0,
@@ -705,21 +698,22 @@ class QTBM(TransportSolver):
 
         """
 
-        # TODO: This shouldnt work if only specific ranks have the obc
-        # results.
-
         phi_inv_reflected = {
             contact.name: obc_result.phi_inv_reflected[energy_ind]
             for contact, obc_result in obc_results.items()
         }
-        # TODO: Some so efficient to do pickled allgather.
-        # Unpack all gathered dictionaries into a single unified dictionary
+        # TODO: Not so efficient to do pickled allgather.
+        # Unpack all gathered dictionaries into a single unified
+        # dictionary. This works around that multiple contact ranks can
+        # have the same contact.
         phi_inv_reflected = {
             key: val
             for d in comm.block._mpi_comm.allgather(phi_inv_reflected)
             for key, val in d.items()
         }
 
+        # TODO: Refactor this part of the code since I do not understand
+        # what is going on here.
         data = xp.concatenate(
             [
                 phi_inv_reflected[contact.name].flatten()
@@ -799,7 +793,7 @@ class QTBM(TransportSolver):
         )
 
         # Generate the eigenvalue matrix
-        # TODO: Some so efficient to do pickled allgather.
+        # TODO: Not so efficient to do pickled allgather.
         eig_reflected = {
             contact.name: obc_result.eig_reflected[energy_ind]
             for contact, obc_result in obc_results.items()
@@ -917,67 +911,6 @@ class QTBM(TransportSolver):
             comm.block.all_reduce(root_candidate, root, op="max", backend="device_mpi")
             comm.block.bcast(out, root=root[0])
             transmission[kpoint_ind, global_energy_ind] = out[0]
-
-    # def _compute_spillover_error(
-    #     self,
-    # ):
-    #     # CHECK SPILL OVER ERROR (DEBUG)
-    #     error = contact.get_coupling_matrix(bare_system_matrix) @ phi_cont
-
-    #     phi = comm.block.all_gather_v(phi, axis=0)
-    #     if self.system_matrix_is_real:
-    #         # For real system matrix, we need to convert phi to real
-    #         # before multiplying with the system matrix, and then
-    #         # convert back to complex
-    #         tmp = phi.copy()
-    #         tmp = xp.ascontiguousarray(tmp)
-    #         tmp = tmp.view(xp.float64)
-    #         tmp = xp.asfortranarray(tmp)
-    #         tmp = bare_system_matrix @ tmp
-    #         tmp = xp.ascontiguousarray(tmp)
-    #         tmp = tmp.view(xp.complex128)
-    #         error += tmp[orbital_indices, :]
-    #         del tmp
-    #     else:
-    #         error += (bare_system_matrix @ phi)[orbital_indices, :]
-    #     if self.system_matrix_view == "upper":
-    #         # Need to add the contribution from the lower view of
-    #         # the system matrix as well
-    #         error += (
-    #             contact.get_coupling_matrix(bare_system_matrix, transpose=True)
-    #             @ phi_cont
-    #         )
-    #         if self.system_matrix_is_real:
-    #             # For real system matrix, we need to convert phi to
-    #             # real before multiplying with the system matrix,
-    #             # and then convert back to complex
-    #             tmp = phi.copy()
-    #             tmp = xp.ascontiguousarray(tmp)
-    #             tmp = tmp.view(xp.float64)
-    #             tmp = xp.asfortranarray(tmp)
-    #             tmp = bare_system_matrix.T @ tmp
-    #             tmp = xp.ascontiguousarray(tmp)
-    #             tmp = tmp.view(xp.complex128)
-    #             error += tmp[orbital_indices, :]
-    #             del tmp
-    #         else:
-    #             xp.conjugate(bare_system_matrix.data, out=bare_system_matrix.data)
-    #             error += (bare_system_matrix.T @ phi)[orbital_indices, :]
-    #             xp.conjugate(bare_system_matrix.data, out=bare_system_matrix.data)
-
-    #         error -= (
-    #             sparse.diags(bare_system_matrix.diagonal(), format="csr")[
-    #                 orbital_indices, :
-    #             ]
-    #             @ phi
-    #         )
-
-    #     error = xp.sum(xp.abs(error)**2, keepdims=True)
-    #     out = xp.zeros_like(error)
-    #     comm.block.all_reduce(error, out)
-
-    #     if comm.rank == 0:
-    #         print(f"    Spill over error for contact {contact.name[0]}: {out}")
 
     def _compute_ldos(
         self,
@@ -1489,10 +1422,8 @@ class QTBM(TransportSolver):
                             self.bare_system_matrix.free_data()
 
                             self._add_sigma_to_system_matrix(
-                                system_matrix=self.system_matrix,
                                 obc_results=obc_results,
                                 energy_ind=energy_ind,
-                                sigma_update_indices=self.sigma_update_indices,
                             )
 
                         system_matrix = (

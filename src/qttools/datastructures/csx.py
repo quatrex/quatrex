@@ -348,12 +348,11 @@ class CSX:
         new_col_ind = xp.concatenate(new_col_ind, axis=-1, dtype=index_type)
         new_data = xp.concatenate(new_data, axis=-1)
 
-        new_row_ind, new_col_ind, new_data = make_canonical_coo(
+        new_row_ind, new_col_ind, sort_idx = make_canonical_coo(
             row_ind=new_row_ind,
             col_ind=new_col_ind,
-            cols=self.cols,
-            data=new_data,
         )
+        new_data = new_data[..., sort_idx]
 
         csx = CSX(
             dtype=self.dtype,

@@ -60,10 +60,8 @@ def remove_duplicate_entries(
 def make_canonical_coo(
     row_ind: NDArray,
     col_ind: NDArray,
-    cols: int,
-    data: NDArray | None = None,
-) -> tuple[NDArray, NDArray] | tuple[NDArray, NDArray, NDArray]:
-    """Returns the canonical COO format of the given indices and data.
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns the canonical COO format of the given indices.
 
     Parameters
     ----------
@@ -71,17 +69,12 @@ def make_canonical_coo(
         The row indices of the COO format.
     col_ind : NDArray
         The column indices of the COO format.
-    cols : int
-        The number of columns in the matrix.
-    data : NDArray, optional
-        The data of the COO format. If None, only the indices are
-        returned.
 
     Returns
     -------
-    tuple[NDArray, NDArray] | tuple[NDArray, NDArray, NDArray]
-        The canonical COO format of the given indices and data. If
-        `data` is None, only the indices are returned.
+    tuple[NDArray, NDArray, NDArray]
+        The row indices, column indices, and the sorting indices of the
+        canonical COO format of the given indices.
 
     """
     # Sort the indices and data to get the canonical format
@@ -89,10 +82,7 @@ def make_canonical_coo(
 
     row_ind = row_ind[sort_idx]
     col_ind = col_ind[sort_idx]
-    if data is None:
-        return row_ind, col_ind
-    data = data[..., sort_idx]
-    return row_ind, col_ind, data
+    return row_ind, col_ind, sort_idx
 
 
 def allgather_csx(
@@ -199,12 +189,11 @@ def allgather_csx(
     # NOTE: When allgathering along rows, the result should be already
     # canonical.
     if axis == 1:
-        row_ind, col_ind, data = make_canonical_coo(
+        row_ind, col_ind, sort_idx = make_canonical_coo(
             row_ind=row_ind,
             col_ind=col_ind,
-            cols=cols,
-            data=data,
         )
+        data = data[..., sort_idx]
 
     csx = CSX(
         dtype=data.dtype,

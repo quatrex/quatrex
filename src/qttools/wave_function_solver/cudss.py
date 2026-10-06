@@ -115,12 +115,11 @@ class cuDSS(WFSolver):
         self.analyzed = False
         self.factorized = False
         self._matrix_handle = None
-        self._solution_handle = None
-        self._rhs_handle = None
         self._comm = comm
 
         self._indptr_ptr = None
         self._indices_ptr = None
+        self._local_rows = None
 
         # Comm and local_rows must be provided together or not at all.
         if (comm is None) != (local_rows is None):
@@ -131,9 +130,7 @@ class cuDSS(WFSolver):
         if local_rows is not None:
             start, stop = local_rows
             # NOTE: cuDSS uses inclusive end row
-            self.local_rows = (int(start), int(stop) - 1)
-        else:
-            self.local_rows = None
+            self._local_rows = (int(start), int(stop) - 1)
 
         if comm is not None:
             comm_lib = os.getenv("CUDSS_COMM_LIB")
@@ -189,12 +186,6 @@ class cuDSS(WFSolver):
         if hasattr(self, "_solver_handle") and self._solver_handle is not None:
             cudss.destroy(self._solver_handle)
             self._solver_handle = None
-        if hasattr(self, "_solution_handle") and self._solution_handle is not None:
-            cudss.matrix_destroy(self._solution_handle)
-            self._solution_handle = None
-        if hasattr(self, "_rhs_handle") and self._rhs_handle is not None:
-            cudss.matrix_destroy(self._rhs_handle)
-            self._rhs_handle = None
 
     def __del__(self):
         self.close()
@@ -255,8 +246,8 @@ class cuDSS(WFSolver):
             index_base=cudss.IndexBase.ZERO,
         )
 
-        if self.local_rows is not None:
-            cudss.matrix_set_distribution_row1d(csr_handle, *self.local_rows)
+        if self._local_rows is not None:
+            cudss.matrix_set_distribution_row1d(csr_handle, *self._local_rows)
 
         return csr_handle
 
@@ -315,8 +306,8 @@ class cuDSS(WFSolver):
             layout=cudss.Layout.COL_MAJOR,  # Fortran order
         )
 
-        if self.local_rows is not None:
-            cudss.matrix_set_distribution_row1d(array_handle, *self.local_rows)
+        if self._local_rows is not None:
+            cudss.matrix_set_distribution_row1d(array_handle, *self._local_rows)
 
         return array_handle
 
@@ -526,32 +517,36 @@ class cuDSS(WFSolver):
             else:
                 redo_analysis = local_redo
 
-            self._solution_handle = self._create_cudss_array(x, nrows_global=a.shape[1])
-            self._rhs_handle = self._create_cudss_array(b, nrows_global=a.shape[1])
+            _solution_handle = _rhs_handle = None
+            try:
+                _solution_handle = self._create_cudss_array(x, nrows_global=a.shape[1])
+                _rhs_handle = self._create_cudss_array(b, nrows_global=a.shape[1])
 
-            if redo_analysis:
-                for h in [self._matrix_handle]:
-                    if h is not None:
-                        cudss.matrix_destroy(h)
-                self._matrix_handle = self._create_cudss_csr(a)
-                self._analyze(
-                    self._matrix_handle, self._solution_handle, self._rhs_handle
-                )
-                self.analyzed = True
-                self.factorized = False
-            else:
-                # NOTE: Unsure here since it seems we need to keep the
-                # pointers to the row and column indices the same for cuDSS
-                # to reuse the analysis. Seems the update does not do what
-                # we would expect.
-                self._update_cudss_csr(a)
+                if redo_analysis:
+                    if self._matrix_handle is not None:
+                        cudss.matrix_destroy(self._matrix_handle)
+                        self._matrix_handle = None
+                    self.analyzed = False
+                    self.factorized = False
+                    self._matrix_handle = self._create_cudss_csr(a)
+                    self._analyze(self._matrix_handle, _solution_handle, _rhs_handle)
+                    self.analyzed = True
+                else:
+                    # NOTE: Unsure here since it seems we need to keep the
+                    # pointers to the row and column indices the same for cuDSS
+                    # to reuse the analysis. Seems the update does not do what
+                    # we would expect.
+                    self._update_cudss_csr(a)
 
-            if redo_analysis or not self.factorized or not reuse_factorization:
-                self._factorize(
-                    self._matrix_handle, self._solution_handle, self._rhs_handle
-                )
-                self.factorized = True
+                if redo_analysis or not self.factorized or not reuse_factorization:
+                    self._factorize(self._matrix_handle, _solution_handle, _rhs_handle)
+                    self.factorized = True
 
-            self._solve(self._matrix_handle, self._solution_handle, self._rhs_handle)
+                self._solve(self._matrix_handle, _solution_handle, _rhs_handle)
+
+            finally:
+                for handle in [_solution_handle, _rhs_handle]:
+                    if handle is not None:
+                        cudss.matrix_destroy(handle)
 
             return x.reshape(b_shape)

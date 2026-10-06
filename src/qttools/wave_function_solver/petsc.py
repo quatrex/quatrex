@@ -285,6 +285,12 @@ class PETSc(WFSolver):
             options.setValue(key, value)
         self._ksp.setFromOptions()
 
+    def __del__(self):
+        """Cleans up the PETSc solver."""
+        if getattr(self, "_ksp", None) is not None:
+            self._ksp.destroy()
+            self._ksp = None
+
     def _create_petsc_csr(self, a: sparse.csr_matrix) -> petsc.Mat:
         """Creates a PETSc matrix from a CSR matrix.
 

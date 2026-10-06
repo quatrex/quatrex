@@ -75,8 +75,6 @@ class CSX:
 
         self.shape = self.local_stack_shape + (self.rows, self.cols)
 
-        # NOTE: We currently do not populate the `row_ptr` array. This
-        # is because we do not use it in any of the operations.
         self._row_ptr = row_ptr
         self._row_ind = row_ind
         self._col_ind = col_ind
@@ -182,7 +180,9 @@ class CSX:
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
             tmp = sparse.coo_matrix(
-                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
+                (data, (self.row_ind, self.col_ind)),
+                shape=(self.rows, self.cols),
+                copy=False,
             ).toarray()
 
             if self.symmetry is not None:
@@ -212,7 +212,9 @@ class CSX:
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
             tmp = sparse.coo_matrix(
-                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
+                (data, (self.row_ind, self.col_ind)),
+                shape=(self.rows, self.cols),
+                copy=False,
             ).toarray()
 
             dense[idx] = tmp
@@ -246,23 +248,22 @@ class CSX:
             shape=(self.rows, self.cols),
             copy=False,
         )
-        # TODO: Make these tests work.
-        # # Check that pointers are the same.
-        # if get_pointer(out.row) != get_pointer(self.row_ind):
-        #     raise ValueError(
-        #         "The row indices of the COO matrix "
-        #         "do not match the row indices of the CSX matrix."
-        #     )
-        # if get_pointer(out.col) != get_pointer(self.col_ind):
-        #     raise ValueError(
-        #         "The column indices of the COO matrix "
-        #         "do not match the column indices of the CSX matrix."
-        #     )
-        # if get_pointer(out.data) != get_pointer(self.data):
-        #     raise ValueError(
-        #         "The data of the COO matrix "
-        #         "does not match the data of the CSX matrix."
-        #     )
+        # Check that pointers are the same.
+        if get_pointer(out.row) != get_pointer(self.row_ind):
+            raise ValueError(
+                "The row indices of the COO matrix "
+                "do not match the row indices of the CSX matrix."
+            )
+        if get_pointer(out.col) != get_pointer(self.col_ind):
+            raise ValueError(
+                "The column indices of the COO matrix "
+                "do not match the column indices of the CSX matrix."
+            )
+        if get_pointer(out.data) != get_pointer(self.data):
+            raise ValueError(
+                "The data of the COO matrix "
+                "does not match the data of the CSX matrix."
+            )
 
         return out
 
@@ -289,21 +290,9 @@ class CSX:
             raise ValueError("Cannot convert a stacked CSX to CSR.")
 
         if self._row_ptr is None:
-            # TODO: Not the most efficient way to get the _row_ptr.
-            # TODO: If the resulting type here is different from the index type
-            # we should warn.
-            self._row_ptr = (
-                sparse.coo_matrix(
-                    (
-                        xp.ones_like(self.row_ind, dtype=xp.bool_),
-                        (self.row_ind, self.col_ind),
-                    ),
-                    shape=(self.rows, self.cols),
-                    copy=False,
-                )
-                .tocsr()
-                .indptr.astype(self.index_type)
-            )
+            self._row_ptr = xp.searchsorted(
+                self.row_ind, xp.arange(self.rows + 1)
+            ).astype(self.index_type)
 
         out = sparse.csr_matrix(
             (self.data, self.col_ind, self.row_ptr),
@@ -573,31 +562,35 @@ class CSX:
             raise ValueError("Other must have the same number of columns as self.")
 
         if self._row_ptr is None:
-            # TODO: Not the most efficient way to get the _row_ptr.
-            self._row_ptr = (
-                sparse.coo_matrix(
-                    (
-                        xp.ones_like(self.row_ind, dtype=xp.bool_),
-                        (self.row_ind, self.col_ind),
-                    ),
-                    shape=(self.rows, self.cols),
-                    copy=False,
-                )
-                .tocsr()
-                .indptr.astype(self.index_type)
-            )
+            self._row_ptr = xp.searchsorted(
+                self.row_ind, xp.arange(self.rows + 1)
+            ).astype(self.index_type)
 
         out = xp.empty(
             self.local_stack_shape + (self.rows,) + other.shape[1:], dtype=self.dtype
         )
 
         for idx in np.ndindex(self.local_stack_shape):
-            # TODO: Not the most efficient pipeline but shouldnt copy.
-            out[idx] = sparse.csr_matrix(
+            # TODO: Not the most efficient pipeline.
+            _mat = sparse.csr_matrix(
                 (self.data[idx], self.col_ind, self.row_ptr),
                 shape=(self.rows, self.cols),
                 copy=False,
-            ).dot(other)
+            )
+            # Check that pointers are the same. This is needed for the solvers.
+            if get_pointer(_mat.indptr) != get_pointer(self.row_ptr):
+                raise ValueError(
+                    "The row pointer of the CSR matrix "
+                    "does not match the row pointer of the CSX matrix."
+                )
+            if get_pointer(_mat.indices) != get_pointer(self.col_ind):
+                raise ValueError(
+                    "The column indices of the CSR matrix "
+                    "do not match the column indices of the CSX matrix."
+                )
+            # NOTE: scipy somehow copies the data buffer here. I am not
+            # sure why.
+            out[idx] = _mat.dot(other)
 
         return out
 
@@ -654,7 +647,6 @@ class CSX:
         self,
         row_ind: NDArray,
         col_ind: NDArray,
-        _exclude_diagonal: bool = False,
     ) -> tuple[NDArray, NDArray, NDArray, tuple[int, int]]:
         """Returns a tile of the matrix as COO format.
 
@@ -664,10 +656,6 @@ class CSX:
             The row indices of the tile.
         col_ind : NDArray
             The column indices of the tile.
-        _exclude_diagonal : bool, optional
-            Whether to exclude the diagonal entries from the tile. This
-            is used internally when unsymmetrizing a symmetric matrix to
-            avoid double counting the diagonal entries.
 
         Returns
         -------
@@ -692,8 +680,6 @@ class CSX:
         new_col = col_lookup[self.col_ind]
 
         mask = (new_row >= 0) & (new_col >= 0)
-        if _exclude_diagonal:
-            mask &= self.row_ind != self.col_ind
 
         tile_data = self.data[..., mask]
         tile_row = new_row[mask]

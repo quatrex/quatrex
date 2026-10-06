@@ -60,12 +60,17 @@ def _select_distributed_solver(
     if matrix_type in ["real_symmetric_indefinite", "complex_hermitian_indefinite"]:
         raise ValueError("PETSc does only support general matrices.")
 
+    if "petsc_options" not in kwargs:
+        raise ValueError(
+            "PETSc options must be provided for distributed execution with PETSc."
+        )
+
     return PETSc(
         matrix_type=matrix_type,
         matrix_view=matrix_view,
         comm=comm,
         local_rows=local_rows,
-        petsc_options=kwargs.get("petsc_options", {}),
+        petsc_options=kwargs["petsc_options"],
     )
 
 

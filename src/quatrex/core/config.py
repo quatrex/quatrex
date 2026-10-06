@@ -543,9 +543,11 @@ class SolverConfig(BaseModel):
     !!! Note
         We currently only support the `"preonly"` KSP type with the
         `"lu"` PC type. They are set by default and cannot be changed.
-        The only option that can be changed is the
+        The option that can be changed is the
         `"pc_factor_mat_solver_type"` which can be set to `"mumps"`,
-        `"superlu_dist"`, or `"strumpack"`. By default, `"super_lu"` is used.
+        `"superlu_dist"`, or `"strumpack"`. By default, `"super_lu"` is
+        used. Additionaly, debug settings can be included see the
+        official PETSc documentation for more information.
 
     """
 
@@ -553,25 +555,23 @@ class SolverConfig(BaseModel):
     def _check_petsc_options(self):
         if self.petsc_options and self.direct_solver != "petsc":
             raise ValueError(
-                "PETSc options can only be used "
+                "PETSc options should only be set "
                 "when the direct solver is set to 'petsc'."
             )
 
-        if self.direct_solver == "petsc":
+        if self.direct_solver in ["petsc", "auto"]:
             # Set preonly and lu as default options if not already set
             if self.petsc_options is None:
                 self.petsc_options = {}
             if "ksp_type" not in self.petsc_options:
                 self.petsc_options["ksp_type"] = "preonly"
-            else:
-                if self.petsc_options["ksp_type"] != "preonly":
-                    raise ValueError("PETSc ksp_type must be 'preonly'.")
+            elif self.petsc_options["ksp_type"] != "preonly":
+                raise ValueError("PETSc ksp_type must be 'preonly'.")
 
             if "pc_type" not in self.petsc_options:
                 self.petsc_options["pc_type"] = "lu"
-            else:
-                if self.petsc_options["pc_type"] != "lu":
-                    raise ValueError("PETSc pc_type must be 'lu'.")
+            elif self.petsc_options["pc_type"] != "lu":
+                raise ValueError("PETSc pc_type must be 'lu'.")
 
             if "pc_factor_mat_solver_type" not in self.petsc_options:
                 self.petsc_options["pc_factor_mat_solver_type"] = "superlu_dist"
@@ -623,7 +623,7 @@ class OBCConfig(BaseModel):
 
     """
 
-    nevp_solver: Literal["beyn", "full"] = "beyn"
+    nevp_solver: Literal["beyn", "full"] = "full"
     r"""The NEVP solver to use for the spectral OBC algorithm.
 
     The contact eigenvalue problem is a polynomial eigenvalue problem of

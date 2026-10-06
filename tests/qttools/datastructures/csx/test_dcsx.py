@@ -199,7 +199,8 @@ class TestConversion:
         row_ind, col_ind, __ = dcsx.expand_sparsity()
 
         test = sparse.coo_matrix(
-            (xp.ones_like(row_ind), (row_ind, col_ind)), shape=local_coo.shape
+            (xp.ones_like(row_ind, dtype=coo.dtype), (row_ind, col_ind)),
+            shape=local_coo.shape,
         ).toarray()
 
         coo.data[:] = 1.0

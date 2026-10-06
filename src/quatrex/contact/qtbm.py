@@ -2,7 +2,6 @@
 
 """Includes the QTBM contact class."""
 
-
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass

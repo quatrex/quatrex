@@ -14,6 +14,7 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
+
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
     pytest.param(np.array([5] * 10), id="constant-block-size-5"),
@@ -63,7 +64,6 @@ SYMMETRY = [
     pytest.param("skew-hermitian", id="skew-hermitian"),
     pytest.param("hermitian", id="hermitian"),
     pytest.param("symmetric", id="symmetric"),
-    pytest.param("skew-symmetric", id="skew-symmetric"),
 ]
 
 

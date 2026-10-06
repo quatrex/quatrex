@@ -734,7 +734,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -6047,7 +6047,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../api/quatrex/phonon/" class="md-nav__link ">
+            <a href="../../api/quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -6089,14 +6089,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -6116,14 +6116,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6578,7 +6578,7 @@
 <p>The charge carrier densities are computed from the lesser and greater
 Green's functions and saved as <code>numpy</code> arrays (<code>electron_density.npy</code> /
 <code>hole_density.npy</code>) in the
-<a href="../parameters/quatrex/#output_directory"><code>output_directory</code></a>. These
+<a href="../parameters/quatrex/#output_dir"><code>output_dir</code></a>. These
 quantities are both orbital-resolved and have shapes of <code>(num_energies,
 *num_kpoints, num_orbitals)</code>. <code>*num_kpoints</code> is only present if the
 simulation is performed with a transverse k-point grid (see
@@ -6591,7 +6591,7 @@ simulation is performed with a transverse k-point grid (see
 <p>Similar to the charge carrier densities, the local density of states
 (LDOS) is computed from the retarded Green's function and saved as a
 <code>numpy</code> array (<code>ldos.npy</code>) in the
-<a href="../parameters/quatrex/#output_directory"><code>output_directory</code></a>. The LDOS is
+<a href="../parameters/quatrex/#output_dir"><code>output_dir</code></a>. The LDOS is
 also orbital-resolved and has a shape of <code>(num_energies, *num_kpoints,
 num_orbitals)</code>.</p>
 <div class="arithmatex">\[

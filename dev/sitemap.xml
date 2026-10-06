@@ -388,15 +388,6 @@
         <loc>https://quatrex.github.io/quatrex/dev/api/quatrex/grid/kpoints/</loc>
       </url>
       <url>
-        <loc>https://quatrex.github.io/quatrex/dev/api/quatrex/phonon/</loc>
-      </url>
-      <url>
-        <loc>https://quatrex.github.io/quatrex/dev/api/quatrex/phonon/polarization/</loc>
-      </url>
-      <url>
-        <loc>https://quatrex.github.io/quatrex/dev/api/quatrex/phonon/solver/</loc>
-      </url>
-      <url>
         <loc>https://quatrex.github.io/quatrex/dev/api/quatrex/photon/</loc>
       </url>
       <url>

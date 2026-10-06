@@ -734,7 +734,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -5880,7 +5880,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../api/quatrex/phonon/" class="md-nav__link ">
+            <a href="../../api/quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -5922,14 +5922,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -5949,14 +5949,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -7438,7 +7438,7 @@ pre.toml-overview {
 </tr>
 <tr>
 <td><a href="phonon/#model"><code>model</code></a></td>
-<td><code>Literal['pseudo-scattering', 'negf']</code></td>
+<td><code>Literal['pseudo-scattering', 'deformation-potential']</code></td>
 <td><code>'pseudo-scattering'</code></td>
 </tr>
 <tr>
@@ -7455,6 +7455,26 @@ pre.toml-overview {
 <td><a href="phonon/#temperature"><code>temperature</code></a></td>
 <td><code>PositiveFloat</code></td>
 <td><code>300.0</code></td>
+</tr>
+<tr>
+<td><a href="phonon/#acoustic_deformation_potential"><code>acoustic_deformation_potential</code></a></td>
+<td><code>FiniteFloat</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="phonon/#optical_deformation_potential"><code>optical_deformation_potential</code></a></td>
+<td><code>FiniteFloat</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="phonon/#atom_mass_u"><code>atom_mass_u</code></a></td>
+<td><code>PositiveFloat</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="phonon/#lattice_constant"><code>lattice_constant</code></a></td>
+<td><code>PositiveFloat</code> or <code>None</code></td>
+<td><code>None</code></td>
 </tr>
 </tbody>
 </table>
@@ -7779,6 +7799,31 @@ pre.toml-overview {
 </tr>
 <tr>
 <td><a href="comm/#stack_send_recv"><code>stack_send_recv</code></a></td>
+<td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="comm/#global_all_to_all"><code>global_all_to_all</code></a></td>
+<td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="comm/#global_all_gather"><code>global_all_gather</code></a></td>
+<td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="comm/#global_all_reduce"><code>global_all_reduce</code></a></td>
+<td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="comm/#global_bcast"><code>global_bcast</code></a></td>
+<td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><a href="comm/#global_send_recv"><code>global_send_recv</code></a></td>
 <td><code>Literal['host_mpi', 'device_mpi', 'nccl']</code> or <code>None</code></td>
 <td><code>None</code></td>
 </tr>

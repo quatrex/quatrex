@@ -732,7 +732,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -2650,6 +2650,34 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Phonons">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pseudo-scattering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pseudo-scattering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deformation-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deformation Potential
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -6014,7 +6042,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../api/quatrex/phonon/" class="md-nav__link ">
+            <a href="../../../api/quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -6056,14 +6084,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../api/quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../../api/quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -6083,14 +6111,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../api/quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../../api/quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6481,6 +6509,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Phonons">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pseudo-scattering" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pseudo-scattering
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deformation-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deformation Potential
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -6710,8 +6766,12 @@ outermost unit cell and its corresponding hopping matrices.</p>
 </div>
 <h3 id="phonons">Phonons<a class="headerlink" href="#phonons" title="Permanent link">#</a></h3>
 <p>Electron-phonon scattering is treated in a more simple picture.
-<code>quatrex</code> currently implements an electron-phonon coupling model with a
-single optical phonon mode. The implemented phonon self-energy is</p>
+<code>quatrex</code> currently implements a
+<code>"pseudo-scattering"</code> electron-phonon coupling model with a
+single optical phonon mode as well as a
+<code>"deformation-potential"</code> model with multiple modes.</p>
+<h4 id="pseudo-scattering">Pseudo-scattering<a class="headerlink" href="#pseudo-scattering" title="Permanent link">#</a></h4>
+<p>In the <code>"pseudo-scattering"</code> model, the implemented phonon self-energy is</p>
 <div class="arithmatex">\[
 \mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k}) =
 D_{ph}^{2}\!\left[
@@ -6722,7 +6782,75 @@ D_{ph}^{2}\!\left[
 <p>where <span class="arithmatex">\(D_{ph}\)</span> is the electron-phonon deformation potential,
 <span class="arithmatex">\(\hbar\omega_{ph}\)</span> is the phonon energy and <span class="arithmatex">\(N_{ph} =
 \left[\exp\left(\hbar\omega_{ph}/k_BT\right) - 1\right]^{-1}\)</span> is its
-Bose-Einstein occupancy at temperature <span class="arithmatex">\(T\)</span>.</p>
+Bose-Einstein occupancy at temperature <span class="arithmatex">\(T\)</span>.
+This model only computes the diagonal entries of
+<span class="arithmatex">\(\mathbf{\Sigma}^{\lessgtr}_{ph}(E, \mathbf{k})\)</span>.</p>
+<h4 id="deformation-potential">Deformation Potential<a class="headerlink" href="#deformation-potential" title="Permanent link">#</a></h4>
+<p>In the <code>"deformation-potential"</code> model, the self-energy is given by</p>
+<div class="arithmatex">\[
+\mathbf{\Sigma}^\gtrless(E)
+= \frac{1}{N} \sum_{\vec{q}, \lambda}
+\left|\mathcal{M}_{\vec{q} \lambda}\right|^2
+\left(
+(n_\mathrm{p}(\hbar \omega_{\vec{q}, \lambda}) + 1)
+\mathbf{G}^\gtrless(E\mp \hbar \omega_{\vec{q}, \lambda})
+\right.
+\]</div>
+<div class="arithmatex">\[
+\left. + n_\mathrm{p}(\hbar \omega_{\vec{q}, \lambda})
+\mathbf{G}^\gtrless(E\pm\hbar \omega_{\vec{q}, \lambda}) \right).
+\]</div>
+<p><span class="arithmatex">\(N\)</span> Is the number of atoms in the unit cell, <span class="arithmatex">\(\vec{q}, \lambda\)</span> label
+the phonon momenta and modes, and <span class="arithmatex">\(n_\mathrm{p}(\hbar \omega_{\vec{q},
+\lambda})\)</span> is the corresponding spectral density. We assume that the
+phonons are in equilibrium and thus model the spectral density by the
+Bose-Einstein distribution. Here the off-diagonal elements of
+<span class="arithmatex">\(\mathbf{\Sigma}\)</span> are being computed.</p>
+<p>The electron-phonon coupling constants <span class="arithmatex">\(\mathcal{M}_{\vec{q} \lambda}\)</span>
+are derived from deformation potential constants
+<a href="../../parameters/phonon/#acoustic_deformation_potential"><code>acoustic_deformation_potential</code></a>
+(<span class="arithmatex">\(\xi\)</span>) and
+<a href="../../parameters/phonon/#optical_deformation_potential"><code>optical_deformation_potential</code></a>
+(<span class="arithmatex">\(D_0\)</span>) as follows:</p>
+<ol>
+<li>For longitudinal acoustic (LA) phonons <span class="arithmatex">\(\mathcal{M}_{\vec{q} \lambda}
+   = i\Xi\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}} \left( \vec{q}
+   \cdot \vec{\epsilon}_{\vec{q}, \lambda} \right) =
+   i\Xi\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}} \left( |\vec{q}|
+   \cdot |\vec{\epsilon}_{\vec{q}, \lambda}| \right)\)</span>.</li>
+<li>For transverse acoustic (TA) phonons <span class="arithmatex">\(\mathcal{M}_{\vec{q} \lambda} =
+   0\)</span> since <span class="arithmatex">\(\vec{q} \perp \vec{\epsilon}_{\vec{q}, \lambda}\)</span>.</li>
+<li>All other phonons <span class="arithmatex">\(\mathcal{M}_{\alpha\beta, \vec{q} \lambda} =
+   D_0\sqrt{\frac{\hbar}{2m\omega_{\vec{q}, \lambda}}}\)</span>.</li>
+</ol>
+<p>The phonon modes must be provided as an input file, see <a href="../../input_data/#phonon-data">Phonon
+Data</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Limitations of the <code>"deformation-potential"</code> model</p>
+<p>The <code>"deformation-potential"</code> model is currently implemented under the
+following assumptions:</p>
+<ol>
+<li>We assume 1D structures, i.e., a unit cell repeated along a single axis.</li>
+<li>The electronic basis is assumed to be orthonormal.</li>
+<li>All atoms are assumed to have the same mass.</li>
+</ol>
+<p>Except for the LA and TA modes all phonon modes are treated as optical
+with the same deformation potential <span class="arithmatex">\(D_0\)</span>. In particular, torsional
+acoustic modes are not treated accurately.</p>
+</div>
+<p>For computational efficiency, we precompute factors
+<span class="arithmatex">\(V_{E_\mathrm{ph}}^\mathrm{em}\)</span> and <span class="arithmatex">\(V_{E_\mathrm{ph}}^\mathrm{abs}\)</span> and
+compute the self-energies as</p>
+<div class="arithmatex">\[
+\mathbf{\Sigma}^\lessgtr_{ph}(E)
+= \sum_{E_\mathrm{ph}}
+V_{E_\mathrm{ph}}^\mathrm{em}
+\mathbf{G}^\lessgtr(E\pm E_\mathrm{ph})
++ V_{E_\mathrm{ph}}^\mathrm{abs}
+\mathbf{G}^\lessgtr(E\mp E_\mathrm{ph}),
+\]</div>
+<p>where the phonon energies <span class="arithmatex">\(E_\mathrm{ph}\)</span> coincide with the electronic
+energy grid.</p>
 
 
 

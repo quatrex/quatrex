@@ -722,7 +722,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -5875,7 +5875,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../phonon/" class="md-nav__link ">
+            <a href="../phonon/index.md" class="md-nav__link ">
               
   
   
@@ -5917,14 +5917,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../phonon/polarization/" class="md-nav__link">
+      <a href="../phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -5944,14 +5944,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../phonon/solver/" class="md-nav__link">
+      <a href="../phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6293,6 +6293,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#quatrex.grid.get_equal_spacing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;get_equal_spacing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6344,6 +6355,13 @@
             <p>Includes function to construct a Monkhorst-Pack grid of k-points.</p>
           </div>
         </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="quatrex.grid.utils" href="utils/#quatrex.grid.utils">utils</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p>Helper functions having to do with grids.</p>
+          </div>
+        </li>
     </ul>
 
 
@@ -6367,6 +6385,13 @@
             –
             <div class="doc-md-description">
               <p>Constructs a Monkhorst-Pack grid of k-points.</p>
+            </div>
+          </li>
+          <li class="doc-section-item field-body">
+            <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-function&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-function-name&quot;&gt;get_equal_spacing&lt;/span&gt;" href="./#quatrex.grid.get_equal_spacing">get_equal_spacing</a></code></b>
+            –
+            <div class="doc-md-description">
+              <p>Asserts that the one-dimensional array <code>a</code> is approximately equispaced and returns</p>
             </div>
           </li>
     </ul>
@@ -6503,6 +6528,27 @@ the (kx, ky, kz) coordinates of a k-point in reduced units.</p>
           </div>
         </li>
     </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="quatrex.grid.get_equal_spacing" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">get_equal_spacing</span>
+
+
+<a href="#quatrex.grid.get_equal_spacing" class="headerlink" title="Permanent link">#</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_equal_spacing</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Asserts that the one-dimensional array <code>a</code> is approximately equispaced and returns
+the spacing.</p>
 
 
     </div>

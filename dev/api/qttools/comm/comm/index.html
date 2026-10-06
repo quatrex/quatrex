@@ -722,7 +722,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -5983,7 +5983,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../quatrex/phonon/" class="md-nav__link ">
+            <a href="../../../quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -6025,14 +6025,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../../quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -6052,14 +6052,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../../quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6601,7 +6601,7 @@ with the block and stack communicators.</p>
 
 
 <a href="#qttools.comm.comm.QuatrexCommunicator.configure" class="headerlink" title="Permanent link">#</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">configure</span><span class="p">(</span><span class="n">block_comm_size</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#int">int</a></span><span class="p">,</span> <span class="n">block_comm_config</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">,</span> <span class="n">stack_comm_config</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">,</span> <span class="n">override</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">configure</span><span class="p">(</span><span class="n">block_comm_size</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#int">int</a></span><span class="p">,</span> <span class="n">block_comm_config</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">,</span> <span class="n">stack_comm_config</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">,</span> <span class="n">global_comm_config</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">,</span> <span class="n">override</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -6633,6 +6633,14 @@ with the block and stack communicators.</p>
           –
           <div class="doc-md-description">
             <p>The configuration for the stack sub-communicator.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>global_comm_config</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The configuration for the global communicator.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">

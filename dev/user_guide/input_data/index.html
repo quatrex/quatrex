@@ -27,7 +27,7 @@
     
     
       
-        <title>Electronic Structure Data - quatrex</title>
+        <title>Input Data - quatrex</title>
       
     
     
@@ -85,7 +85,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#electronic-structure-data" class="md-skip">
+        <a href="#input-data" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Electronic Structure Data
+              Input Data
             
           </span>
         </div>
@@ -743,7 +743,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -760,7 +760,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -786,6 +786,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#electronic-structure-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Electronic Structure Data
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Electronic Structure Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#interfacing-with-dft-codes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -838,6 +850,11 @@
       </span>
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -5986,7 +6003,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../api/quatrex/phonon/" class="md-nav__link ">
+            <a href="../../api/quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -6028,14 +6045,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -6055,14 +6072,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../api/quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6372,6 +6389,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#electronic-structure-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Electronic Structure Data
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Electronic Structure Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#interfacing-with-dft-codes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6431,6 +6460,11 @@
     </nav>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
     </ul>
   
@@ -6450,7 +6484,8 @@
   
 
 
-<h1 id="electronic-structure-data">Electronic Structure Data<a class="headerlink" href="#electronic-structure-data" title="Permanent link">#</a></h1>
+<h1 id="input-data">Input Data<a class="headerlink" href="#input-data" title="Permanent link">#</a></h1>
+<h2 id="electronic-structure-data">Electronic Structure Data<a class="headerlink" href="#electronic-structure-data" title="Permanent link">#</a></h2>
 <p>To compute <em>non-equilibrium</em> electronic transport properties with
 <code>quatrex</code>, we need information about the underlying electronic structure
 of the system at <em>equilibrium</em>, i.e., primarily the Hamiltonian and
@@ -6485,7 +6520,7 @@ used to construct device Hamiltonians (see
 <a href="../parameters/device/#construct_from_unit_cell"><code>construct_from_unit_cell</code></a>)
 and/or to sample the Brillouin zone in transverse directions (see
 <a href="../parameters/device/#kpoint_grid"><code>kpoint_grid</code></a>).</p>
-<h2 id="interfacing-with-dft-codes">Interfacing with DFT Codes<a class="headerlink" href="#interfacing-with-dft-codes" title="Permanent link">#</a></h2>
+<h3 id="interfacing-with-dft-codes">Interfacing with DFT Codes<a class="headerlink" href="#interfacing-with-dft-codes" title="Permanent link">#</a></h3>
 <div class="admonition note">
 <p class="admonition-title">Unified Electronic Structure Interface</p>
 <p>We are working on a unified interface for different DFT codes, which
@@ -6510,7 +6545,7 @@ function to save them in HDF5 format for use with <code>quatrex</code>.</p>
 transport direction, <code>quatrex</code> simulations require electronic
 structure data to be represented in localized orbital basis.</p>
 </div>
-<h3 id="plane-wave-dft-wannier90">Plane-Wave DFT &amp; Wannier90<a class="headerlink" href="#plane-wave-dft-wannier90" title="Permanent link">#</a></h3>
+<h4 id="plane-wave-dft-wannier90">Plane-Wave DFT &amp; Wannier90<a class="headerlink" href="#plane-wave-dft-wannier90" title="Permanent link">#</a></h4>
 <p>To extract the necessary Hamiltonian and overlap matrices from
 plane-wave DFT codes, one can use the <a href="https://wannier.org/">Wannier90</a>
 package to project the electronic structure onto a basis of
@@ -6598,7 +6633,7 @@ format using the following code snippet</p>
 </span><span id="__span-1-66"><a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a><span class="n">save_hdf5_dict</span><span class="p">(</span><span class="s2">&quot;hamiltonian.h5&quot;</span><span class="p">,</span> <span class="n">hamiltonian</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
-<h3 id="cp2k">CP2K<a class="headerlink" href="#cp2k" title="Permanent link">#</a></h3>
+<h4 id="cp2k">CP2K<a class="headerlink" href="#cp2k" title="Permanent link">#</a></h4>
 <p>In <a href="https://cp2k.org/">CP2K</a> input files, you can enable the output of
 the Hamiltonian and overlap matrices in CSR format by adding the
 following block to the <code>&amp;PRINT</code> subsection of your <code>&amp;FORCE_EVAL/&amp;DFT</code>
@@ -6667,7 +6702,7 @@ to <code>scipy.sparse</code> matrices using the following code snippet:</p>
 <p>You can check CP2K's documentation for more information about the
 <a href="https://manual.cp2k.org/trunk/CP2K_INPUT/FORCE_EVAL/DFT/PRINT/KS_CSR_WRITE.html#ks-csr-write"><code>KS_CSR_WRITE</code></a>
 section.</p>
-<h3 id="gpaw">GPAW<a class="headerlink" href="#gpaw" title="Permanent link">#</a></h3>
+<h4 id="gpaw">GPAW<a class="headerlink" href="#gpaw" title="Permanent link">#</a></h4>
 <p>We can also extract the Hamiltonian and overlap matrices from
 <a href="https://gpaw.readthedocs.io/">GPAW</a> calculations performed in the
 <a href="https://gpaw.readthedocs.io/documentation/lcao/lcao.html#lcao"><code>lcao</code>
@@ -6706,7 +6741,7 @@ following code snippet:</p>
 </span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">save_hdf5_dict</span><span class="p">(</span><span class="s2">&quot;overlap.h5&quot;</span><span class="p">,</span> <span class="n">overlap</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
-<h3 id="siesta">Siesta<a class="headerlink" href="#siesta" title="Permanent link">#</a></h3>
+<h4 id="siesta">Siesta<a class="headerlink" href="#siesta" title="Permanent link">#</a></h4>
 <p>The <a href="https://siesta-project.org/">Siesta</a> code also allows extracting
 Hamiltonian and overlap matrices conveniently via
 <a href="https://sisl.readthedocs.io/en/latest/api/io/siesta.html"><code>sisl</code></a>,
@@ -6745,6 +6780,32 @@ the following code snippet:</p>
 </span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="n">save_hdf5_dict</span><span class="p">(</span><span class="s2">&quot;overlap.h5&quot;</span><span class="p">,</span> <span class="n">overlap_r</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
+<h1 id="phonon-data">Phonon Data<a class="headerlink" href="#phonon-data" title="Permanent link">#</a></h1>
+<p><code>quatrex</code> can incorporate the interactions of electrons and phonons in
+its transport calculations. Depending on the electron-phonon model that
+is used (see <a href="../methodology/negf/#phonons">Phonons</a>), additional inputs
+describing the phononic structure inside the device are required.</p>
+<h2 id="phonon-dispersion">Phonon Dispersion<a class="headerlink" href="#phonon-dispersion" title="Permanent link">#</a></h2>
+<p>The <code>"deformation-potential"</code> model requires the phonon dispersion to be
+provided in a file named <code>phonon_dispersion.npy</code>. This file must contain
+the angular velocities <code>omega[mode, momentum]</code> in
+<span class="arithmatex">\(\mathrm{rad}/\mathrm{s}\)</span> for the different phonon modes and momenta.
+The phonon momenta are assumed to be equally spaced as
+<code>np.linspace(-pi/a, pi/a, n_phonon_momenta)</code>, with <code>a</code> the lattice
+constant. <code>n_phonon_momenta</code> must be even to avoid the edge case where
+the phonon momentum equals zero and the electron-phonon coupling
+constants diverge.</p>
+<div class="admonition question">
+<p class="admonition-title">Why is the phonon momentum only one-dimensional?</p>
+<p>Currently, the <code>"deformation-potential</code>" model is only implemented
+for 1D structures. Phonons can thus only propagate along a single
+dimension.</p>
+</div>
+<p>The longitudinal acoustic mode should be the first one (<code>omega[0, :]</code>),
+followed by the two transverse acoustic modes. These three modes are
+treated as special cases in the <code>"deformation-potential"</code> model. The
+remaining modes are all treated equally and don't have to be in any
+particular order.</p>
 
 
 

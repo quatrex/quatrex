@@ -722,7 +722,7 @@
   <span class="md-ellipsis">
     
   
-  Electronic Structure Data
+  Input Data
 
     
   </span>
@@ -5875,7 +5875,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../quatrex/phonon/" class="md-nav__link ">
+            <a href="../../quatrex/phonon/index.md" class="md-nav__link ">
               
   
   
@@ -5917,14 +5917,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../quatrex/phonon/polarization/" class="md-nav__link">
+      <a href="../../quatrex/phonon/polarization.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  polarization
+  none
 
     
   </span>
@@ -5944,14 +5944,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../quatrex/phonon/solver/" class="md-nav__link">
+      <a href="../../quatrex/phonon/solver.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  solver
+  none
 
     
   </span>
@@ -6271,6 +6271,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#qttools.comm.distributed_max" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;distributed_max
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6315,6 +6326,13 @@
             <p>Includes the singleton communicator.</p>
           </div>
         </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="qttools.comm.utils" href="utils/#qttools.comm.utils">utils</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p>Functions on distributed arrays.</p>
+          </div>
+        </li>
     </ul>
 
 
@@ -6322,6 +6340,18 @@
 
 
 
+
+
+<p><span class="doc-section-title">Functions:</span></p>
+    <ul>
+          <li class="doc-section-item field-body">
+            <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-function&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-function-name&quot;&gt;distributed_max&lt;/span&gt;" href="./#qttools.comm.distributed_max">distributed_max</a></code></b>
+            –
+            <div class="doc-md-description">
+              <p>Returns the maximum of the real and possibly distributed <code>NDArray</code> <code>a</code>.</p>
+            </div>
+          </li>
+    </ul>
 
 
 
@@ -6337,6 +6367,59 @@
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="qttools.comm.distributed_max" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">distributed_max</span>
+
+
+<a href="#qttools.comm.distributed_max" class="headerlink" title="Permanent link">#</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">distributed_max</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">,</span> <span class="n">comm</span><span class="p">:</span> <span class="n"><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Returns the maximum of the real and possibly distributed <code>NDArray</code> <code>a</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>a</code></b>
+              (<code><span title="qttools.NDArray">NDArray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The input array, which can be distributed across multiple processes.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>comm</code></b>
+              (<code><span title="qttools.comm.comm._SubCommunicator">_SubCommunicator</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The communicator that defines the distribution of the array <code>a</code>.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="qttools.NDArray">NDArray</span></code>
+          –
+          <div class="doc-md-description">
+            <p>The maximum value of the array <code>a</code> across all processes.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
 
 
 

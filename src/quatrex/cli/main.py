@@ -57,7 +57,7 @@ def _run_wf(config, device):
         The device object to be used in the simulation.
 
     """
-    from quatrex.qtbm.qtbm import QTBM
+    from quatrex.core.qtbm import QTBM
 
     qtbm = QTBM(config, device)
 

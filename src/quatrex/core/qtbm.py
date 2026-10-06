@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 """Includes the core class for QTBM calculations."""
+
 import os
 from dataclasses import dataclass, field
 from typing import Any

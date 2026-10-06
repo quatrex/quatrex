@@ -257,9 +257,7 @@ class QTBMContact(BaseContact):
                 "for coupling matrix extraction."
             )
 
-        m_xx = self._get_contact_blocks(
-            matrix=matrix if matrix.symmetry is None else matrix.unsymmetrize(),
-        )
+        m_xx = self._get_contact_blocks(matrix=matrix)
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
 
         m_xx_tmp = {}
@@ -488,7 +486,7 @@ class QTBMContact(BaseContact):
     def _get_contact_blocks(
         self,
         matrix: DCSX,
-    ) -> dict[sparse.spmatrix] | None:
+    ) -> dict[sparse.spmatrix]:
         """Slices the given matrix into a dictionary of submatrices
         corresponding to the unit cell orbital indices.
 
@@ -499,11 +497,9 @@ class QTBMContact(BaseContact):
 
         Returns
         -------
-        dict | None
+        dict
             A dictionary mapping (i, j, k) tuples to the sliced
             submatrices corresponding to the unit cell orbital indices.
-            Returns None if the contact has no local orbital indices on
-            the current rank.
 
         """
         if matrix.symmetry is not None:
@@ -587,11 +583,7 @@ class QTBMContact(BaseContact):
 
         ny, nz = self.transverse_repetition_grid
 
-        m_xx = self._get_contact_blocks(
-            matrix=M.unsymmetrize() if M.symmetry is not None else M,
-        )
-        if m_xx is None:
-            return None
+        m_xx = self._get_contact_blocks(matrix=M)
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions

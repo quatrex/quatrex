@@ -87,8 +87,6 @@ class DCSX:
         self.is_neighbour: NDArray | None = None
         self.num_neighbour_indices: NDArray | None = None
         self.neighbour_indices: dict[int, NDArray] | None = None
-        self.recv_row_indices: dict[int, NDArray] | None = None
-        self.recv_col_indices: dict[int, NDArray] | None = None
 
     def __getattr__(self, name: str):
         if name in self._DELEGATED:
@@ -357,12 +355,82 @@ class DCSX:
 
         self.neighbour_indices = neighbour_indices
 
-        # In the symmetric case, we need now to communicate the row/col indices
-        # to the neighbouring ranks
+    def expand_sparsity(
+        self,
+    ) -> tuple[NDArray, NDArray, NDArray]:
+        """Expands the sparsity pattern of the DCSX matrix to include
+        the symmetric entries.
 
-        # Allocate the receiv buffers for the row/col indices
-        self.recv_row_indices = self._communicate_quantity(self.row_ind)
-        self.recv_col_indices = self._communicate_quantity(self.col_ind)
+        Returns
+        -------
+        tuple[NDArray, NDArray, NDArray]
+            The expanded row indices, column indices, and the sorting
+            indices. The sorting indices can be used to sort the data
+            array accordingly.
+
+        """
+        if self.symmetry is None:
+            raise ValueError("Symmetrization is only relevant for symmetric matrices.")
+        if (
+            self.is_neighbour is None
+            or self.num_neighbour_indices is None
+            or self.neighbour_indices is None
+        ):
+            self._graph_analysis()
+
+        if self.neighbour_indices is None:
+            raise ValueError("Graph analysis has not been performed yet.")
+
+        recv_row_indices = self._communicate_quantity(self.row_ind)
+        recv_col_indices = self._communicate_quantity(self.col_ind)
+
+        # TODO: This could be optimized to avoid the concatenation and
+        # sorting, but for now we will keep it simple.
+
+        # Convert received global entries into their transposed local coordinates.
+        new_row_ind = [self.row_ind] + [
+            recv_col_indices[rank] - self.row_offsets[comm.block.rank]
+            for rank in recv_col_indices.keys()
+        ]
+        new_col_ind = [self.col_ind] + [
+            recv_row_indices[rank] + self.row_offsets[rank]
+            for rank in recv_row_indices.keys()
+        ]
+
+        # NOTE: Need to account for the local symmetric entries.
+        if comm.block.rank in self.neighbour_indices:
+            local_neighbour_indices = self.neighbour_indices[comm.block.rank]
+
+            # Filter out the diagonal.
+            local_neighbour_indices = local_neighbour_indices[
+                self.col_ind[local_neighbour_indices]
+                != self.row_ind[local_neighbour_indices]
+                + self.row_offsets[comm.block.rank]
+            ]
+            new_row_ind.append(
+                self.col_ind[local_neighbour_indices]
+                - self.row_offsets[comm.block.rank]
+            )
+            new_col_ind.append(
+                self.row_ind[local_neighbour_indices]
+                + self.row_offsets[comm.block.rank]
+            )
+
+        nnz = np.sum([len(ind) for ind in new_row_ind])
+        index_type = get_index_dtype(maxval=nnz)
+        new_row_ind = [ind.astype(index_type) for ind in new_row_ind]
+        new_col_ind = [ind.astype(index_type) for ind in new_col_ind]
+
+        new_row_ind = xp.concatenate(new_row_ind, axis=-1, dtype=index_type)
+        new_col_ind = xp.concatenate(new_col_ind, axis=-1, dtype=index_type)
+
+        # Sort the indices and data to get the canonical format
+        new_row_ind, new_col_ind, sort_idx = make_canonical_coo(
+            row_ind=new_row_ind,
+            col_ind=new_col_ind,
+        )
+
+        return new_row_ind, new_col_ind, sort_idx
 
     def expand_symmetry(
         self,
@@ -385,31 +453,18 @@ class DCSX:
         ):
             self._graph_analysis()
 
-        if self.recv_row_indices is None or self.recv_col_indices is None:
-            raise ValueError("Graph analysis has not been performed yet.")
-
         if self.neighbour_indices is None:
             raise ValueError("Graph analysis has not been performed yet.")
 
-        recv_data = self._communicate_quantity(self.data)
+        new_row_ind, new_col_ind, sort_idx = self.expand_sparsity()
 
         # NOTE: All of the below could be cached, but then we start to
         # lose the memory advantage and we could just save the full
         # row_ind/col_ind/data arrays. So we will not do that for now.
+        recv_data = self._communicate_quantity(self.data)
 
         # TODO: This could be optimized to avoid the concatenation and
         # sorting, but for now we will keep it simple.
-
-        # Convert received global entries into their transposed local coordinates.
-        new_row_ind = [self.row_ind] + [
-            self.recv_col_indices[rank] - self.row_offsets[comm.block.rank]
-            for rank in recv_data.keys()
-        ]
-        new_col_ind = [self.col_ind] + [
-            self.recv_row_indices[rank] + self.row_offsets[rank]
-            for rank in recv_data.keys()
-        ]
-
         new_data = [self.data] + [
             symmetry_ops[self.symmetry](recv_data[rank]) for rank in recv_data.keys()
         ]
@@ -424,34 +479,12 @@ class DCSX:
                 != self.row_ind[local_neighbour_indices]
                 + self.row_offsets[comm.block.rank]
             ]
-            new_row_ind.append(
-                self.col_ind[local_neighbour_indices]
-                - self.row_offsets[comm.block.rank]
-            )
-            new_col_ind.append(
-                self.row_ind[local_neighbour_indices]
-                + self.row_offsets[comm.block.rank]
-            )
             new_data.append(
                 symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
             )
 
-        nnz = np.sum([len(ind) for ind in new_row_ind])
-        index_type = get_index_dtype(maxval=nnz)
-        new_row_ind = [ind.astype(index_type) for ind in new_row_ind]
-        new_col_ind = [ind.astype(index_type) for ind in new_col_ind]
-
-        new_row_ind = xp.concatenate(new_row_ind, axis=-1, dtype=index_type)
-        new_col_ind = xp.concatenate(new_col_ind, axis=-1, dtype=index_type)
         new_data = xp.concatenate(new_data, axis=-1)
-
-        # Sort the indices and data to get the canonical format
-        new_row_ind, new_col_ind, new_data = make_canonical_coo(
-            row_ind=new_row_ind,
-            col_ind=new_col_ind,
-            cols=self.cols,
-            data=new_data,
-        )
+        new_data = new_data[..., sort_idx]
 
         _csx = CSX(
             dtype=self.dtype,

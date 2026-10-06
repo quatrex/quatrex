@@ -9,9 +9,20 @@ from scipy.sparse import get_index_dtype
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.csx_routines import make_canonical_coo
-from qttools.datastructures.dsdbsparse import symmetry_ops
 from qttools.kernels import inplace
 from qttools.utils.gpu_utils import free_mempool, get_pointer
+
+# For CSX datastructures, we allow one more symmetry type than for
+# DSDBSparse. This is because we allow for the addition of a upper
+# triangular matrix to describe the case of real-point hamiltonian and
+# overlap matrices.
+symmetry_ops = {
+    "symmetric": lambda x: x,
+    "hermitian": lambda x: x.conjugate(),
+    "skew-symmetric": lambda x: -x,
+    "skew-hermitian": lambda x: -x.conjugate(),
+    "upper-triangular": lambda x: 0 * x,
+}
 
 
 class CSX:
@@ -333,6 +344,10 @@ class CSX:
         """
         if self.symmetry is None:
             raise ValueError("Symmetrization is only relevant for symmetric matrices.")
+        if self.symmetry == "upper-triangular":
+            raise ValueError(
+                "Symmetrization is not supported for upper-triangular matrices."
+            )
 
         indices = self.col_ind != self.row_ind
         new_row_ind = [self.row_ind] + [self.col_ind[indices]]

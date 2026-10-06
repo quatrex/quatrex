@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
+from qttools.comm.comm import _default_config
 from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
@@ -112,3 +114,16 @@ def return_retarded(request: pytest.FixtureRequest) -> bool:
 @pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param
+
+
+@pytest.fixture(autouse=True, scope="module")
+def configure_comm():
+    """setup any state specific to the execution of the given module."""
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=1,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        global_comm_config=_default_config,
+        override=True,
+    )

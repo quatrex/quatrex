@@ -92,13 +92,22 @@ GPU_AWARE_MPI = _check_gpu_aware_mpi()
 
 _backends = ("nccl", "host_mpi", "device_mpi")
 
-_default_config = {
-    "all_to_all": "host_mpi",
-    "all_gather": "host_mpi",
-    "all_reduce": "host_mpi",
-    "bcast": "host_mpi",
-    "send_recv": "host_mpi",
-}
+if xp.__name__ == "cupy":
+    _default_config = {
+        "all_to_all": "host_mpi",
+        "all_gather": "host_mpi",
+        "all_reduce": "host_mpi",
+        "bcast": "host_mpi",
+        "send_recv": "host_mpi",
+    }
+elif xp.__name__ == "numpy":
+    _default_config = {
+        "all_to_all": "device_mpi",
+        "all_gather": "device_mpi",
+        "all_reduce": "device_mpi",
+        "bcast": "device_mpi",
+        "send_recv": "device_mpi",
+    }
 
 _mpi_ops = {
     "sum": MPI.SUM,
@@ -968,6 +977,7 @@ class QuatrexCommunicator:
         block_comm_size: int,
         block_comm_config: dict,
         stack_comm_config: dict,
+        global_comm_config: dict,
         override: bool = False,
     ):
         """Configures the communicator.
@@ -980,6 +990,8 @@ class QuatrexCommunicator:
             The configuration for the block sub-communicator.
         stack_comm_config : dict
             The configuration for the stack sub-communicator.
+        global_comm_config : dict
+            The configuration for the global communicator.
         override : bool, optional
             Whether to override a previous configuration. Defaul
             is False.
@@ -1018,6 +1030,7 @@ class QuatrexCommunicator:
 
         self.block = _SubCommunicator(block_comm, block_comm_config)
         self.stack = _SubCommunicator(stack_comm, stack_comm_config)
+        self.global_ = _SubCommunicator(global_comm, global_comm_config)
 
         self._is_configured = True
 

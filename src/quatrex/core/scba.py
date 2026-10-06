@@ -10,9 +10,8 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
-from qttools.comm import comm
+from qttools.comm import comm, distributed_max
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density
@@ -24,11 +23,11 @@ from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
     SigmaFock,
-    SigmaPhonon,
+    SigmaPhononDeformationPotential,
+    SigmaPhononPseudoScattering,
     SigmaPhoton,
 )
-from quatrex.grid import get_electron_energies
-from quatrex.phonon import PhononSolver, PiPhonon
+from quatrex.grid import get_electron_energies, get_equal_spacing
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
@@ -117,12 +116,9 @@ class SCBAData:
             )
             self.w_greater = dsdbsparse_type.empty_like(self.w_lesser)
 
-        # TODO: The interactions with photons and phonons are not yet
+        # TODO: The interactions with photons are not yet
         # implemented.
         if config.scba.photon:
-            raise NotImplementedError
-
-        if config.scba.phonon and config.phonon.model == "negf":
             raise NotImplementedError
 
         # Allocate the data for the Green's functions and self-energies.
@@ -220,7 +216,7 @@ class SCBA(TransportSolver):
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
-        energy_resolution = self.electron_energies[1] - self.electron_energies[0]
+        energy_resolution = get_equal_spacing(self.electron_energies)
         num_energies_per_rank = num_energies // comm.stack.size
         if comm.rank == 0:
             print(
@@ -297,15 +293,22 @@ class SCBA(TransportSolver):
 
         # ----- Phonons ------------------------------------------------
         if self.config.scba.phonon:
-            if self.config.phonon.model == "negf":
-                energies_path = self.config.input_dir / "phonon_energies.npy"
-                self.phonon_energies = distributed_load(energies_path)
-                self.pi_phonon = PiPhonon(...)
-                self.phonon_solver = PhononSolver(config, self.phonon_energies)
-                self.sigma_phonon = SigmaPhonon(...)
+            if self.config.phonon.model == "pseudo-scattering":
+                self.sigma_phonon = SigmaPhononPseudoScattering(
+                    config, self.electron_energies
+                )
 
-            elif self.config.phonon.model == "pseudo-scattering":
-                self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
+            elif self.config.phonon.model == "deformation-potential":
+                if self.device.overlap_matrices is not None:
+                    raise ValueError(
+                        'The "deformation-potential" model is only implemented for an orthonormal basis.'
+                    )
+                self.sigma_phonon = SigmaPhononDeformationPotential(
+                    config, self.electron_energies
+                )
+
+            else:
+                raise ValueError(f"Unknown phonon model: {self.config.phonon.model}")
 
         self.data = SCBAData(
             config=config,
@@ -372,13 +375,21 @@ class SCBA(TransportSolver):
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = (
-            self.data.sigma_retarded_hermitian.data
-            - self.data.sigma_retarded_hermitian_prev.data
+        max_diff_sigma_lesser = distributed_max(
+            xp.abs(self.data.sigma_lesser.data - self.data.sigma_lesser_prev.data),
+            comm.global_,
         )
-        local_max_diff = get_host(xp.max(xp.abs(diff)))
-        max_diff = np.empty_like(local_max_diff)
-        global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
+        max_diff_sigma_greater = distributed_max(
+            xp.abs(self.data.sigma_greater.data - self.data.sigma_greater_prev.data),
+            comm.global_,
+        )
+        max_diff_sigma_retarded_hermitian = distributed_max(
+            xp.abs(
+                self.data.sigma_retarded_hermitian.data
+                - self.data.sigma_retarded_hermitian_prev.data
+            ),
+            comm.global_,
+        )
 
         meir_wingreen_current = self.observables.electron_current.get(
             "meir-wingreen", [0, 0]
@@ -386,8 +397,12 @@ class SCBA(TransportSolver):
         i_left = xp.real(meir_wingreen_current[..., 0])
         i_right = xp.real(meir_wingreen_current[..., -1])
 
-        dE = self.electron_energies[1] - self.electron_energies[0]
-        current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
+        dE = get_equal_spacing(self.electron_energies)
+        left_current = xp.sum(i_left) * dE
+        right_current = xp.sum(i_right) * dE
+        avg_current = (left_current + right_current) / 2
+        current_diff = xp.abs(left_current - right_current)
+        rel_current_diff = current_diff / xp.abs(avg_current)
 
         current_conservation_abs, current_conservation_rel = current_conservation(
             self.data.g_lesser,
@@ -397,8 +412,24 @@ class SCBA(TransportSolver):
         )
 
         if comm.rank == 0:
-            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
+            print(
+                f"Maximum Lesser Self-Energy Update: {max_diff_sigma_lesser}",
+                flush=True,
+            )
+            print(
+                f"Maximum Greater Self-Energy Update: {max_diff_sigma_greater}",
+                flush=True,
+            )
+            print(
+                f"Maximum Hermitian Retarded Self-Energy Update: {max_diff_sigma_retarded_hermitian}",
+                flush=True,
+            )
+            print(f"Left Contact Current: {left_current}", flush=True)
+            print(f"Right Contact Current: {right_current}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
+            print(
+                f"Relative Contact Current Difference: {rel_current_diff}", flush=True
+            )
             print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
             print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
@@ -407,19 +438,15 @@ class SCBA(TransportSolver):
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
-        if self.config.phonon.model == "negf":
-            raise NotImplementedError
-
-        elif self.config.phonon.model == "pseudo-scattering":
-            self.sigma_phonon.compute(
-                self.data.g_lesser,
-                self.data.g_greater,
-                out=(
-                    self.data.sigma_lesser,
-                    self.data.sigma_greater,
-                    self.data.sigma_retarded_hermitian,
-                ),
-            )
+        self.sigma_phonon.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            out=(
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded_hermitian,
+            ),
+        )
 
     @profiler.profile(label="SCBA: Photon interactions", level="default", comm=comm)
     def _compute_photon_interaction(self):
@@ -531,7 +558,6 @@ class SCBA(TransportSolver):
 
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)
     def _compute_coulomb_screening_observables(self) -> None:
-
         # NOTE: The overlap is maybe missing here (it is not used)
         if self.config.outputs.polarization_density:
             self.observables.p_lesser_density = density(self.data.p_lesser) / (

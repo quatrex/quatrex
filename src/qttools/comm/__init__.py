@@ -3,8 +3,9 @@
 """Includes the singleton communicator."""
 
 from qttools.comm.comm import QuatrexCommunicator
+from qttools.comm.utils import distributed_max
 
 # Instantiate the singleton communicator.
 comm = QuatrexCommunicator()
 
-__all__ = ["comm"]
+__all__ = ["comm", "distributed_max"]

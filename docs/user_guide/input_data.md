@@ -320,14 +320,14 @@ which can read the `.HSX` output files from Siesta calculations.
     save_hdf5_dict("overlap.h5", overlap_r)
     ```
 
-# Phonon Data
+## Phonon Data
 
 `quatrex` can incorporate the interactions of electrons and phonons in
 its transport calculations. Depending on the electron-phonon model that
 is used (see [Phonons](methodology/negf/#phonons)), additional inputs
 describing the phononic structure inside the device are required.
 
-## Phonon Dispersion
+### Phonon Dispersion
 
 The `"deformation-potential"` model requires the phonon dispersion to be
 provided in a file named `phonon_dispersion.npy`. This file must contain

@@ -863,6 +863,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#phonon-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Phonon Data
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phonon Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phonon-dispersion" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Phonon Dispersion
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6466,6 +6494,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#phonon-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Phonon Data
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phonon Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phonon-dispersion" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Phonon Dispersion
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6780,12 +6836,12 @@ the following code snippet:</p>
 </span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="n">save_hdf5_dict</span><span class="p">(</span><span class="s2">&quot;overlap.h5&quot;</span><span class="p">,</span> <span class="n">overlap_r</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
-<h1 id="phonon-data">Phonon Data<a class="headerlink" href="#phonon-data" title="Permanent link">#</a></h1>
+<h2 id="phonon-data">Phonon Data<a class="headerlink" href="#phonon-data" title="Permanent link">#</a></h2>
 <p><code>quatrex</code> can incorporate the interactions of electrons and phonons in
 its transport calculations. Depending on the electron-phonon model that
 is used (see <a href="../methodology/negf/#phonons">Phonons</a>), additional inputs
 describing the phononic structure inside the device are required.</p>
-<h2 id="phonon-dispersion">Phonon Dispersion<a class="headerlink" href="#phonon-dispersion" title="Permanent link">#</a></h2>
+<h3 id="phonon-dispersion">Phonon Dispersion<a class="headerlink" href="#phonon-dispersion" title="Permanent link">#</a></h3>
 <p>The <code>"deformation-potential"</code> model requires the phonon dispersion to be
 provided in a file named <code>phonon_dispersion.npy</code>. This file must contain
 the angular velocities <code>omega[mode, momentum]</code> in

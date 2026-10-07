@@ -56,6 +56,14 @@ for index_numpy_type, index_c_type in index_types.items():
     name = "_scatter_add_scaled_obc"
     name_expressions[(index_numpy_type, name)] = f"{name}<{index_c_type}>"
 
+for name in ["_add_bond_resolved_current_csr", "_add_bond_resolved_current_coo"]:
+    for index_numpy_type, index_c_type in index_types.items():
+        for value1_numpy_type, value1_c_type in value_types.items():
+            for value2_numpy_type, value2_c_type in value_types.items():
+                name_expressions[
+                    (value1_numpy_type, value2_numpy_type, index_numpy_type, name)
+                ] = f"{name}<{value1_c_type},{value2_c_type},{index_c_type}>"
+
 module = cp.RawModule(
     code=kernels_template,
     name_expressions=name_expressions.values(),
@@ -84,4 +92,32 @@ def _scatter_add_scaled_obc(
     grid: tuple[int, int, int], block: tuple[int, int, int], args: tuple
 ):
     kernel = kernels[(args[7].dtype.type, "_scatter_add_scaled_obc")]
+    kernel(grid, block, args)
+
+
+def _add_bond_resolved_current_csr(
+    grid: tuple[int, int, int], block: tuple[int, int, int], args: tuple
+):
+    kernel = kernels[
+        (
+            args[3].dtype.type,
+            args[10].dtype.type,
+            args[0].dtype.type,
+            "_add_bond_resolved_current_csr",
+        )
+    ]
+    kernel(grid, block, args)
+
+
+def _add_bond_resolved_current_coo(
+    grid: tuple[int, int, int], block: tuple[int, int, int], args: tuple
+):
+    kernel = kernels[
+        (
+            args[3].dtype.type,
+            args[10].dtype.type,
+            args[0].dtype.type,
+            "_add_bond_resolved_current_coo",
+        )
+    ]
     kernel(grid, block, args)

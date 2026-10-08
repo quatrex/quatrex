@@ -217,6 +217,18 @@ class QTBMContact(BaseContact):
             )
             self.row_offsets = np.array([0] + list(np.cumsum(counts)), dtype=np.int64)
 
+        # Discover the root rank for the contact comm.
+        root_candidate = np.ones((1,), dtype=np.int32) * -1
+        if len(self.local_orbital_indices) > 0:
+            if self.comm.rank == 0:
+                root_candidate[0] = quatrex_comm.block.rank
+
+        root = np.zeros((1,), dtype=np.int32)
+        quatrex_comm.block.all_reduce(
+            root_candidate, root, op="max", backend="device_mpi"
+        )
+        self.root_rank = root[0]
+
     def get_coupling_matrix(
         self,
         matrix: DCSX,
@@ -824,7 +836,7 @@ class QTBMContact(BaseContact):
         col_ind = np.concatenate(col_ind)
         row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
-        h_k = DCSX.from_sparray(
+        h_k = DCSX.from_indices(
             row_ind=row_ind,
             col_ind=col_ind,
             shape=self.device.hamiltonians[(0, 0, 0)].shape,
@@ -839,7 +851,7 @@ class QTBMContact(BaseContact):
         col_ind = np.concatenate(col_ind)
         row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
-        s_k = DCSX.from_sparray(
+        s_k = DCSX.from_indices(
             row_ind=row_ind,
             col_ind=col_ind,
             shape=self.device.overlap_matrices[(0, 0, 0)].shape,

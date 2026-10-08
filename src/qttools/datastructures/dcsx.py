@@ -302,8 +302,6 @@ class DCSX:
         - `is_neighbour`: A boolean array indicating whether each rank is a neighbour.
         - `num_neighbour_indices`: An array indicating the number of indices to send to each neighbour.
         - `neighbour_indices`: A dictionary mapping each neighbour rank to the indices to send to that neighbour.
-        - `recv_row_indices`: A dictionary mapping each neighbour rank to the row indices received from that neighbour.
-        - `recv_col_indices`: A dictionary mapping each neighbour rank to the column indices received from that neighbour.
 
         Note
         ----
@@ -326,15 +324,14 @@ class DCSX:
         num_neighbour_indices = np.zeros((1, comm.block.size), dtype=self.index_type)
         neighbour_indices = {}
 
-        col_ind = self.col_ind
         for rank in range(comm.block.size):
             indices = xp.argwhere(
-                (col_ind < self.row_offsets[rank + 1])
-                & (col_ind >= self.row_offsets[rank])
+                (self.col_ind < self.row_offsets[rank + 1])
+                & (self.col_ind >= self.row_offsets[rank])
             ).ravel()
 
             # Do not include self connections in the neighbour list.
-            if len(indices) > 0:
+            if len(indices) > 0 and not (rank == comm.block.rank):
                 is_neighbour[0, rank] = True
                 num_neighbour_indices[0, rank] = len(indices)
                 neighbour_indices[rank] = indices
@@ -355,18 +352,18 @@ class DCSX:
 
         self.neighbour_indices = neighbour_indices
 
-    def expand_sparsity(
+    def _expand_sparsity(
         self,
-    ) -> tuple[NDArray, NDArray, NDArray]:
+    ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         """Expands the sparsity pattern of the DCSX matrix to include
         the symmetric entries.
 
         Returns
         -------
-        tuple[NDArray, NDArray, NDArray]
-            The expanded row indices, column indices, and the sorting
-            indices. The sorting indices can be used to sort the data
-            array accordingly.
+        tuple[NDArray, NDArray, NDArray, NDArray]
+            The expanded row indices, column indices, the sorting
+            indices, and the local indices. Last two outputs are for
+            reuse in the `expand_symmetry` method.
 
         """
         if self.symmetry is None:
@@ -398,23 +395,22 @@ class DCSX:
         ]
 
         # NOTE: Need to account for the local symmetric entries.
-        if comm.block.rank in self.neighbour_indices:
-            local_neighbour_indices = self.neighbour_indices[comm.block.rank]
+        local_indices = xp.argwhere(
+            (self.col_ind < self.row_offsets[comm.block.rank + 1])
+            & (self.col_ind >= self.row_offsets[comm.block.rank])
+        ).ravel()
 
-            # Filter out the diagonal.
-            local_neighbour_indices = local_neighbour_indices[
-                self.col_ind[local_neighbour_indices]
-                != self.row_ind[local_neighbour_indices]
-                + self.row_offsets[comm.block.rank]
-            ]
-            new_row_ind.append(
-                self.col_ind[local_neighbour_indices]
-                - self.row_offsets[comm.block.rank]
-            )
-            new_col_ind.append(
-                self.row_ind[local_neighbour_indices]
-                + self.row_offsets[comm.block.rank]
-            )
+        # Filter out the diagonal.
+        local_indices = local_indices[
+            self.col_ind[local_indices]
+            != self.row_ind[local_indices] + self.row_offsets[comm.block.rank]
+        ]
+        new_row_ind.append(
+            self.col_ind[local_indices] - self.row_offsets[comm.block.rank]
+        )
+        new_col_ind.append(
+            self.row_ind[local_indices] + self.row_offsets[comm.block.rank]
+        )
 
         nnz = np.sum([len(ind) for ind in new_row_ind])
         index_type = get_index_dtype(maxval=nnz)
@@ -430,7 +426,23 @@ class DCSX:
             col_ind=new_col_ind,
         )
 
-        return new_row_ind, new_col_ind, sort_idx
+        return new_row_ind, new_col_ind, sort_idx, local_indices
+
+    def expand_sparsity(
+        self,
+    ) -> tuple[NDArray, NDArray]:
+        """Expands the sparsity pattern of the DCSX matrix to include
+        the symmetric entries.
+
+        Returns
+        -------
+        tuple[NDArray, NDArray]
+            The expanded row indices and column indices. The sorting
+            indices can be used to sort the data array accordingly.
+
+        """
+        new_row_ind, new_col_ind, __, __ = self._expand_sparsity()
+        return new_row_ind, new_col_ind
 
     def expand_symmetry(
         self,
@@ -444,23 +456,11 @@ class DCSX:
             The symmetrized DCSX matrix.
 
         """
-        if self.symmetry is None:
-            raise ValueError("Symmetrization is only relevant for symmetric matrices.")
         if self.symmetry == "upper-triangular":
             raise ValueError(
                 "Symmetrization is not supported for upper-triangular matrices."
             )
-        if (
-            self.is_neighbour is None
-            or self.num_neighbour_indices is None
-            or self.neighbour_indices is None
-        ):
-            self._graph_analysis()
-
-        if self.neighbour_indices is None:
-            raise ValueError("Graph analysis has not been performed yet.")
-
-        new_row_ind, new_col_ind, sort_idx = self.expand_sparsity()
+        (new_row_ind, new_col_ind, sort_idx, local_indices) = self._expand_sparsity()
 
         # NOTE: All of the below could be cached, but then we start to
         # lose the memory advantage and we could just save the full
@@ -474,18 +474,7 @@ class DCSX:
         ]
 
         # NOTE: Need to account for the local symmetric entries.
-        if comm.block.rank in self.neighbour_indices:
-            local_neighbour_indices = self.neighbour_indices[comm.block.rank]
-
-            # Filter out the diagonal.
-            local_neighbour_indices = local_neighbour_indices[
-                self.col_ind[local_neighbour_indices]
-                != self.row_ind[local_neighbour_indices]
-                + self.row_offsets[comm.block.rank]
-            ]
-            new_data.append(
-                symmetry_ops[self.symmetry](self.data[..., local_neighbour_indices])
-            )
+        new_data.append(symmetry_ops[self.symmetry](self.data[..., local_indices]))
 
         new_data = xp.concatenate(new_data, axis=-1)
         new_data = new_data[..., sort_idx]
@@ -535,13 +524,9 @@ class DCSX:
     @classmethod
     def from_sparray(
         cls,
-        sparray: sparse.spmatrix | None = None,
-        row_ind: NDArray | None = None,
-        col_ind: NDArray | None = None,
-        shape: tuple[int, int] | None = None,
+        sparray: sparse.spmatrix,
         local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
-        dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
     ) -> DCSX:
         """Allocates a DCSX matrix from a sparse array.
@@ -559,32 +544,17 @@ class DCSX:
 
         Parameters
         ----------
-        sparray : sparse.spmatrix | None, optional
-            The sparse array to convert to DCSX format. If None,
-            `row_ind` and `col_ind` must be provided.
-        row_ind : NDArray | None, optional
-            The row indices of the non-zero entries. If None, `sparray`
-            must be provided.
-        col_ind : NDArray | None, optional
-            The column indices of the non-zero entries. If None,
-            `sparray` must be provided.
-        shape : tuple[int, int] | None, optional
-            The shape of the matrix. If None, the shape of `sparray` is
-            used. If None and `sparray` is None, this must be provided.
+        sparray : sparse.spmatrix
+            The sparse array to convert to DCSX format.
         local_stack_shape : tuple, optional
             The shape of the local stack for this rank. Default is an
             empty tuple, which means no stack.
         symmetry : str | None, optional
             The symmetry of the matrix. This can be "symmetric",
-            "hermitian", "skew-symmetric", "skew-hermitian", or None.
-            Default is None.
-        dtype : xp.dtype[xp.generic] | None, optional
-            The data type of the matrix elements. Default is None and
-            the data type of the input sparse array is used.
+            "hermitian", "skew-symmetric", "skew-hermitian",
+            "upper-triangular", or None. Default is None.
         allocate : bool, optional
-            Whether to allocate the data array. Default is True. If an
-            sparray is provided, its data is used to initialize the data
-            array.
+            Whether to allocate the data array. Default is True.
 
         Returns
         -------
@@ -592,39 +562,23 @@ class DCSX:
             The DCSX matrix.
 
         """
-
         if comm.stack is None or comm.block is None:
             raise ValueError("Communicators must be initialized.")
 
-        if sparray is not None:
-            sparray = sparray.tocoo()
-            if shape is not None and shape != sparray.shape:
-                raise ValueError(
-                    f"Provided shape {shape} does not match the shape of the sparse array {sparray.shape}."
-                )
-            shape = sparray.shape
-            index_dtype = sparray.col.dtype
+        sparray = sparray.tocoo()
+        shape = sparray.shape
+        index_dtype = sparray.col.dtype
 
-            # Canonicalizes the COO format.
-            if not sparray.has_canonical_format:
-                sparray.sum_duplicates()
-            if not sparray.has_canonical_format:
-                raise ValueError("COO format is not canonical.")
+        # Canonicalizes the COO format.
+        if not sparray.has_canonical_format:
+            sparray.sum_duplicates()
+        if not sparray.has_canonical_format:
+            raise ValueError("COO format is not canonical.")
 
-            row_ind = sparray.row
-            col_ind = sparray.col
+        row_ind = sparray.row
+        col_ind = sparray.col
 
-            dtype = sparray.data.dtype if dtype is None else dtype
-
-        else:
-            if dtype is None:
-                raise ValueError(
-                    "Data type must be provided " "if no sparse array is given."
-                )
-            if shape is None:
-                shape = (int(xp.max(row_ind)) + 1, int(xp.max(col_ind)) + 1)
-
-            index_dtype = row_ind.dtype
+        dtype = sparray.data.dtype
 
         num_rows = xp.array([shape[0]], dtype=index_dtype)
         num_cols = xp.array([shape[1]], dtype=index_dtype)
@@ -649,17 +603,106 @@ class DCSX:
         comm.block.all_gather(num_rows, row_offsets[1:])
         row_offsets = get_host(xp.cumsum(row_offsets))
 
-        _csx = CSX.from_sparray(
+        _csx = CSX.from_indices(
             row_ind=row_ind,
             col_ind=col_ind,
+            dtype=dtype,
             shape=shape,
             local_stack_shape=local_stack_shape,
             symmetry=symmetry,
-            dtype=dtype,
             allocate=allocate,
         )
-        if sparray is not None and allocate:
+        if allocate:
             _csx.data = sparray.data
+
+        dcsx = cls(
+            _csx=_csx,
+            row_offsets=row_offsets,
+        )
+
+        return dcsx
+
+    @classmethod
+    def from_indices(
+        cls,
+        row_ind: NDArray,
+        col_ind: NDArray,
+        dtype: xp.dtype[xp.generic],
+        shape: tuple[int, int],
+        local_stack_shape: tuple = tuple(),
+        symmetry: str | None = None,
+        allocate: bool = True,
+    ) -> DCSX:
+        """Allocates a DCSX matrix from a sparse array.
+
+        Note
+        ----
+        This assumes that the input sparse array is already distributed
+        correctly.
+
+        Parameters
+        ----------
+        row_ind : NDArray
+            The row indices of the non-zero entries.
+        col_ind : NDArray
+            The column indices of the non-zero entries.
+        dtype : xp.dtype[xp.generic]
+            The data type of the matrix elements.
+        shape : tuple[int, int]
+            The shape of the matrix.
+        local_stack_shape : tuple, optional
+            The shape of the local stack for this rank. Default is an
+            empty tuple, which means no stack.
+        symmetry : str | None, optional
+            The symmetry of the matrix. This can be "symmetric",
+            "hermitian", "skew-symmetric", "skew-hermitian", "upper-triangular", or None. Default is None.
+        allocate : bool, optional
+            Whether to allocate the data array. Default is True.
+
+        Returns
+        -------
+        DCSX
+            The DCSX matrix.
+
+        """
+
+        if comm.stack is None or comm.block is None:
+            raise ValueError("Communicators must be initialized.")
+
+        index_dtype = row_ind.dtype
+
+        num_rows = xp.array([shape[0]], dtype=index_dtype)
+        num_cols = xp.array([shape[1]], dtype=index_dtype)
+
+        all_rows = xp.zeros((comm.block.size), dtype=index_dtype)
+        all_cols = xp.zeros((comm.block.size), dtype=index_dtype)
+        comm.block.all_gather(num_rows, all_rows)
+        comm.block.all_gather(num_cols, all_cols)
+
+        # Check that the number of columns are the same across all block comm ranks.
+        if not xp.all(all_cols == all_cols[0]):
+            raise ValueError("The number of columns must be the same across all ranks.")
+
+        # Check that the sum of all rows are the same as the number of columns.
+        # This means the matrix is split across the rows.
+        if not xp.sum(all_rows) == all_cols[0]:
+            raise ValueError(
+                "The sum of all rows must be the same as the number of columns."
+            )
+
+        row_offsets = xp.zeros((comm.block.size + 1), dtype=index_dtype)
+        comm.block.all_gather(num_rows, row_offsets[1:])
+        row_offsets = get_host(xp.cumsum(row_offsets))
+
+        _csx = CSX.from_indices(
+            row_ind=row_ind,
+            col_ind=col_ind,
+            dtype=dtype,
+            shape=shape,
+            local_stack_shape=local_stack_shape,
+            symmetry=symmetry,
+            allocate=allocate,
+        )
 
         dcsx = cls(
             _csx=_csx,

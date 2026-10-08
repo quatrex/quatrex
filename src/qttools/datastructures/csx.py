@@ -10,7 +10,7 @@ from scipy.sparse import get_index_dtype
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.csx_routines import make_canonical_coo
 from qttools.kernels import inplace
-from qttools.utils.gpu_utils import free_mempool, get_pointer
+from qttools.utils.gpu_utils import check_pointers_equal, free_mempool
 
 # For CSX datastructures, we allow one more symmetry type than for
 # DSDBSparse. This is because we allow for the addition of a upper
@@ -102,6 +102,8 @@ class CSX:
     # NOTE: We do not want to allow to overwrite the pointers to the
     # data arrays. This is because we want to manage the memory
     # ourselves.
+    # The is `None` check for `row_ptr`, `row_ind`, and `col_ind` is
+    # mostly for sanity.
 
     @property
     def data(self) -> NDArray:
@@ -129,7 +131,7 @@ class CSX:
     def row_ptr(self, value: NDArray) -> None:
         """Sets the local row pointer array."""
         if self._row_ptr is None:
-            self._row_ptr = xp.empty(self.num_rows + 1, dtype=self.index_type)
+            raise ValueError("Row pointer has not been allocated yet.")
         self._row_ptr[...] = value
 
     @property
@@ -143,7 +145,7 @@ class CSX:
     def row_ind(self, value: NDArray) -> None:
         """Sets the local row indices array."""
         if self._row_ind is None:
-            self._row_ind = xp.empty(self.nnz, dtype=self.index_type)
+            raise ValueError("Row indices have not been allocated yet.")
         self._row_ind[...] = value
 
     @property
@@ -157,7 +159,7 @@ class CSX:
     def col_ind(self, value: NDArray) -> None:
         """Sets the local column indices array."""
         if self._col_ind is None:
-            self._col_ind = xp.empty(self.nnz, dtype=self.index_type)
+            raise ValueError("Column indices have not been allocated yet.")
         self._col_ind[...] = value
 
     def allocate_data(self) -> None:
@@ -260,21 +262,9 @@ class CSX:
             copy=False,
         )
         # Check that pointers are the same.
-        if get_pointer(out.row) != get_pointer(self.row_ind):
-            raise ValueError(
-                "The row indices of the COO matrix "
-                "do not match the row indices of the CSX matrix."
-            )
-        if get_pointer(out.col) != get_pointer(self.col_ind):
-            raise ValueError(
-                "The column indices of the COO matrix "
-                "do not match the column indices of the CSX matrix."
-            )
-        if get_pointer(out.data) != get_pointer(self.data):
-            raise ValueError(
-                "The data of the COO matrix "
-                "does not match the data of the CSX matrix."
-            )
+        check_pointers_equal(out.row, self.row_ind)
+        check_pointers_equal(out.col, self.col_ind)
+        check_pointers_equal(out.data, self.data)
 
         return out
 
@@ -312,21 +302,9 @@ class CSX:
         )
 
         # Check that pointers are the same. This is needed for the solvers.
-        if get_pointer(out.indptr) != get_pointer(self.row_ptr):
-            raise ValueError(
-                "The row pointer of the CSR matrix "
-                "does not match the row pointer of the CSX matrix."
-            )
-        if get_pointer(out.indices) != get_pointer(self.col_ind):
-            raise ValueError(
-                "The column indices of the CSR matrix "
-                "do not match the column indices of the CSX matrix."
-            )
-        if get_pointer(out.data) != get_pointer(self.data):
-            raise ValueError(
-                "The data of the CSR matrix "
-                "does not match the data of the CSX matrix."
-            )
+        check_pointers_equal(out.indptr, self.row_ptr)
+        check_pointers_equal(out.indices, self.col_ind)
+        check_pointers_equal(out.data, self.data)
 
         return out
 
@@ -592,17 +570,8 @@ class CSX:
                 shape=(self.num_rows, self.num_cols),
                 copy=False,
             )
-            # Check that pointers are the same. This is needed for the solvers.
-            if get_pointer(_mat.indptr) != get_pointer(self.row_ptr):
-                raise ValueError(
-                    "The row pointer of the CSR matrix "
-                    "does not match the row pointer of the CSX matrix."
-                )
-            if get_pointer(_mat.indices) != get_pointer(self.col_ind):
-                raise ValueError(
-                    "The column indices of the CSR matrix "
-                    "do not match the column indices of the CSX matrix."
-                )
+            check_pointers_equal(_mat.indptr, self.row_ptr)
+            check_pointers_equal(_mat.indices, self.col_ind)
             # NOTE: scipy somehow copies the data buffer here. I am not
             # sure why.
             out[idx] = _mat.dot(other)
@@ -783,13 +752,9 @@ class CSX:
     @classmethod
     def from_sparray(
         cls,
-        sparray: sparse.spmatrix | None = None,
-        row_ind: NDArray | None = None,
-        col_ind: NDArray | None = None,
-        shape: tuple[int, int] | None = None,
+        sparray: sparse.spmatrix,
         local_stack_shape: tuple = tuple(),
         symmetry: str | None = None,
-        dtype: xp.dtype[xp.generic] | None = None,
         allocate: bool = True,
     ) -> CSX:
         """Allocates a CSX matrix from a sparse array.
@@ -807,18 +772,8 @@ class CSX:
 
         Parameters
         ----------
-        sparray : sparse.spmatrix | None, optional
-            The sparse array to convert to CSX format. If None,
-            `row_ind` and `col_ind` must be provided.
-        row_ind : NDArray | None, optional
-            The row indices of the non-zero entries. If None, `sparray`
-            must be provided.
-        col_ind : NDArray | None, optional
-            The column indices of the non-zero entries. If None,
-            `sparray` must be provided.
-        shape : tuple[int, int] | None, optional
-            The shape of the matrix. If None, the shape of `sparray` is
-            used. If None and `sparray` is None, this must be provided.
+        sparray : sparse.spmatrix
+            The sparse array to convert to CSX format.
         local_stack_shape : tuple, optional
             The shape of the local stack for this rank. Default is an
             empty tuple, which means no stack.
@@ -826,12 +781,8 @@ class CSX:
             The symmetry of the matrix. This can be "symmetric",
             "hermitian", "skew-symmetric", "skew-hermitian", or None.
             Default is None.
-        dtype : xp.dtype[xp.generic] | None, optional
-            The data type of the matrix elements. Default is None and
-            the data type of the input sparse array is used.
         allocate : bool, optional
-            Whether to allocate the data array. Default is True. Even if
-            allocated, the data will be uninitialized.
+            Whether to allocate the data array. Default is True.
 
         Returns
         -------
@@ -839,67 +790,74 @@ class CSX:
             The CSX matrix.
 
         """
-        if sparray is None and (row_ind is None or col_ind is None):
-            raise ValueError(
-                "Either a sparse array or row and column indices must be provided."
-            )
-        if sparray is not None and (row_ind is not None or col_ind is not None):
-            raise ValueError(
-                "Cannot provide both a sparse array and row/column indices."
-            )
+        sparray = sparray.tocoo()
+        shape = sparray.shape
 
-        if sparray is not None:
-            sparray = sparray.tocoo()
-            if shape is not None and shape != sparray.shape:
-                raise ValueError(
-                    f"Provided shape {shape} does not match the shape of the sparse array {sparray.shape}."
-                )
-            shape = sparray.shape
-            index_dtype = sparray.col.dtype
-
-            # Canonicalizes the COO format.
-            if not sparray.has_canonical_format:
-                sparray.sum_duplicates()
-            if not sparray.has_canonical_format:
-                raise ValueError("COO format is not canonical.")
-
-            row_ind = sparray.row
-            col_ind = sparray.col
-
-            dtype = sparray.data.dtype if dtype is None else dtype
-
-        else:
-            if dtype is None:
-                raise ValueError(
-                    "Data type must be provided " "if no sparse array is given."
-                )
-            if shape is None:
-                shape = (int(xp.max(row_ind)) + 1, int(xp.max(col_ind)) + 1)
-
-            index_dtype = row_ind.dtype
-
-        # Small sanity check. This should never be triggered since we
-        # check for this at the beginning of the function.
-        if row_ind is None or col_ind is None:
-            raise ValueError("Both row_ind and col_ind must be provided.")
-
-        num_rows = xp.array([shape[0]], dtype=index_dtype)
-        num_cols = xp.array([shape[1]], dtype=index_dtype)
-
-        # NOTE: This is not necessary since the inputs should already be
-        # upper if needed.
-        if symmetry:
-            # Check that non lower triangular entries exists.
-            if xp.any(row_ind > col_ind):
-                raise ValueError(
-                    "The input matrix is not upper triangular. "
-                    "Cannot create a symmetric CSX matrix."
-                )
+        # Canonicalizes the COO format.
+        if not sparray.has_canonical_format:
+            sparray.sum_duplicates()
+        if not sparray.has_canonical_format:
+            raise ValueError("COO format is not canonical.")
 
         csx = cls(
+            dtype=sparray.data.dtype,
+            num_rows=shape[0],
+            num_cols=shape[1],
+            local_stack_shape=local_stack_shape,
+            row_ind=sparray.row,
+            col_ind=sparray.col,
+            symmetry=symmetry,
+        )
+
+        if allocate:
+            csx.allocate_data()
+            csx.data = sparray.data
+
+        return csx
+
+    @classmethod
+    def from_indices(
+        cls,
+        row_ind: NDArray,
+        col_ind: NDArray,
+        dtype: xp.dtype[xp.generic],
+        shape: tuple[int, int],
+        local_stack_shape: tuple = tuple(),
+        symmetry: str | None = None,
+        allocate: bool = True,
+    ) -> CSX:
+        """Allocates a CSX matrix from a indices.
+
+        Parameters
+        ----------
+        row_ind : NDArray
+            The row indices of the non-zero entries.
+        col_ind : NDArray
+            The column indices of the non-zero entries.
+        dtype : xp.dtype[xp.generic]
+            The data type of the matrix elements.
+        shape : tuple[int, int]
+            The shape of the matrix.
+        local_stack_shape : tuple, optional
+            The shape of the local stack for this rank. Default is an
+            empty tuple, which means no stack.
+        symmetry : str | None, optional
+            The symmetry of the matrix. This can be "symmetric",
+            "hermitian", "skew-symmetric", "skew-hermitian",
+            "upper-triangular", or None. Default is None.
+        allocate : bool, optional
+            Whether to allocate the data array. Default is True.
+
+        Returns
+        -------
+        CSX
+            The CSX matrix.
+
+        """
+        csx = cls(
             dtype=dtype,
-            num_rows=int(num_rows[0]),
-            num_cols=int(num_cols[0]),
+            num_rows=shape[0],
+            num_cols=shape[1],
             local_stack_shape=local_stack_shape,
             row_ind=row_ind,
             col_ind=col_ind,
@@ -908,7 +866,5 @@ class CSX:
 
         if allocate:
             csx.allocate_data()
-            if sparray is not None:
-                csx.data = sparray.data
 
         return csx

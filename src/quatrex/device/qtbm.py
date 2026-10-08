@@ -99,7 +99,6 @@ class QTBMDevice(BaseDevice):
             ]
             self.hamiltonians[r] = DCSX.from_sparray(
                 sparray=tmp,
-                dtype=tmp.dtype,
                 symmetry="upper-triangular",
             )
 
@@ -112,7 +111,6 @@ class QTBMDevice(BaseDevice):
             ]
             self.overlap_matrices[r] = DCSX.from_sparray(
                 sparray=tmp,
-                dtype=tmp.dtype,
                 symmetry="upper-triangular",
             )
 

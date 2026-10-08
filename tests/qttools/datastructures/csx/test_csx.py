@@ -49,7 +49,7 @@ def _create_coo_csx(
     coo.sum_duplicates()
 
     if from_indices:
-        csx = CSX.from_sparray(
+        csx = CSX.from_indices(
             row_ind=coo.row,
             col_ind=coo.col,
             shape=coo.shape,
@@ -132,7 +132,7 @@ class TestConversion:
         """Tests that we can expand the symmetry of a CSX matrix."""
 
         if symmetry is None or symmetry == "upper-triangular":
-            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+            pytest.skip("Expand symmetry is only relevant for symmetric matrices.")
 
         coo, csx = _create_coo_csx(
             size=size,

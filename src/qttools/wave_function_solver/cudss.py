@@ -3,6 +3,8 @@
 """Includes the cuDSS wave function solver."""
 
 try:
+    import ctypes
+
     import cupy as cp
     import nvmath
     from nvmath.bindings import cudss
@@ -27,6 +29,46 @@ try:
         cp.dtype("complex128"): nvmath.CudaDataType.CUDA_C_64F,
     }
 
+    NAME_LEN = 64
+
+    ALLOC = ctypes.CFUNCTYPE(
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+    )
+    FREE = ctypes.CFUNCTYPE(
+        ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
+    )
+
+    class DeviceMemHandler(ctypes.Structure):
+        _fields_ = [
+            ("ctx", ctypes.c_void_p),
+            ("device_alloc", ALLOC),
+            ("device_free", FREE),
+            ("name", ctypes.c_char * NAME_LEN),
+        ]
+
+    _live = {}
+
+    def _alloc(ctx, ptr_out, size, stream):
+        try:
+            with cp.cuda.ExternalStream(stream or 0):
+                mem = cp.cuda.alloc(size)
+            _live[mem.ptr] = mem
+            ptr_out[0] = mem.ptr
+            return 0
+        except Exception:
+            return 1
+
+    def _free(ctx, ptr, size, stream):
+        _live.pop(ptr, None)
+        return 0
+
+    # If the callbacks are garbage collected, cuDSS will crash.
+    _alloc_cb, _free_cb = ALLOC(_alloc), FREE(_free)
+    _handler = DeviceMemHandler(None, _alloc_cb, _free_cb, b"cupy_pool")
     cudss_available = True
 
 
@@ -42,6 +84,7 @@ from qttools import NDArray, sparse
 from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
+from qttools.profiling.profiler import QTX_PROFILE_LEVEL
 from qttools.utils.gpu_utils import get_array_module_name, synchronize_current_stream
 from qttools.wave_function_solver.solver import WFSolver
 
@@ -109,6 +152,10 @@ class cuDSS(WFSolver):
         self._mview = cudss_matrix_views.get(matrix_view, cudss.MatrixViewType.FULL)
 
         self._solver_handle = cudss.create()
+        # Set the cudss memory handler to use CuPy's memory pool for
+        # device allocations.
+        cudss.set_device_mem_handler(self._solver_handle, ctypes.addressof(_handler))
+
         self._solver_config = cudss.config_create()
         self._solver_data = cudss.data_create(self._solver_handle)
 
@@ -145,27 +192,46 @@ class cuDSS(WFSolver):
             # Set up communication layer.
             cudss.set_comm_layer(self._solver_handle, comm_lib)
 
-            # NOTE: Saving this as an attribute to prevent it from being
-            # garbage collected, since cuDSS really only stores a
-            # pointer to this.
-            self._comm_handle = np.array([comm._mpi_comm.py2f()], dtype=np.int32)
-
+            # Keep the communicator alive to avoid garbage collection of
+            # the underlying MPI communicator.
+            self._mpi_comm = comm._mpi_comm
+            host_comm_address = MPI._addressof(comm._mpi_comm)
+            host_comm_size = MPI._sizeof(MPI.Comm)
             cudss.data_set(
                 self._solver_handle,
                 self._solver_data,
                 cudss.DataParam.COMM_HOST,
-                self._comm_handle.ctypes.data,
-                size_in_bytes=self._comm_handle.nbytes,
+                host_comm_address,
+                size_in_bytes=host_comm_size,
             )
 
-            # TODO: Add some logic to get a NCCL communicator. For now,
-            # we just use the MPI communicator for both host and device.
+            if "openmpi" in comm_lib.lower() or "mpich" in comm_lib.lower():
+                device_comm_address = host_comm_address
+                device_comm_size = host_comm_size
+
+            elif "nccl" in comm_lib.lower():
+                if not hasattr(comm, "_nccl_comm"):
+                    raise ValueError(
+                        "The provided communicator does not have an NCCL communicator. "
+                        "Please set the backend to NCCL."
+                    )
+                # Keep this pointer alive to avoid garbage collection of
+                # the underlying NCCL communicator.
+                self._nccl_comm = ctypes.c_void_p(comm._nccl_comm._comm.comm)
+                device_comm_address = ctypes.addressof(self._nccl_comm)
+                device_comm_size = ctypes.sizeof(self._nccl_comm)
+            else:
+                raise ValueError(
+                    f"Unsupported communication library '{comm_lib}'. "
+                    "Please use a library that contains 'openmpi', 'mpich', or 'nccl' in its name."
+                )
+
             cudss.data_set(
                 self._solver_handle,
                 self._solver_data,
                 cudss.DataParam.COMM_DEVICE,
-                self._comm_handle.ctypes.data,
-                size_in_bytes=self._comm_handle.nbytes,
+                device_comm_address,
+                size_in_bytes=device_comm_size,
             )
 
         threading_lib = os.getenv("CUDSS_THREADING_LIB")
@@ -537,6 +603,28 @@ class cuDSS(WFSolver):
                     # to reuse the analysis. Seems the update does not do what
                     # we would expect.
                     self._update_cudss_csr(a)
+
+                if QTX_PROFILE_LEVEL == "debug":
+                    mem_estimates = np.zeros(16, dtype=np.int64)
+                    size_written = np.zeros(1, dtype=np.uint64)
+                    cudss.data_get(
+                        self._solver_handle,
+                        self._solver_data,
+                        cudss.DataParam.MEMORY_ESTIMATES,
+                        mem_estimates.ctypes.data,
+                        mem_estimates.nbytes,
+                        size_written.ctypes.data,
+                    )
+                    message = (
+                        f"\n[Memory, rank {quatrex_comm.rank}]: cudss memory estimates"
+                    )
+                    message += "\n" + "-" * 80
+                    message += f"\nPermanent Device Memory: {mem_estimates[0] / 1e9} GB"
+                    message += f"\nPeak Device Memory: {mem_estimates[1] / 1e9} GB"
+                    message += f"\nPermanent Host Memory: {mem_estimates[2] / 1e9} GB"
+                    message += f"\nPeak Host Memory: {mem_estimates[3] / 1e9} GB"
+                    message += "\n" + "-" * 80 + "\n"
+                    print(message, flush=True)
 
                 if redo_analysis or not self.factorized or not reuse_factorization:
                     self._factorize(self._matrix_handle, _solution_handle, _rhs_handle)

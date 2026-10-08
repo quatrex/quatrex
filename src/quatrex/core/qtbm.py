@@ -16,6 +16,7 @@ from qttools.datastructures.dcsx import DCSX
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
 from qttools.profiling import Profiler
+from qttools.profiling.profiler import QTX_PROFILE_LEVEL
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
@@ -1429,6 +1430,11 @@ class QTBM(TransportSolver):
                         # TODO: `_solver_runtime_config` should be part
                         # of the solver initialization, not passed every
                         # time.
+                        if QTX_PROFILE_LEVEL == "debug":
+                            print_memory_usage(
+                                f"Before solving the linear system {batch_start + energy_ind}",
+                                only_zero_rank=False,
+                            )
                         phi = self._solver.solve(
                             system_matrix.tocsr(),
                             rhs,
@@ -1457,7 +1463,7 @@ class QTBM(TransportSolver):
                         del rhs
 
                         # Keep an end-of-energy memory report for all methods.
-                        print_memory_usage()
+                        print_memory_usage(f"End of energy iteration {energy_ind}")
                         free_mempool()
 
         # Gather the observables

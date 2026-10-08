@@ -298,7 +298,7 @@ class QTBM(TransportSolver):
         # Allocate system matrix
         index_type = get_index_dtype(maxval=len(row_ind))
 
-        self.bare_system_matrix = DCSX.from_sparray(
+        self.bare_system_matrix = DCSX.from_indices(
             row_ind=row_ind.astype(index_type),
             col_ind=col_ind.astype(index_type),
             shape=(num_rows, num_cols),
@@ -333,7 +333,7 @@ class QTBM(TransportSolver):
 
         for operator in [self.device.hamiltonians, self.device.overlap_matrices]:
             for mat in operator.values():
-                _row_ind, _col_ind, __ = mat.expand_sparsity()
+                _row_ind, _col_ind = mat.expand_sparsity()
                 row_ind.append(_row_ind)
                 col_ind.append(_col_ind)
 
@@ -371,7 +371,7 @@ class QTBM(TransportSolver):
         # Allocate system matrix
         index_type = get_index_dtype(maxval=len(row_ind))
 
-        self.system_matrix = DCSX.from_sparray(
+        self.system_matrix = DCSX.from_indices(
             row_ind=row_ind.astype(index_type),
             col_ind=col_ind.astype(index_type),
             shape=(num_rows, num_cols),
@@ -900,17 +900,7 @@ class QTBM(TransportSolver):
 
                     out[:] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
 
-            # Discover the root rank for the transmission output. This
-            # is necessary because the contact_out may not have any
-            # local orbitals on some ranks.
-            root_candidate = np.ones((1,), dtype=np.int32) * -1
-            if len(contact_out.local_orbital_indices) > 0:
-                if contact_out.comm.rank == 0:
-                    root_candidate[0] = comm.block.rank
-
-            root = np.zeros((1,), dtype=np.int32)
-            comm.block.all_reduce(root_candidate, root, op="max", backend="device_mpi")
-            comm.block.bcast(out, root=root[0])
+            comm.block.bcast(out, root=contact_out.root_rank)
             transmission[kpoint_ind, global_energy_ind] = out[0]
 
     def _compute_ldos(
@@ -1411,16 +1401,18 @@ class QTBM(TransportSolver):
                             continue
 
                         if not self.low_rank_obc:
+                            self.bare_system_matrix.free_data()
+
                             # Assemble the full system matrix with the
                             # self-energy contributions from the
                             # contacts.
                             self.system_matrix.allocate_data()
                             self.system_matrix.data = 0.0
-                            # We explicilty unsymmetrize the bare matrix.
                             cache_id = id(self.bare_system_matrix)
-                            tmp = self.bare_system_matrix.expand_symmetry()
-                            self.system_matrix.add_(tmp, cache_id=cache_id)
-                            self.bare_system_matrix.free_data()
+                            # bare_system_matrix was unsymmetrized at the OBC
+                            self.system_matrix.add_(
+                                bare_system_matrix, cache_id=cache_id
+                            )
 
                             self._add_sigma_to_system_matrix(
                                 obc_results=obc_results,

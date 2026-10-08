@@ -78,7 +78,7 @@ def _create_coo_dcsx(
 
     if from_indices:
         local_sparray = local_sparray.tocoo()
-        dcsx = DCSX.from_sparray(
+        dcsx = DCSX.from_indices(
             row_ind=local_sparray.row,
             col_ind=local_sparray.col,
             shape=local_sparray.shape,
@@ -188,7 +188,7 @@ class TestConversion:
         """Tests that we can expand the sparsity of a DCSX matrix."""
 
         if symmetry is None:
-            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+            pytest.skip("Expand sparsity is only relevant for symmetric matrices.")
 
         local_coo, coo, dcsx = _create_coo_dcsx(
             size=size,
@@ -196,7 +196,7 @@ class TestConversion:
             symmetry=symmetry,
         )
         # Just check that it runs without errors or deadlocks.
-        row_ind, col_ind, __ = dcsx.expand_sparsity()
+        row_ind, col_ind = dcsx.expand_sparsity()
 
         test = sparse.coo_matrix(
             (xp.ones_like(row_ind, dtype=coo.dtype), (row_ind, col_ind)),
@@ -223,7 +223,7 @@ class TestConversion:
         """Tests that we can expand the symmetry of a DCSX matrix."""
 
         if symmetry is None or symmetry == "upper-triangular":
-            pytest.skip("Graph analysis is only relevant for symmetric matrices.")
+            pytest.skip("Expand symmetry is only relevant for symmetric matrices.")
 
         __, coo, dcsx = _create_coo_dcsx(
             size=size,

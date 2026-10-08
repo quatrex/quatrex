@@ -33,9 +33,9 @@ class CSX:
     ----------
     dtype : xp.dtype[xp.generic]
         Data type of the matrix elements.
-    rows : int
+    num_rows : int
         Number of rows in the local matrix.
-    cols : int
+    num_cols : int
         Number of columns in the local matrix.
     row_offsets : NDArray
         Array of cumulative row counts across all ranks in the block
@@ -59,8 +59,8 @@ class CSX:
     def __init__(
         self,
         dtype: xp.dtype[xp.generic],
-        rows: int,
-        cols: int,
+        num_rows: int,
+        num_cols: int,
         local_stack_shape: tuple[int, ...],
         row_ind: NDArray,
         col_ind: NDArray,
@@ -68,8 +68,8 @@ class CSX:
         row_ptr: NDArray | None = None,
     ):
 
-        rows = int(rows)
-        cols = int(cols)
+        num_rows = int(num_rows)
+        num_cols = int(num_cols)
 
         # Type of the data
         self.dtype = dtype
@@ -79,12 +79,12 @@ class CSX:
         self.local_stack_shape = local_stack_shape
 
         # TODO: Unify the naming between the data structures. In
-        # DSDBSparse, `rows` and `cols` refer to the `row_ind` and
-        # `col_ind` arrays.
-        self.rows = rows
-        self.cols = cols
+        # DSDBSparse, `num_rows` and `num_cols` refer to the `row_ind`
+        # and `col_ind` arrays.
+        self.num_rows = num_rows
+        self.num_cols = num_cols
 
-        self.shape = self.local_stack_shape + (self.rows, self.cols)
+        self.shape = self.local_stack_shape + (self.num_rows, self.num_cols)
 
         self._row_ptr = row_ptr
         self._row_ind = row_ind
@@ -129,7 +129,7 @@ class CSX:
     def row_ptr(self, value: NDArray) -> None:
         """Sets the local row pointer array."""
         if self._row_ptr is None:
-            self._row_ptr = xp.empty(self.rows + 1, dtype=self.index_type)
+            self._row_ptr = xp.empty(self.num_rows + 1, dtype=self.index_type)
         self._row_ptr[...] = value
 
     @property
@@ -186,13 +186,13 @@ class CSX:
 
         """
         dense = xp.zeros(
-            self.local_stack_shape + (self.cols, self.cols), dtype=self.dtype
+            self.local_stack_shape + (self.num_cols, self.num_cols), dtype=self.dtype
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
             tmp = sparse.coo_matrix(
                 (data, (self.row_ind, self.col_ind)),
-                shape=(self.rows, self.cols),
+                shape=(self.num_rows, self.num_cols),
                 copy=False,
             ).toarray()
 
@@ -218,13 +218,13 @@ class CSX:
 
         """
         dense = xp.zeros(
-            self.local_stack_shape + (self.rows, self.cols), dtype=self.dtype
+            self.local_stack_shape + (self.num_rows, self.num_cols), dtype=self.dtype
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
             tmp = sparse.coo_matrix(
                 (data, (self.row_ind, self.col_ind)),
-                shape=(self.rows, self.cols),
+                shape=(self.num_rows, self.num_cols),
                 copy=False,
             ).toarray()
 
@@ -256,7 +256,7 @@ class CSX:
 
         out = sparse.coo_matrix(
             (self.data, (self.row_ind, self.col_ind)),
-            shape=(self.rows, self.cols),
+            shape=(self.num_rows, self.num_cols),
             copy=False,
         )
         # Check that pointers are the same.
@@ -302,12 +302,12 @@ class CSX:
 
         if self._row_ptr is None:
             self._row_ptr = xp.searchsorted(
-                self.row_ind, xp.arange(self.rows + 1)
+                self.row_ind, xp.arange(self.num_rows + 1)
             ).astype(self.index_type)
 
         out = sparse.csr_matrix(
             (self.data, self.col_ind, self.row_ptr),
-            shape=(self.rows, self.cols),
+            shape=(self.num_rows, self.num_cols),
             copy=False,
         )
 
@@ -371,8 +371,8 @@ class CSX:
 
         csx = CSX(
             dtype=self.dtype,
-            rows=self.rows,
-            cols=self.cols,
+            num_rows=self.num_rows,
+            num_cols=self.num_cols,
             local_stack_shape=self.local_stack_shape,
             row_ind=new_row_ind,
             col_ind=new_col_ind,
@@ -465,7 +465,7 @@ class CSX:
             None, the ID of `other` will be used. Default is None.
 
         """
-        if self.rows != other.rows or self.cols != other.cols:
+        if self.num_rows != other.num_rows or self.num_cols != other.num_cols:
             raise ValueError(
                 "The shapes of the two matrices must be the same for addition."
             )
@@ -528,7 +528,7 @@ class CSX:
         if other.ndim == 2:
             if other.shape[1] != 1:
                 raise ValueError("Other must be a 2D array with shape (N, 1).")
-            if other.shape[0] != self.rows:
+            if other.shape[0] != self.num_rows:
                 raise ValueError("Other must have the same number of rows as self.")
 
             # scale rowwise
@@ -536,7 +536,7 @@ class CSX:
             self.data *= other[self.row_ind]
 
         else:
-            if other.shape[0] != self.cols:
+            if other.shape[0] != self.num_cols:
                 raise ValueError("Other must have the same number of columns as self.")
 
             # scale columnwise
@@ -555,7 +555,7 @@ class CSX:
         -------
         NDArray
             The result of the matrix multiplication. Will have the shape
-            `self.local_stack_shape + (self.rows,) + other.shape[1:]`.
+            `self.local_stack_shape + (self.num_rows,) + other.shape[1:]`.
 
         """
         if self.symmetry is not None:
@@ -568,27 +568,28 @@ class CSX:
         # the full matrix multiplication.
 
         # SPMV
-        if other.ndim == 1 and other.shape[0] != self.cols:
+        if other.ndim == 1 and other.shape[0] != self.num_cols:
             raise ValueError("Other must have the same number of columns as self.")
 
         # SPMM
-        if other.ndim == 2 and other.shape[0] != self.cols:
+        if other.ndim == 2 and other.shape[0] != self.num_cols:
             raise ValueError("Other must have the same number of columns as self.")
 
         if self._row_ptr is None:
             self._row_ptr = xp.searchsorted(
-                self.row_ind, xp.arange(self.rows + 1)
+                self.row_ind, xp.arange(self.num_rows + 1)
             ).astype(self.index_type)
 
         out = xp.empty(
-            self.local_stack_shape + (self.rows,) + other.shape[1:], dtype=self.dtype
+            self.local_stack_shape + (self.num_rows,) + other.shape[1:],
+            dtype=self.dtype,
         )
 
         for idx in np.ndindex(self.local_stack_shape):
             # TODO: Not the most efficient pipeline.
             _mat = sparse.csr_matrix(
                 (self.data[idx], self.col_ind, self.row_ptr),
-                shape=(self.rows, self.cols),
+                shape=(self.num_rows, self.num_cols),
                 copy=False,
             )
             # Check that pointers are the same. This is needed for the solvers.
@@ -622,8 +623,8 @@ class CSX:
 
         csx = CSX(
             dtype=self.dtype,
-            rows=self.cols,
-            cols=self.rows,
+            num_rows=self.num_cols,
+            num_cols=self.num_rows,
             local_stack_shape=self.local_stack_shape,
             row_ind=self.col_ind,
             col_ind=self.row_ind,
@@ -645,8 +646,8 @@ class CSX:
         """
         csx = CSX(
             dtype=self.dtype,
-            rows=self.rows,
-            cols=self.cols,
+            num_rows=self.num_rows,
+            num_cols=self.num_cols,
             local_stack_shape=self.local_stack_shape,
             row_ind=self.row_ind,
             col_ind=self.col_ind,
@@ -684,10 +685,10 @@ class CSX:
 
         tile_shape = (len(row_ind), len(col_ind))
 
-        row_lookup = xp.full(self.rows, -1, dtype=self.index_type)
+        row_lookup = xp.full(self.num_rows, -1, dtype=self.index_type)
         row_lookup[row_ind] = xp.arange(tile_shape[0])
 
-        col_lookup = xp.full(self.cols, -1, dtype=self.index_type)
+        col_lookup = xp.full(self.num_cols, -1, dtype=self.index_type)
         col_lookup[col_ind] = xp.arange(tile_shape[1])
 
         new_row = row_lookup[self.row_ind]
@@ -735,15 +736,15 @@ class CSX:
             )
 
         if row_ind is None:
-            row_ind = xp.arange(self.rows, dtype=self.index_type)
+            row_ind = xp.arange(self.num_rows, dtype=self.index_type)
         if col_ind is None:
-            col_ind = xp.arange(self.cols, dtype=self.index_type)
+            col_ind = xp.arange(self.num_cols, dtype=self.index_type)
 
         if len(row_ind) == 0 or len(col_ind) == 0:
             tile_csx = CSX(
                 dtype=self.dtype,
-                rows=len(row_ind),
-                cols=len(col_ind),
+                num_rows=len(row_ind),
+                num_cols=len(col_ind),
                 local_stack_shape=self.local_stack_shape,
                 row_ind=xp.array([], dtype=self.index_type),
                 col_ind=xp.array([], dtype=self.index_type),
@@ -751,13 +752,13 @@ class CSX:
             tile_csx.allocate_data()
             return tile_csx
 
-        if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.rows:
+        if xp.min(row_ind) < 0 or xp.max(row_ind) >= self.num_rows:
             raise ValueError(
-                f"Row indices {row_ind} are out of bounds for matrix with {self.rows} rows."
+                f"Row indices {row_ind} are out of bounds for matrix with {self.num_rows} rows."
             )
-        if xp.min(col_ind) < 0 or xp.max(col_ind) >= self.cols:
+        if xp.min(col_ind) < 0 or xp.max(col_ind) >= self.num_cols:
             raise ValueError(
-                f"Column indices {col_ind} are out of bounds for matrix with {self.cols} columns."
+                f"Column indices {col_ind} are out of bounds for matrix with {self.num_cols} columns."
             )
 
         tile_data, tile_row, tile_col, tile_shape = self._get_tile(
@@ -767,8 +768,8 @@ class CSX:
 
         tile_csx = CSX(
             dtype=self.dtype,
-            rows=tile_shape[0],
-            cols=tile_shape[1],
+            num_rows=tile_shape[0],
+            num_cols=tile_shape[1],
             local_stack_shape=self.local_stack_shape,
             row_ind=tile_row,
             col_ind=tile_col,
@@ -882,8 +883,8 @@ class CSX:
         if row_ind is None or col_ind is None:
             raise ValueError("Both row_ind and col_ind must be provided.")
 
-        rows = xp.array([shape[0]], dtype=index_dtype)
-        cols = xp.array([shape[1]], dtype=index_dtype)
+        num_rows = xp.array([shape[0]], dtype=index_dtype)
+        num_cols = xp.array([shape[1]], dtype=index_dtype)
 
         # NOTE: This is not necessary since the inputs should already be
         # upper if needed.
@@ -897,8 +898,8 @@ class CSX:
 
         csx = cls(
             dtype=dtype,
-            rows=int(rows[0]),
-            cols=int(cols[0]),
+            num_rows=int(num_rows[0]),
+            num_cols=int(num_cols[0]),
             local_stack_shape=local_stack_shape,
             row_ind=row_ind,
             col_ind=col_ind,

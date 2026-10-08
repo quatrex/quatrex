@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 def remove_duplicate_entries(
     row_ind: NDArray,
     col_ind: NDArray,
-    cols: int,
 ):
     """Removes duplicate entries from the given COO format indices.
 
@@ -34,8 +33,6 @@ def remove_duplicate_entries(
         The row indices of the COO format.
     col_ind : NDArray
         The column indices of the COO format.
-    cols : int
-        The number of columns in the matrix.
 
     Returns
     -------
@@ -123,9 +120,9 @@ def allgather_csx(
 
     # TODO: Assumes int64 for now, but should be more general.
     if axis == 0:
-        count = csx.rows
+        count = csx.num_rows
     else:
-        count = csx.cols
+        count = csx.num_cols
     counts = np.zeros(comm.size, dtype=np.int64)
     comm.all_gather(
         np.array(count, dtype=np.int64),
@@ -135,11 +132,11 @@ def allgather_csx(
     offsets = np.array([0] + list(np.cumsum(counts)), dtype=np.int64)
 
     if axis == 0:
-        rows = offsets[-1]
-        cols = csx.cols
+        num_rows = offsets[-1]
+        num_cols = csx.num_cols
     else:
-        rows = csx.rows
-        cols = offsets[-1]
+        num_rows = csx.num_rows
+        num_cols = offsets[-1]
 
     # TODO: Assumes int64 for now, but should be more general.
     counts = np.zeros(comm.size, dtype=np.int64)
@@ -197,8 +194,8 @@ def allgather_csx(
 
     csx = CSX(
         dtype=data.dtype,
-        rows=int(rows),
-        cols=int(cols),
+        num_rows=int(num_rows),
+        num_cols=int(num_cols),
         local_stack_shape=csx.local_stack_shape,
         row_ind=row_ind,
         col_ind=col_ind,

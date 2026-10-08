@@ -499,6 +499,8 @@ class SolverConfig(BaseModel):
 
     """
 
+    # TODO: Update this for distributed solvers.
+    # TODO: The config for `wf` and `negf` should be separated.
     direct_solver: Literal[
         "superlu",
         "mumps",
@@ -510,9 +512,6 @@ class SolverConfig(BaseModel):
         "auto",
     ] = "auto"
     """The direct solver to use in `wf` simulations.
-
-    TODO: Update this for distributed solvers.
-    TODO: The config for `wf` and `negf` should be separated.
 
     If set to `"auto"`, the solver is automatically chosen based on the
     matrix type and the available direct solver libraries.

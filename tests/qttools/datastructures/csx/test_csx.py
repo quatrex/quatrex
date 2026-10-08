@@ -283,7 +283,7 @@ class TestAccess:
         test_tile = a.get_tile(rows).toarray()
 
         assert test_tile.shape[-2] == 0
-        assert test_tile.shape[-1] == a.cols
+        assert test_tile.shape[-1] == a.num_cols
 
 
 class TestOperations:

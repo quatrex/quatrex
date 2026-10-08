@@ -22,9 +22,9 @@ class DCSX:
     ----------
     dtype : xp.dtype[xp.generic]
         Data type of the matrix elements.
-    rows : int
+    num_rows : int
         Number of rows in the local matrix.
-    cols : int
+    num_cols : int
         Number of columns in the local matrix.
     row_offsets : NDArray
         Array of cumulative row counts across all ranks in the block
@@ -47,8 +47,8 @@ class DCSX:
 
     _DELEGATED = [
         "dtype",
-        "rows",
-        "cols",
+        "num_rows",
+        "num_cols",
         "index_type",
         "local_stack_shape",
         "shape",
@@ -134,12 +134,13 @@ class DCSX:
 
         """
         dense = xp.zeros(
-            self.local_stack_shape + (self.cols, self.cols), dtype=self.dtype
+            self.local_stack_shape + (self.num_cols, self.num_cols), dtype=self.dtype
         )
         for idx in np.ndindex(self.local_stack_shape):
             data = self.data[idx]
             tmp = sparse.coo_matrix(
-                (data, (self.row_ind, self.col_ind)), shape=(self.rows, self.cols)
+                (data, (self.row_ind, self.col_ind)),
+                shape=(self.num_rows, self.num_cols),
             ).toarray()
 
             tmp = comm.block.all_gather_v(tmp, axis=0)
@@ -491,8 +492,8 @@ class DCSX:
 
         _csx = CSX(
             dtype=self.dtype,
-            rows=self.rows,
-            cols=self.cols,
+            num_rows=self.num_rows,
+            num_cols=self.num_cols,
             local_stack_shape=self.local_stack_shape,
             row_ind=new_row_ind,
             col_ind=new_col_ind,
@@ -526,7 +527,7 @@ class DCSX:
         -------
         NDArray
             The result of the matrix multiplication. Will have the shape
-            `self.local_stack_shape + (self.rows,) + other.shape[1:]`.
+            `self.local_stack_shape + (self.num_rows,) + other.shape[1:]`.
 
         """
         return self._csx @ other
@@ -625,13 +626,13 @@ class DCSX:
 
             index_dtype = row_ind.dtype
 
-        rows = xp.array([shape[0]], dtype=index_dtype)
-        cols = xp.array([shape[1]], dtype=index_dtype)
+        num_rows = xp.array([shape[0]], dtype=index_dtype)
+        num_cols = xp.array([shape[1]], dtype=index_dtype)
 
         all_rows = xp.zeros((comm.block.size), dtype=index_dtype)
         all_cols = xp.zeros((comm.block.size), dtype=index_dtype)
-        comm.block.all_gather(rows, all_rows)
-        comm.block.all_gather(cols, all_cols)
+        comm.block.all_gather(num_rows, all_rows)
+        comm.block.all_gather(num_cols, all_cols)
 
         # Check that the number of columns are the same across all block comm ranks.
         if not xp.all(all_cols == all_cols[0]):
@@ -645,7 +646,7 @@ class DCSX:
             )
 
         row_offsets = xp.zeros((comm.block.size + 1), dtype=index_dtype)
-        comm.block.all_gather(rows, row_offsets[1:])
+        comm.block.all_gather(num_rows, row_offsets[1:])
         row_offsets = get_host(xp.cumsum(row_offsets))
 
         _csx = CSX.from_sparray(

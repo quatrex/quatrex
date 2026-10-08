@@ -499,12 +499,16 @@ class SolverConfig(BaseModel):
 
     """
 
+    # TODO: Update this for distributed solvers.
+    # TODO: The config for `wf` and `negf` should be separated.
     direct_solver: Literal[
         "superlu",
         "mumps",
         "cudss",
         "pardiso",
         "thomas",
+        "petsc",
+        "mock",
         "auto",
     ] = "auto"
     """The direct solver to use in `wf` simulations.
@@ -527,6 +531,51 @@ class SolverConfig(BaseModel):
     block-tridiagonal structure.
 
     """
+
+    petsc_options: dict[str, str | int | float | bool | None] | None = None
+    """The PETSc options to use when [`direct_solver`](#direct_solver)
+    is set to `"petsc"`.
+
+    See the official PETSc documentation for a list of available
+    options.
+
+    !!! Note
+        We currently only support the `"preonly"` KSP type with the
+        `"lu"` PC type. They are set by default and cannot be changed.
+        The option that can be changed is the
+        `"pc_factor_mat_solver_type"` which can be set to `"mumps"`,
+        `"superlu_dist"`, or `"strumpack"`. By default, `"super_lu"` is
+        used. Additionaly, debug settings can be included see the
+        official PETSc documentation for more information.
+
+    """
+
+    @model_validator(mode="after")
+    def _check_petsc_options(self):
+        if self.petsc_options and self.direct_solver != "petsc":
+            raise ValueError(
+                "PETSc options should only be set "
+                "when the direct solver is set to 'petsc'."
+            )
+
+        if self.direct_solver in ["petsc", "auto"]:
+            # Set preonly and lu as default options if not already set
+            if self.petsc_options is None:
+                self.petsc_options = {}
+            if "ksp_type" not in self.petsc_options:
+                self.petsc_options["ksp_type"] = "preonly"
+            elif self.petsc_options["ksp_type"] != "preonly":
+                raise ValueError("PETSc ksp_type must be 'preonly'.")
+
+            if "pc_type" not in self.petsc_options:
+                self.petsc_options["pc_type"] = "lu"
+            elif self.petsc_options["pc_type"] != "lu":
+                raise ValueError("PETSc pc_type must be 'lu'.")
+
+            if "pc_factor_mat_solver_type" not in self.petsc_options:
+                self.petsc_options["pc_factor_mat_solver_type"] = "superlu_dist"
+
+        return self
 
 
 class OBCConfig(BaseModel):
@@ -573,7 +622,7 @@ class OBCConfig(BaseModel):
 
     """
 
-    nevp_solver: Literal["beyn", "full"] = "beyn"
+    nevp_solver: Literal["beyn", "full"] = "full"
     r"""The NEVP solver to use for the spectral OBC algorithm.
 
     The contact eigenvalue problem is a polynomial eigenvalue problem of
@@ -2132,38 +2181,35 @@ class CommConfig(BaseModel):
 
     """
 
-    block_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-to-all."""
-    block_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-gather."""
-    block_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-reduce."""
-    block_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block broadcast."""
-    block_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block send-receive."""
+    block_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block operations.
 
-    stack_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-to-all."""
-    stack_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-gather."""
-    stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-reduce."""
-    stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack broadcast."""
-    stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack send-receive."""
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
 
-    global_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-to-all."""
-    global_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-gather."""
-    global_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-reduce."""
-    global_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack broadcast."""
-    global_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack send-receive."""
+    """
+
+    stack_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack operations.
+
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
+
+    """
+
+    global_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for global operations.
+
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
+
+    """
 
 
 class ComputeConfig(BaseModel):
@@ -2579,37 +2625,11 @@ def _setup_comm(comm_config: CommConfig) -> None:
         The communication configuration containing the communication settings.
 
     """
-    default_backend = "host_mpi" if xp.__name__ == "cupy" else "device_mpi"
-
-    block_comm_config = {
-        "all_to_all": comm_config.block_all_to_all or default_backend,
-        "all_gather": comm_config.block_all_gather or default_backend,
-        "all_reduce": comm_config.block_all_reduce or default_backend,
-        "bcast": comm_config.block_bcast or default_backend,
-        "send_recv": comm_config.block_send_recv or default_backend,
-    }
-
-    stack_comm_config = {
-        "all_to_all": comm_config.stack_all_to_all or default_backend,
-        "all_gather": comm_config.stack_all_gather or default_backend,
-        "all_reduce": comm_config.stack_all_reduce or default_backend,
-        "bcast": comm_config.stack_bcast or default_backend,
-        "send_recv": comm_config.stack_send_recv or default_backend,
-    }
-
-    global_comm_config = {
-        "all_to_all": comm_config.global_all_to_all or default_backend,
-        "all_gather": comm_config.global_all_gather or default_backend,
-        "all_reduce": comm_config.global_all_reduce or default_backend,
-        "bcast": comm_config.global_bcast or default_backend,
-        "send_recv": comm_config.global_send_recv or default_backend,
-    }
-
     comm.configure(
         block_comm_size=comm_config.block_comm_size,
-        block_comm_config=block_comm_config,
-        stack_comm_config=stack_comm_config,
-        global_comm_config=global_comm_config,
+        block_comm_backend=comm_config.block_backend,
+        stack_comm_backend=comm_config.stack_backend,
+        global_comm_backend=comm_config.global_backend,
         override=True,
     )
 

@@ -399,7 +399,7 @@ def _create_matrix_from_unit_cells(
 
         transverse_shift = coord[:transport_ind] + coord[transport_ind + 1 :]
 
-        matrix_sparray = _expand_tight_binding_matrix(
+        out_matrix_dict[coord] = _expand_tight_binding_matrix(
             matrix_dict=matrix_dict,
             num_transport_cells=config.device.num_transport_cells,
             transport_ind=transport_ind,
@@ -407,7 +407,6 @@ def _create_matrix_from_unit_cells(
             block_end=end_block,
             transverse_shift=transverse_shift,
         )
-        out_matrix_dict[coord] = matrix_sparray.astype(xp.complex128)
 
     return out_matrix_dict
 
@@ -415,9 +414,15 @@ def _create_matrix_from_unit_cells(
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
-    force_complex: bool = True,
+    force_complex: bool = False,
 ):
     """Loads a Hermitian matrix from file
+
+    Note
+    ----
+    Enforces that all matrices have the same shape and type. If
+    `force_complex` is `True`, the loaded matrices will be cast to
+    `xp.complex128`.
 
     Parameters
     ----------
@@ -432,8 +437,8 @@ def load_matrices(
     Returns
     -------
     dict
-        The dict of sparse matrices corresponding to different periodic repetitions.
-        It is assumed that only the upper parts are stored.
+        The dict of sparse matrices corresponding to different periodic
+        repetitions. It is assumed that only the upper parts are stored.
 
     """
 
@@ -481,9 +486,19 @@ def load_matrices(
         for coord, matrix in matrix_dict.items()
     }
 
-    # assert that the matrix_dict have the same shape
+    # assert that the matrix_dict have the same shape and force the
+    # right type
     matrix_shape = matrix_dict[(0, 0, 0)].shape
     matrix_type = type(matrix_dict[(0, 0, 0)])
+    data = (
+        matrix_dict[(0, 0, 0)]
+        if isinstance(matrix_dict[(0, 0, 0)], np.ndarray)
+        else matrix_dict[(0, 0, 0)].data
+    )
+    if force_complex or np.imag(data).any():
+        matrix_dtype = np.complex128
+    else:
+        matrix_dtype = np.float64
     for coord, matrix in matrix_dict.items():
         if matrix.shape != matrix_shape:
             raise ValueError(
@@ -495,6 +510,17 @@ def load_matrices(
                 f"Matrix at coordinate {coord} has type {type(matrix)}, "
                 f"but expected type is {matrix_type}."
             )
+        data = matrix if isinstance(matrix, np.ndarray) else matrix.data
+        if force_complex or np.imag(data).any():
+            dtype = np.complex128
+        else:
+            dtype = np.float64
+        if matrix_dtype != dtype:
+            raise TypeError(
+                f"Matrix at coordinate {coord} has dtype {dtype}, "
+                f"but expected dtype is {matrix_dtype}."
+            )
+        matrix_dict[coord] = matrix.astype(matrix_dtype)
 
     # drop keys outside the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:
@@ -515,11 +541,6 @@ def load_matrices(
     elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
         matrix_dict = {
             coord: sparse.csr_matrix(matrix) for coord, matrix in matrix_dict.items()
-        }
-
-    if force_complex:
-        matrix_dict = {
-            coord: matrix.astype(xp.complex128) for coord, matrix in matrix_dict.items()
         }
 
     # expand potentially if the system is periodic
@@ -614,6 +635,8 @@ def assemble_matrix(
         sparsity_pattern.data[:] = 1
         sparsity_pattern = sparsity_pattern + sparsity_pattern.T
 
+    # TODO: Not force complex here, but determine the type from the
+    # loaded matrices. Need to rework SCBA to handle real matrices.
     matrix = config.compute.dsdbsparse_type.from_sparray(
         sparray=sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,

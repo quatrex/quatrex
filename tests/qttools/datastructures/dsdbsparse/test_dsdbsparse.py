@@ -6,7 +6,6 @@ import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures.dsdbsparse import DSDBSparse, _block_view, symmetry_ops
 
 
@@ -16,9 +15,6 @@ def configure_comm():
     # Configure the comm singleton.
     comm.configure(
         block_comm_size=1,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

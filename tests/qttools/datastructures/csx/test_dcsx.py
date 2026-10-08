@@ -304,11 +304,11 @@ class TestInplace:
         )
 
         rng = xp.random.default_rng(seed=42)
-        colwise = rng.uniform(size=a.cols) + 1j * rng.uniform(size=a.cols)
+        colwise = rng.uniform(size=a.num_cols) + 1j * rng.uniform(size=a.num_cols)
 
         a.multiply_(colwise)
         coo = local_coo.multiply(colwise).toarray()
-        reference = xp.broadcast_to(coo, local_stack_shape + (a.rows, a.cols))
+        reference = xp.broadcast_to(coo, local_stack_shape + (a.num_rows, a.num_cols))
 
         assert xp.allclose(a.toarray(), reference)
 
@@ -326,12 +326,12 @@ class TestInplace:
         )
 
         rng = xp.random.default_rng(seed=42)
-        rowwise = rng.uniform(size=a.rows) + 1j * rng.uniform(size=a.rows)
+        rowwise = rng.uniform(size=a.num_rows) + 1j * rng.uniform(size=a.num_rows)
         rowwise = rowwise[:, None]
 
         a.multiply_(rowwise)
         coo = local_coo.multiply(rowwise).toarray()
-        reference = xp.broadcast_to(coo, local_stack_shape + (a.rows, a.cols))
+        reference = xp.broadcast_to(coo, local_stack_shape + (a.num_rows, a.num_cols))
 
         assert xp.allclose(a.toarray(), reference)
 
@@ -359,13 +359,13 @@ class TestAccess:
 
         rng = xp.random.default_rng(seed=42)
 
-        rows = xp.arange(a.rows)
-        cols = xp.arange(a.cols)
+        rows = xp.arange(a.num_rows)
+        cols = xp.arange(a.num_cols)
 
-        mask = rng.random(a.rows) > 0.5
+        mask = rng.random(a.num_rows) > 0.5
         rows = rows[mask]
 
-        mask = rng.random(a.cols) > 0.5
+        mask = rng.random(a.num_cols) > 0.5
         cols = cols[mask]
 
         test_tile = a.get_tile(rows, cols).toarray()
@@ -392,7 +392,7 @@ class TestAccess:
         test_tile = a.get_tile(rows).toarray()
 
         assert test_tile.shape[-2] == 0
-        assert test_tile.shape[-1] == a.cols
+        assert test_tile.shape[-1] == a.num_cols
 
 
 @pytest.mark.mpi(min_size=2)

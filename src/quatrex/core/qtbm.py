@@ -290,10 +290,10 @@ class QTBM(TransportSolver):
         row_ind = xp.concatenate(row_ind, axis=-1, dtype=index_type)
         col_ind = xp.concatenate(col_ind, axis=-1, dtype=index_type)
 
-        rows = self.device.hamiltonians[0, 0, 0].rows
-        cols = self.device.hamiltonians[0, 0, 0].cols
+        num_rows = self.device.hamiltonians[0, 0, 0].num_rows
+        num_cols = self.device.hamiltonians[0, 0, 0].num_cols
 
-        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
         # Allocate system matrix
         index_type = get_index_dtype(maxval=len(row_ind))
@@ -301,7 +301,7 @@ class QTBM(TransportSolver):
         self.bare_system_matrix = DCSX.from_sparray(
             row_ind=row_ind.astype(index_type),
             col_ind=col_ind.astype(index_type),
-            shape=(rows, cols),
+            shape=(num_rows, num_cols),
             symmetry="hermitian",
             allocate=False,
             dtype=bare_system_matrix_dtype,
@@ -362,11 +362,11 @@ class QTBM(TransportSolver):
         row_ind = xp.concatenate(row_ind, axis=-1, dtype=index_type)
         col_ind = xp.concatenate(col_ind, axis=-1, dtype=index_type)
 
-        rows = self.device.hamiltonians[0, 0, 0].rows
-        cols = self.device.hamiltonians[0, 0, 0].cols
+        num_rows = self.device.hamiltonians[0, 0, 0].num_rows
+        num_cols = self.device.hamiltonians[0, 0, 0].num_cols
 
         # Remove duplicate entries
-        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
         # Allocate system matrix
         index_type = get_index_dtype(maxval=len(row_ind))
@@ -374,7 +374,7 @@ class QTBM(TransportSolver):
         self.system_matrix = DCSX.from_sparray(
             row_ind=row_ind.astype(index_type),
             col_ind=col_ind.astype(index_type),
-            shape=(rows, cols),
+            shape=(num_rows, num_cols),
             allocate=False,
             dtype=system_matrix_dtype,
         )

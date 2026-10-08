@@ -822,8 +822,7 @@ class QTBMContact(BaseContact):
 
         row_ind = np.concatenate(row_ind)
         col_ind = np.concatenate(col_ind)
-        cols = self.device.hamiltonians[(0, 0, 0)].cols
-        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
         h_k = DCSX.from_sparray(
             row_ind=row_ind,
@@ -838,8 +837,7 @@ class QTBMContact(BaseContact):
 
         row_ind = np.concatenate(row_ind)
         col_ind = np.concatenate(col_ind)
-        cols = self.device.overlap_matrices[(0, 0, 0)].cols
-        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind, cols)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
 
         s_k = DCSX.from_sparray(
             row_ind=row_ind,

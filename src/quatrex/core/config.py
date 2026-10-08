@@ -2182,38 +2182,35 @@ class CommConfig(BaseModel):
 
     """
 
-    block_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-to-all."""
-    block_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-gather."""
-    block_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block all-reduce."""
-    block_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block broadcast."""
-    block_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for block send-receive."""
+    block_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block operations.
 
-    stack_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-to-all."""
-    stack_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-gather."""
-    stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-reduce."""
-    stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack broadcast."""
-    stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack send-receive."""
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
 
-    global_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-to-all."""
-    global_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-gather."""
-    global_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack all-reduce."""
-    global_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack broadcast."""
-    global_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
-    """Communication backend to use for stack send-receive."""
+    """
+
+    stack_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack operations.
+
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
+
+    """
+
+    global_backend: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for global operations.
+
+    If not specified, "host_mpi" is used is used for GPU-based
+    calculations, and "device_mpi" is used for CPU-based calculations.
+    In the context of the CPU, "device_mpi" is just normal MPI while
+    "host_mpi" would do an extra copy.
+
+    """
 
 
 class ComputeConfig(BaseModel):
@@ -2629,37 +2626,11 @@ def _setup_comm(comm_config: CommConfig) -> None:
         The communication configuration containing the communication settings.
 
     """
-    default_backend = "host_mpi" if xp.__name__ == "cupy" else "device_mpi"
-
-    block_comm_config = {
-        "all_to_all": comm_config.block_all_to_all or default_backend,
-        "all_gather": comm_config.block_all_gather or default_backend,
-        "all_reduce": comm_config.block_all_reduce or default_backend,
-        "bcast": comm_config.block_bcast or default_backend,
-        "send_recv": comm_config.block_send_recv or default_backend,
-    }
-
-    stack_comm_config = {
-        "all_to_all": comm_config.stack_all_to_all or default_backend,
-        "all_gather": comm_config.stack_all_gather or default_backend,
-        "all_reduce": comm_config.stack_all_reduce or default_backend,
-        "bcast": comm_config.stack_bcast or default_backend,
-        "send_recv": comm_config.stack_send_recv or default_backend,
-    }
-
-    global_comm_config = {
-        "all_to_all": comm_config.global_all_to_all or default_backend,
-        "all_gather": comm_config.global_all_gather or default_backend,
-        "all_reduce": comm_config.global_all_reduce or default_backend,
-        "bcast": comm_config.global_bcast or default_backend,
-        "send_recv": comm_config.global_send_recv or default_backend,
-    }
-
     comm.configure(
         block_comm_size=comm_config.block_comm_size,
-        block_comm_config=block_comm_config,
-        stack_comm_config=stack_comm_config,
-        global_comm_config=global_comm_config,
+        block_comm_backend=comm_config.block_backend,
+        stack_comm_backend=comm_config.stack_backend,
+        global_comm_backend=comm_config.global_backend,
         override=True,
     )
 

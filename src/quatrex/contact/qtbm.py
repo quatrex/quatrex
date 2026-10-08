@@ -206,7 +206,7 @@ class QTBMContact(BaseContact):
         key = quatrex_comm.block.rank
         comm = quatrex_comm.block._mpi_comm.Split(color, key)
         if comm != MPI.COMM_NULL:
-            self.comm = _SubCommunicator(comm, quatrex_comm.block._config)
+            self.comm = _SubCommunicator(comm, quatrex_comm.block._backend)
 
             count = len(self.local_orbital_indices)
             counts = np.zeros(self.comm.size, dtype=np.int64)

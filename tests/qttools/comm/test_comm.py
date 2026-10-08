@@ -6,7 +6,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI, _default_config, pad_buffer
+from qttools.comm.comm import GPU_AWARE_MPI, pad_buffer
 
 data_size = 20
 
@@ -14,62 +14,59 @@ data_size = 20
 @pytest.mark.mpi(min_size=3)
 @pytest.mark.no_autoconf
 def test_configure(
-    backend_type: str,
+    backend: str,
     block_comm_size: int,
 ):
     """Test the configure function of the comm singleton."""
-    config = _default_config.copy()
-    config = {key: backend_type for key in config.keys()}
-
     if (block_comm_size > global_comm.size) | (global_comm.size % block_comm_size != 0):
         with pytest.raises(ValueError):
             comm.configure(
                 block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                global_comm_config=config,
+                block_comm_backend=backend,
+                stack_comm_backend=backend,
+                global_comm_backend=backend,
                 override=True,
             )
         return
-    if xp.__name__ == "numpy" and backend_type in ["nccl", "host_mpi"]:
+    if xp.__name__ == "numpy" and backend in ["nccl", "host_mpi"]:
         with pytest.raises(ValueError):
             comm.configure(
                 block_comm_size=block_comm_size,
-                block_comm_config=config,
-                stack_comm_config=config,
-                global_comm_config=config,
+                block_comm_backend=backend,
+                stack_comm_backend=backend,
+                global_comm_backend=backend,
                 override=True,
             )
         return
     if xp.__name__ == "cupy":
         from cupy.cuda import nccl
 
-        if not nccl.available and backend_type == "nccl":
+        if not nccl.available and backend == "nccl":
             with pytest.raises(RuntimeError):
                 comm.configure(
                     block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    global_comm_config=config,
+                    block_comm_backend=backend,
+                    stack_comm_backend=backend,
+                    global_comm_backend=backend,
                     override=True,
                 )
             return
-        if not GPU_AWARE_MPI and backend_type == "device_mpi":
+        if not GPU_AWARE_MPI and backend == "device_mpi":
             with pytest.raises(ValueError):
                 comm.configure(
                     block_comm_size=block_comm_size,
-                    block_comm_config=config,
-                    stack_comm_config=config,
-                    global_comm_config=config,
+                    block_comm_backend=backend,
+                    stack_comm_backend=backend,
+                    global_comm_backend=backend,
                     override=True,
                 )
             return
 
     comm.configure(
         block_comm_size=block_comm_size,
-        block_comm_config=config,
-        stack_comm_config=config,
-        global_comm_config=config,
+        block_comm_backend=backend,
+        stack_comm_backend=backend,
+        global_comm_backend=backend,
         override=True,
     )
 
@@ -286,11 +283,11 @@ def test_send_and_recv():
 
 @pytest.mark.mpi(min_size=2)
 def test_isend_and_irecv(
-    backend_type: str,
+    backend: str,
 ):
     """Test the isend and irecv functions."""
 
-    if backend_type == "host_mpi":
+    if backend == "host_mpi":
         pytest.skip("Non-blocking receive is not implemented for the host_mpi backend.")
 
     for test_comm in [comm.block, comm.stack, comm.global_]:
@@ -307,14 +304,12 @@ def test_isend_and_irecv(
             # send to and receive from the other rank (not self)
             other = 1 - test_comm.rank
 
-            test_comm.group_start(test_comm._config["send_recv"])
+            test_comm.group_start(test_comm._backend)
 
             send_request = test_comm.isend(buf=sendbuf, dest=other)
             recv_request = test_comm.irecv(buf=recvbuf, source=other)
 
-            test_comm.group_end(
-                test_comm._config["send_recv"], [send_request, recv_request]
-            )
+            test_comm.group_end(test_comm._backend, [send_request, recv_request])
 
             expected = xp.ones((data_size), dtype=xp.float32)
             assert xp.allclose(expected, recvbuf)

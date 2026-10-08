@@ -244,7 +244,7 @@ class DCSX:
         # First communicate the col indices
         requests = []
         send_buffers = []
-        comm.block.group_start(comm.block._config["send_recv"])
+        comm.block.group_start(comm.block._backend)
         for rank in range(comm.block.size):
             if rank == my_rank:
                 continue
@@ -261,7 +261,7 @@ class DCSX:
             if rank < my_rank and self.is_neighbour[my_rank, rank]:
                 requests.append(comm.block.irecv(buf=recv_buffer[rank], source=rank))
 
-        comm.block.group_end(comm.block._config["send_recv"], requests)
+        comm.block.group_end(comm.block._backend, requests)
 
         return recv_buffer
 
@@ -288,7 +288,7 @@ class DCSX:
 
         # When using host mpi, we need to do the communication with
         # blocking sends and receives.
-        if comm.block._config["send_recv"] == "host_mpi":
+        if comm.block._backend == "host_mpi":
             return self._communicate_quantity_blocking(quantity)
 
         else:

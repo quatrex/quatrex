@@ -289,7 +289,7 @@ def pre_process(
         config = _resolve_config_path(config)
 
         from quatrex.core.config import parse_config, setup_context
-        from quatrex.pre_processsing import pre_process as main
+        from quatrex.pre_processing import pre_process as main
 
         config = parse_config(config)
         setup_context(config)

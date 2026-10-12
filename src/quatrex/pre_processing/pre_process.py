@@ -5,8 +5,8 @@
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import create_device
-from quatrex.pre_processsing.contact_bandstructure import plot_contact_band_structure
-from quatrex.pre_processsing.contact_fermi_level import pre_process_fermi_level
+from quatrex.pre_processing.contact_bandstructure import plot_contact_band_structure
+from quatrex.pre_processing.contact_fermi_level import pre_process_fermi_level
 
 
 def pre_process(config: QuatrexConfig):

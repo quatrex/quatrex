@@ -141,6 +141,7 @@ platforms = ["linux-64"]
     pyvista = ">=0.46.0"
     matplotlib = "*"
     tomlkit = "*"
+    mmgpy = "*"
 
 # --- Development features ---------------------------------------------
 [tool.pixi.feature.dev]

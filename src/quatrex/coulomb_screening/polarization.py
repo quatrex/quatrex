@@ -76,9 +76,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.energies = coulomb_screening_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.ne = len(self.energies)
+        spin_currents = config.outputs.spin_currents
+        spin_degeneracy_factor = 1 if spin_currents else 2 # Spinor basis must be used to calculate spin currents
         self.prefactor = (
-            -1j
-            / (xp.pi)
+            -1j * spin_degeneracy_factor
+            / ( 2 * xp.pi)
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )

@@ -3,16 +3,16 @@ simulation_dir = "."
 formalism = "negf"
 
 [device] # ==========================================================
-kpoint_grid = [1, 1, 1]
+kpoint_grid = [1, 42, 1]
 construct_from_unit_cell = true
 transport_direction = "a"
 
 neighbor_cell_cutoff = [2, 2, 0]
 
-num_transport_cells = 4
+num_transport_cells = 6
 
 [scba] # =============================================================
-max_iterations = 100
+max_iterations = 2
 mixing_factor = 0.5
 symmetric = true
 
@@ -36,12 +36,12 @@ coulomb_screening_density = false
 
 [electron] # =========================================================
 left_contact.name = "left"
-left_contact.fermi_level = -2 # eV
+left_contact.fermi_level = -2.2 # eV
 left_contact.mid_gap_energy = -1.5524       # eV
 left_contact.temperature = 300 # K 
 
 right_contact.name = "right"
-right_contact.fermi_level = -2.2 # eV
+right_contact.fermi_level = -2.4 # eV
 right_contact.mid_gap_energy = -1.5524        # eV
 right_contact.temperature = 300 # K
 

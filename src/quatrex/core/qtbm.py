@@ -481,53 +481,50 @@ class QTBM(TransportSolver):
             order="F",
         )
 
-        # No OBCs on this rank, return the zero rhs
-        if len(obc_results) == 0:
-            return rhs
+        if len(obc_results) != 0:
+            offsets_injected = np.hstack((0, np.cumsum(num_injected)))
+            offsets_reflected = total_num_injected + np.hstack(
+                (0, np.cumsum(num_reflected))
+            )
 
-        offsets_injected = np.hstack((0, np.cumsum(num_injected)))
-        offsets_reflected = total_num_injected + np.hstack(
-            (0, np.cumsum(num_reflected))
-        )
+            # Add the injection vector in the contact elements of the rhs
+            for i, contact in enumerate(self.device.contacts):
+                if contact in obc_results:
+                    if contact.comm is None:
+                        raise RuntimeError(
+                            "Contact subcommunicator is not initialized.\n"
+                            "Ensure that the contact has local orbital indices on this rank."
+                        )
 
-        # Add the injection vector in the contact elements of the rhs
-        for i, contact in enumerate(self.device.contacts):
-            if contact in obc_results:
-                if contact.comm is None:
-                    raise RuntimeError(
-                        "Contact subcommunicator is not initialized.\n"
-                        "Ensure that the contact has local orbital indices on this rank."
-                    )
+                    obc_result = obc_results[contact]
 
-                obc_result = obc_results[contact]
-
-                local_injection = obc_result.injection[energy_ind][
-                    contact.row_offsets[contact.comm.rank] : contact.row_offsets[
-                        contact.comm.rank + 1
-                    ],
-                    :,
-                ]
-
-                rhs[
-                    contact.local_orbital_indices,
-                    offsets_injected[i] : offsets_injected[i + 1],
-                ] = local_injection
-                if self.low_rank_obc:
-
-                    local_reflection = obc_result.reflection[energy_ind][
+                    local_injection = obc_result.injection[energy_ind][
                         contact.row_offsets[contact.comm.rank] : contact.row_offsets[
                             contact.comm.rank + 1
                         ],
                         :,
                     ]
 
-                    # Add the reflections.
                     rhs[
                         contact.local_orbital_indices,
-                        offsets_reflected[i] : offsets_reflected[i + 1],
-                    ] = local_reflection
+                        offsets_injected[i] : offsets_injected[i + 1],
+                    ] = local_injection
+                    if self.low_rank_obc:
 
-        rhs = xp.asfortranarray(rhs)
+                        local_reflection = obc_result.reflection[energy_ind][
+                            contact.row_offsets[
+                                contact.comm.rank
+                            ] : contact.row_offsets[contact.comm.rank + 1],
+                            :,
+                        ]
+
+                        # Add the reflections.
+                        rhs[
+                            contact.local_orbital_indices,
+                            offsets_reflected[i] : offsets_reflected[i + 1],
+                        ] = local_reflection
+
+            rhs = xp.asfortranarray(rhs)
 
         # If system matrix is real, convert the RHS to real with twice
         # the number of columns

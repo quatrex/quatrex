@@ -20,7 +20,7 @@ from quatrex.grid.kpoints import monkhorst_pack
 
 def get_block_sizes(
     config: QuatrexConfig,
-    orbital_coordinates: NDArray,
+    num_orbitals: int,
 ) -> NDArray:
     """Determines the block sizes for the device.
 
@@ -28,42 +28,45 @@ def get_block_sizes(
     ----------
     config : QuatrexConfig
         The Quatrex configuration.
-    orbital_coordinates : NDArray
-        The coordinates of the orbital centers.
+    num_orbitals : int
+        The total number of (spin-)orbitals in the device, i.e., the
+        size of the device matrices.
 
     Returns
     -------
     NDArray
-        The block sizes for the device.
+        The block sizes for the device in units of (spin-)orbitals.
 
     """
 
     if config.device.construct_from_unit_cell:
         # The neighbor cell cutoff along the transport direction
         # determines the size of the transport cell.
-        # which is implicit in the orbital coordinates.
-        block_sizes = np.full(
+        # which is implicit in the number of orbitals.
+        return np.full(
             shape=config.device.num_transport_cells,
-            fill_value=orbital_coordinates.shape[0]
-            // config.device.num_transport_cells,
+            fill_value=num_orbitals // config.device.num_transport_cells,
         )
 
-    else:
-        block_sizes = config.device.block_size
-        if isinstance(block_sizes, int):
-            num_blocks, remainder = divmod(orbital_coordinates.shape[0], block_sizes)
-            if remainder != 0:
-                raise ValueError(
-                    f"Block size {block_sizes} does not evenly divide the number of orbitals {orbital_coordinates.shape[0]}."
-                )
-            block_sizes = [block_sizes] * num_blocks
+    # NOTE: The block sizes are given in units of spatial orbitals.
+    num_spin_channels = config.device.num_spin_channels
+    num_spatial_orbitals = num_orbitals // num_spin_channels
 
-        block_sizes = np.array(block_sizes)
-
-        if block_sizes.sum() != orbital_coordinates.shape[0]:
+    block_sizes = config.device.block_size
+    if isinstance(block_sizes, int):
+        num_blocks, remainder = divmod(num_spatial_orbitals, block_sizes)
+        if remainder != 0:
             raise ValueError(
-                f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {orbital_coordinates.shape[0]}."
+                f"Block size {block_sizes} does not evenly divide the number of spatial orbitals {num_spatial_orbitals}."
             )
+        block_sizes = [block_sizes] * num_blocks
+
+    block_sizes = np.array(block_sizes) * num_spin_channels
+
+    if block_sizes.sum() != num_orbitals:
+        raise ValueError(
+            f"Sum of block sizes {block_sizes.sum() // num_spin_channels} does not match the number of spatial orbitals {num_spatial_orbitals}."
+        )
 
     return block_sizes
 
@@ -412,10 +415,108 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
+def _check_input_size(
+    config: QuatrexConfig,
+    matrix_name: str,
+    matrix_dict: dict,
+    num_spatial_orbitals: int,
+) -> None:
+    """Checks that the input matrices match the size implied by the
+    structure and the spin settings.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex configuration.
+    matrix_name : str
+        The name of the matrix ('hamiltonian', 'overlap', etc.).
+    matrix_dict : dict
+        The dictionary of matrices as read from file.
+    num_spatial_orbitals : int
+        The number of spatial orbitals (without spin) in the structure
+        that the input matrices refer to.
+
+    """
+    device_config = config.device
+    if device_config.expand_spinless_inputs:
+        expected_size = num_spatial_orbitals
+        mode = "spin = true with expand_spinless_inputs = true (spinless inputs)"
+    else:
+        expected_size = num_spatial_orbitals * device_config.num_spin_channels
+        mode = (
+            "spin = true without expand_spinless_inputs (spinful inputs)"
+            if device_config.spin
+            else "spin = false (spinless inputs)"
+        )
+
+    for coord, matrix in matrix_dict.items():
+        if matrix.shape == (expected_size, expected_size):
+            continue
+
+        hint = ""
+        if device_config.spin and not device_config.expand_spinless_inputs:
+            if matrix.shape[0] == num_spatial_orbitals:
+                hint = (
+                    "\nThe matrix matches the spinless size. Set "
+                    "`expand_spinless_inputs = true` if the inputs are spinless."
+                )
+        elif device_config.expand_spinless_inputs:
+            if matrix.shape[0] == 2 * num_spatial_orbitals:
+                hint = (
+                    "\nThe matrix matches the spinful size. Set "
+                    "`expand_spinless_inputs = false` if the inputs already "
+                    "contain spin."
+                )
+        raise ValueError(
+            f"Matrix '{matrix_name}' at coordinate {coord} has shape "
+            f"{matrix.shape}, but {mode} with {num_spatial_orbitals} spatial "
+            f"orbitals in the structure requires shape "
+            f"{(expected_size, expected_size)}.{hint}"
+        )
+
+
+def _expand_spin(matrix_dict: dict, spin_block: NDArray) -> dict:
+    """Expands spinless matrices to the interleaved spin-orbital basis.
+
+    The spin-orbital index is `2 * orbital + s`, i.e., each matrix `M`
+    is replaced by `kron(M, spin_block)`.
+
+    Parameters
+    ----------
+    matrix_dict : dict
+        The dictionary of spinless matrices as read from file (dense
+        NumPy arrays or SciPy sparse matrices).
+    spin_block : NDArray
+        The 2x2 matrix acting on the spin degree of freedom.
+
+    Returns
+    -------
+    dict
+        The dictionary of matrices in the spin-orbital basis.
+
+    """
+    return {
+        coord: (
+            np.kron(matrix, spin_block)
+            if isinstance(matrix, np.ndarray)
+            else sps.kron(matrix, spin_block, format="csr")
+        )
+        for coord, matrix in matrix_dict.items()
+    }
+
+
+SPIN_BLOCKS = {
+    "identity": np.eye(2),
+    "ones": np.ones((2, 2)),
+}
+
+
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
     force_complex: bool = True,
+    num_spatial_orbitals: int | None = None,
+    spin_block: str = "identity",
 ):
     """Loads a Hermitian matrix from file
 
@@ -428,6 +529,15 @@ def load_matrices(
     force_complex : bool
         Whether to force the loaded matrices to be complex. If `True`,
         the loaded matrices will be cast to `xp.complex128`.
+    num_spatial_orbitals : int | None, optional
+        The number of spatial orbitals (without spin) in the structure
+        that the input matrices refer to (the unit cell if the device is
+        constructed from it). If given, the size of the input matrices
+        is checked against it.
+    spin_block : str, optional
+        The 2x2 spin matrix used to expand spinless inputs if
+        `expand_spinless_inputs` is set. Either "identity" (Hamiltonian,
+        overlap) or "ones" (Coulomb matrix). Defaults to "identity".
 
     Returns
     -------
@@ -445,6 +555,17 @@ def load_matrices(
             f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
             f"Available keys: {list(matrix_dict.keys())}"
         )
+
+    if num_spatial_orbitals is not None:
+        _check_input_size(config, matrix_name, matrix_dict, num_spatial_orbitals)
+
+    # NOTE: The spin expansion has to happen before only the upper
+    # triangular parts are kept, since kron(triu(V), ones((2, 2))) is
+    # not upper triangular. After the expansion, the matrices are valid
+    # operators in the spin-orbital basis and all downstream processing
+    # is the same as for spinless inputs.
+    if config.device.expand_spinless_inputs:
+        matrix_dict = _expand_spin(matrix_dict, SPIN_BLOCKS[spin_block])
 
     # assert that the keys form a complete grid,
     keys = np.array(list(matrix_dict.keys()))
@@ -560,6 +681,8 @@ def assemble_matrix(
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
+    num_spatial_orbitals: int | None = None,
+    spin_block: str = "identity",
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
     """Loads a Hermitian matrix from file and optionally
     applies a provided sparsity pattern.
@@ -576,6 +699,12 @@ def assemble_matrix(
     shift_kpoints : bool
         Whether to "shift"/"center" the kpoints in the allocated
         DSDBSparse.
+    num_spatial_orbitals : int | None, optional
+        The number of spatial orbitals in the structure that the input
+        matrices refer to. See `load_matrices`.
+    spin_block : str, optional
+        The spin matrix used to expand spinless inputs. See
+        `load_matrices`.
 
     Returns
     -------
@@ -586,25 +715,14 @@ def assemble_matrix(
 
     """
 
-    matrix_dict = load_matrices(config, matrix_name)
+    matrix_dict = load_matrices(
+        config,
+        matrix_name,
+        num_spatial_orbitals=num_spatial_orbitals,
+        spin_block=spin_block,
+    )
 
-    # load or construct the block sizes for the DSDBSparse
-    if config.device.construct_from_unit_cell:
-        expanded_shape = matrix_dict[(0, 0, 0)].shape
-        block_sizes = [
-            expanded_shape[0] // config.device.num_transport_cells
-        ] * config.device.num_transport_cells
-    else:
-        block_sizes = config.device.block_size
-        if isinstance(block_sizes, int):
-            num_blocks, remainder = divmod(matrix_dict[(0, 0, 0)].shape[0], block_sizes)
-            if remainder != 0:
-                raise ValueError(
-                    f"Block size {block_sizes} does not evenly divide the number of orbitals {matrix_dict[(0,0,0)].shape[0]}."
-                )
-            block_sizes = [block_sizes] * num_blocks
-
-    block_sizes = np.array(block_sizes)
+    block_sizes = get_block_sizes(config, matrix_dict[(0, 0, 0)].shape[0])
 
     if sparsity_pattern is None:
         # TODO: This could lead to cancelations

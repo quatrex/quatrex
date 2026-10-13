@@ -118,6 +118,8 @@ class SCBADevice(BaseDevice):
             matrix_name="hamiltonian",
             sparsity_pattern=None,
             shift_kpoints=False,
+            num_spatial_orbitals=self.num_spatial_orbitals,
+            spin_block="identity",
         )
 
         try:
@@ -127,6 +129,8 @@ class SCBADevice(BaseDevice):
                 matrix_name="overlap",
                 sparsity_pattern=None,
                 shift_kpoints=False,
+                num_spatial_orbitals=self.num_spatial_orbitals,
+                spin_block="identity",
             )
 
             # Check that the overlap matrix and Hamiltonian matrix match.
@@ -236,6 +240,8 @@ class SCBADevice(BaseDevice):
             matrix_name="coulomb_matrix",
             sparsity_pattern=self.sparsity_pattern,
             shift_kpoints=True,
+            num_spatial_orbitals=self.num_spatial_orbitals,
+            spin_block="ones",
         )
 
         # Make sure the Coulomb matrix is hermitian.

@@ -773,6 +773,11 @@ class OBCConfig(BaseModel):
     inside the contour. If too small, the method will fail. If too
     large, the method will be less efficient.
 
+    !!! note
+        The guess is given per spin channel. If spin is treated
+        explicitly (see `device.spin`), it is doubled internally, since
+        every mode then appears twice.
+
     """
 
     num_quad_points: PositiveInt = 20
@@ -1751,6 +1756,42 @@ class DeviceConfig(BaseModel):
     orbital per atom, which is useful when dealing with Wannier orbitals
     that are not atom-centered.
 
+    !!! note
+        The number of orbitals is always given per spin channel, i.e.,
+        without spin, also if [`spin`](#spin) is `True`.
+
+    """
+
+    spin: bool = False
+    """Whether to treat spin explicitly.
+
+    If `True`, every spatial orbital carries two spin channels and all
+    operators live in the spin-orbital basis. The spin-orbital index is
+    interleaved, i.e., `2 * orbital + s` with `s` in `{0, 1}`, such that
+    the two spin channels of an orbital are adjacent. The spin
+    degeneracy factor of 2 is then no longer applied to observables
+    (densities, currents, polarization, etc.).
+
+    [`block_size`](#block_size) and
+    [`num_orbitals_per_atom`](#num_orbitals_per_atom) are still given in
+    units of spatial orbitals and are doubled internally.
+
+    Unless [`expand_spinless_inputs`](#expand_spinless_inputs) is
+    `True`, the input matrices must already be given in the
+    (interleaved) spin-orbital basis, i.e., they must have twice the
+    number of rows of the spatial orbitals in the structure.
+
+    """
+
+    expand_spinless_inputs: bool = False
+    """Whether to expand spinless input matrices to the spin-orbital
+    basis.
+
+    If `True`, the input matrices are assumed to be spinless and are
+    expanded as `kron(X, I_2)` for the Hamiltonian and the overlap
+    matrix and as `kron(V, ones((2, 2)))` for the Coulomb matrix. This
+    requires [`spin`](#spin) to be `True`.
+
     """
 
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
@@ -1766,6 +1807,40 @@ class DeviceConfig(BaseModel):
     """
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
     """The kpoint shift to apply to the Monkhorst-Pack grid."""
+
+    @property
+    def num_spin_channels(self) -> int:
+        """The number of explicitly treated spin channels."""
+        return 2 if self.spin else 1
+
+    @property
+    def spin_degeneracy(self) -> int:
+        """The spin degeneracy factor to apply to observables."""
+        return 1 if self.spin else 2
+
+    def orbitals_per_atom(self, species: str) -> int:
+        """Returns the number of (spin-)orbitals for an atomic species.
+
+        Parameters
+        ----------
+        species : str
+            The atomic species.
+
+        Returns
+        -------
+        int
+            The number of orbitals per atom times the number of spin
+            channels.
+
+        """
+        return self.num_orbitals_per_atom.get(species, 1) * self.num_spin_channels
+
+    @model_validator(mode="after")
+    def check_spin(self) -> Self:
+        """Checks that the spin flags are consistent."""
+        if self.expand_spinless_inputs and not self.spin:
+            raise ValueError("`expand_spinless_inputs` requires `spin = true`.")
+        return self
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

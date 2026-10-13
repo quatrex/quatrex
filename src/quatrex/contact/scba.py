@@ -450,7 +450,9 @@ class SCBAContact(BaseContact):
             return Beyn(
                 r_o=obc_config.r_o ** (1 / block_sections),
                 r_i=obc_config.r_i ** (1 / block_sections),
-                m_0=obc_config.m_0,
+                # NOTE: m_0 is given per spin channel, since every mode
+                # is doubled if spin is treated explicitly.
+                m_0=obc_config.m_0 * self.device.device_config.num_spin_channels,
                 num_quad_points=obc_config.num_quad_points,
                 num_threads_contour=nevp_config.num_threads_contour,
                 eig_compute_location=nevp_config.eig_compute_location,

@@ -3,7 +3,7 @@ simulation_dir = "."
 formalism = "negf"
 
 [device] # ==========================================================
-kpoint_grid = [1, 42, 1]
+kpoint_grid = [1, 3, 1]
 construct_from_unit_cell = true
 transport_direction = "a"
 
@@ -51,7 +51,7 @@ flatband = false
 
 energy_window_min = -10.0 # eV
 energy_window_max = 5     # eV
-energy_window_num = 1000
+energy_window_num = 100
 
 eta = 1e-5
 

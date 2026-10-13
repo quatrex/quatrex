@@ -76,9 +76,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.energies = coulomb_screening_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.ne = len(self.energies)
+        spin_resolved = config.coulomb_screening.spin
+        spin_factor = 1 if spin_resolved else 2
         self.prefactor = (
-            -1j
-            / (xp.pi)
+            -1j * spin_factor
+            / (xp.pi * 2) 
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )

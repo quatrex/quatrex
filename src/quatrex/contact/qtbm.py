@@ -2,15 +2,19 @@
 
 """Includes the QTBM contact class."""
 
-
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
 
 import numpy as np
+from mpi4py import MPI
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
+from qttools.comm import comm as quatrex_comm
+from qttools.comm.comm import _SubCommunicator
+from qttools.datastructures.csx_routines import allgather_csx, remove_duplicate_entries
+from qttools.datastructures.dcsx import DCSX
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
 from qttools.toeplitz.circulant import construct_circulant_cell
@@ -129,13 +133,6 @@ class QTBMContact(BaseContact):
     orbital_indices : NDArray
         Flattened array of orbital indices for the contact, sorted first
         in transport direction, then in transverse directions.
-    orbital_indices_per_layer : list[NDArray]
-        List of orbital indices for each layer in the transport
-        direction, sorted first in transverse directions, then in
-        transport direction.
-    transverse_to_transport_indices : NDArray
-        Indices to reorder the coupling matrix from transverse-first to
-        transport-first ordering.
     fermi_level : float
         Fermi level of the contact in eV.
     mid_gap_energy : float
@@ -148,6 +145,10 @@ class QTBMContact(BaseContact):
         Temperature of the contact in K.
     obc_solver : obc.Spectral
         Configured open boundary condition solver.
+    comm : _SubCommunicator | None
+        MPI subcommunicator for the contact, used for parallel OBC
+        calculations. None if the contact has no local orbital indices on
+        the current rank.
 
     """
 
@@ -156,6 +157,7 @@ class QTBMContact(BaseContact):
         device,
         contact_config: ContactConfig,
         sparsity_pattern: sparse.spmatrix,
+        row_offsets: NDArray,
     ):
         super().__init__(device, contact_config, sparsity_pattern)
 
@@ -167,31 +169,82 @@ class QTBMContact(BaseContact):
             self.device.config.compute.nevp,
         )
 
+        self._distribute(row_offsets)
+
+    def _distribute(self, row_offsets: NDArray):
+        """Distributes the contact orbital indices across MPI ranks.
+
+        Parameters
+        ----------
+        row_offsets : NDArray
+            The row offsets for each MPI rank, used to determine the local
+            orbital indices for the contact on each rank.
+
+        """
+
+        start = row_offsets[quatrex_comm.block.rank]
+        end = row_offsets[quatrex_comm.block.rank + 1]
+
+        self.local_orbital_indices = (
+            self.orbital_indices[
+                (self.orbital_indices >= start) & (self.orbital_indices < end)
+            ]
+            - start
+        )
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+
+        self.local_origin_orbital_indices = (
+            origin_orbital_indices[
+                (origin_orbital_indices >= start) & (origin_orbital_indices < end)
+            ]
+            - start
+        )
+
+        # build a subcommunicator based on local_orbital_indices
+        self.comm = None
+        color = 1 if len(self.local_orbital_indices) > 0 else MPI.UNDEFINED
+        key = quatrex_comm.block.rank
+        comm = quatrex_comm.block._mpi_comm.Split(color, key)
+        if comm != MPI.COMM_NULL:
+            self.comm = _SubCommunicator(comm, quatrex_comm.block._backend)
+
+            count = len(self.local_orbital_indices)
+            counts = np.zeros(self.comm.size, dtype=np.int64)
+            self.comm.all_gather(
+                np.array(count, dtype=np.int64),
+                counts,
+                backend="device_mpi",
+            )
+            self.row_offsets = np.array([0] + list(np.cumsum(counts)), dtype=np.int64)
+
+        # Discover the root rank for the contact comm.
+        root_candidate = np.ones((1,), dtype=np.int32) * -1
+        if len(self.local_orbital_indices) > 0:
+            if self.comm.rank == 0:
+                root_candidate[0] = quatrex_comm.block.rank
+
+        root = np.zeros((1,), dtype=np.int32)
+        quatrex_comm.block.all_reduce(
+            root_candidate, root, op="max", backend="device_mpi"
+        )
+        self.root_rank = root[0]
+
     def get_coupling_matrix(
-        self, M: sparse.spmatrix, transpose: bool = False
+        self,
+        matrix: DCSX,
+        kpoint: tuple[float, float, float],
     ) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
-        to the contact.
-
-        Example:
-            Given a contact layers |0 1 2 3|,
-            the resulting coupling matrix is
-            |3 2 1|
-            |0 3 2|
-            |0 0 3|
-
+        to the contact. This correspond to the M10 block in the quatratic eigenvalue problem.
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        matrix : DCSX
             The matrix (Hamiltonian or overlap) from which to extract
             coupling elements. Should have dimensions
             (n_device_orbitals, n_device_orbitals).
-        transpose : bool, optional
-            If True, the method extracts the transpose of the coupling
-            matrix, by default False.
 
         Returns
         -------
@@ -202,35 +255,66 @@ class QTBMContact(BaseContact):
             contact's transverse repetitions.
 
         """
+        if self.comm is None:
+            raise RuntimeError(
+                "Contact subcommunicator is not initialized.\n"
+                "Ensure that the contact has local orbital indices on this rank."
+            )
 
-        n = self.orbital_indices_per_layer[0].shape[0]
+        if matrix.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix must be unsymmetrized (symmetry=None) "
+                "for coupling matrix extraction."
+            )
 
-        indices_zero = self.orbital_indices_per_layer[0]
+        m_xx = self._get_contact_blocks(matrix=matrix)
+        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
 
-        # Slice block column of the matrix
-        # Thus, no conjugation and transpose is needed
-        if not transpose:
-            layers = [
-                M[indices, :][:, indices_zero]
-                for indices in self.orbital_indices_per_layer[1:]
-            ]
-        else:
-            layers = [
-                M[:, indices][indices_zero, :].T.conj()
-                for indices in self.orbital_indices_per_layer[1:]
-            ]
+        m_xx_tmp = {}
+        # TODO: Make natural order default
+        # TODO: Do not densify here.
+        # shuffle keys to to have natural order a,b,c
+        for i, j, k in np.ndindex(*grid):
+            index = [j, k]
+            index.insert(self.transport_direction, i)
+            index = tuple(index)
+            m_xx_tmp[index] = m_xx[i, j, k].toarray()
+        m_xx = m_xx_tmp
 
-        # NOTE: Stacking sparse matrix is slow
-        coupling_matrix = []
-        zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
-        # Assemble column by column
-        for shift in range(self.transport_repetitions):
-            layer = layers[shift:] + [zero] * shift
-            coupling_matrix.append(sparse.vstack(layer, format="csr"))
+        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
+        phases = (
+            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
+        )
 
-        coupling_matrix = sparse.hstack(coupling_matrix[::-1], format="csr")
+        coupling_matrix = construct_circulant_cell(
+            matrix_dict=m_xx,
+            transport_cell_size=self.transport_repetitions,
+            transport_ind=self.transport_direction,
+            block_index=-1,  # Meaning  M10 is constructed.
+            sections=self.transverse_repetition_grid,
+            phases=phases,
+            key_assumption="half",
+        )
 
-        indices = self.transverse_to_transport_indices
+        # TODO: Not reorder here, but where it is used.
+        ny, nz = self.transverse_repetition_grid
+        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
+        indices = xp.concatenate(
+            [
+                xp.arange(origin_num_orbitals)
+                + i * origin_num_orbitals
+                + k * origin_num_orbitals * ny * nz
+                for i in range(ny * nz)
+                for k in range(self.transport_repetitions)
+            ],
+            dtype=int,
+        )[None, :]
+
+        # When getting the coupling matrix (01) for spill over, it is
+        # more efficient to have it sorted first in transverse, then in
+        # transport The orbital list is then different.
+        # TODO: Investigate this.
         return coupling_matrix[indices.T, indices]
 
     def _construct_contact_matrix(self, UC_matrix: list):
@@ -410,20 +494,17 @@ class QTBMContact(BaseContact):
 
         return modes
 
-    def _slice_matrix(
+    def _get_contact_blocks(
         self,
-        M: sparse.spmatrix,
-        upper: bool = False,
-    ):
+        matrix: DCSX,
+    ) -> dict[sparse.spmatrix]:
         """Slices the given matrix into a dictionary of submatrices
         corresponding to the unit cell orbital indices.
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        matrix : DCSX
             The matrix to slice.
-        upper : bool, optional
-            Whether M is only upper triangular.
 
         Returns
         -------
@@ -432,103 +513,49 @@ class QTBMContact(BaseContact):
             submatrices corresponding to the unit cell orbital indices.
 
         """
-
-        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
-        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
-
-        M_slice = {}
-        M_origin = M[origin_orbital_indices, :]
-
-        if upper:
-            M_origin += M[:, origin_orbital_indices].T.conj()
-            M_origin[:, origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
+        if matrix.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix must be unsymmetrized (symmetry=None) "
+                "for contact block extraction."
             )
 
-        for index in np.ndindex(*grid):
-            M_slice[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+        m_origin = matrix.get_tile(
+            row_ind=self.local_origin_orbital_indices,
+        )
 
-        return M_slice
-
-    def _get_contact_blocks(
-        self,
-        matrices: dict,
-        kpoint: NDArray,
-        upper: bool = False,
-    ) -> dict:
-        """Constructs the contact blocks for the given k-point.
-
-        Parameters
-        ----------
-        matrices : dict
-            A dictionary of matrices (Hamiltonian or overlap) indexed by
-            the spatial index.
-        kpoint : NDArray
-            The k-point for which to construct the contact blocks.
-        upper : bool, optional
-            Whether M is only upper triangular.
-
-        Returns
-        -------
-        dict
-            A dictionary mapping (i, j, k) tuples to the contact blocks
-            corresponding to the unit cell orbital indices.
-
-        """
-        M_origin = None
-        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
-
-        # NOTE: Needs to slice and multiply the phase at once using
-        # `_slice_matrix` would be wrong with `upper=True` since not each
-        # k-point hamiltonian is hermitian, but only the sum over all
-        # k-points is hermitian.
-
-        # Assemble the contact layer for the full summed k-point matrix
-        for r, matrix in matrices.items():
-            phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-            term = phase * matrix[origin_orbital_indices, :]
-            M_origin = term if M_origin is None else M_origin + term
-
-        if upper:
-            # NOTE: We could potentially optimize this by only slicing
-            # the origin orbital indices since the rest is zero due to
-            # being upper triangular.
-
-            M_col = None
-            for r, matrix in matrices.items():
-                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
-                term = phase * matrix[:, origin_orbital_indices]
-                M_col = term if M_col is None else M_col + term
-
-            M_origin = M_origin + M_col.T.conj()
-            M_origin[:, origin_orbital_indices] -= (
-                sparse.diags(M_origin[:, origin_orbital_indices].diagonal()) / 2
-            )
+        # NOTE: Possible to cache here the offsets in both nnz and
+        # shape.
+        m_origin = allgather_csx(
+            m_origin,
+            self.comm,
+            axis=0.0,
+        )
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
         for index in np.ndindex(*grid):
-            m_xx[index] = M_origin[:, self.unit_cell_orbital_indices[index]]
+            m_xx[index] = m_origin.get_tile(
+                col_ind=self.unit_cell_orbital_indices[index]
+            ).tocoo()
 
         return m_xx
 
     @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
         self,
-        M: sparse.spmatrix,
-        upper_M: bool,
+        M: DCSX,
         k_outer: tuple[float, float, float],
         return_modes_only: bool = False,
-    ) -> OBCResult:
+    ) -> OBCResult | None:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
         ----------
-        M : sparse.spmatrix
+        M : DCSX
             The system matrix from which to extract coupling elements.
-            It should have dimensions (n_device_orbitals, n_device_orbitals).
-        upper_M : bool
-            Whether to use the upper triangle of the system matrix.
+            It should have dimensions (n_device_orbitals,
+            n_device_orbitals).
         k_outer : tuple[float, float, float]
             The k-point in the transport direction.
         return_modes_only : bool, optional
@@ -537,15 +564,28 @@ class QTBMContact(BaseContact):
 
         Returns
         -------
-        ContactOBCResult
+        ContactOBCResult | None
             An object containing the computed OBC results, including
             injection modes, self-energy, and Bloch modes as applicable.
+            Returns None if the contact has no local orbital indices on
+            the current rank.
 
         """
+        if self.comm is None:
+            return None
+
+        if M.symmetry is not None:
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                "The input matrix M must be unsymmetrized (symmetry=None) "
+                "for OBC computation."
+            )
+
         if k_outer[self.transport_direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
-                f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.transport_direction}). "
+                "You can't compute the OBC for a non-zero k-point "
+                f"in the transport direction ({self.transport_direction}). "
             )
         # Remove the k-point in the transport direction
         k_outer.pop(self.transport_direction)
@@ -553,10 +593,8 @@ class QTBMContact(BaseContact):
         num_energies = 1
 
         ny, nz = self.transverse_repetition_grid
-        M_slice = self._slice_matrix(
-            M=M,
-            upper=upper_M,
-        )
+
+        m_xx = self._get_contact_blocks(matrix=M)
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions
@@ -583,12 +621,12 @@ class QTBMContact(BaseContact):
 
             for i in range(self.transport_repetitions + 1):
                 temp = sparse.csr_matrix(
-                    (M_slice[i, 0, 0].shape[0], M_slice[i, 0, 0].shape[1]),
+                    (m_xx[i, 0, 0].shape[0], m_xx[i, 0, 0].shape[1]),
                     dtype=xp.complex128,
                 )
                 for j, k in np.ndindex(ny, nz):
-                    if M_slice[i, j, k].nnz > 0:
-                        temp += M_slice[i, j, k] * xp.exp(
+                    if m_xx[i, j, k].nnz > 0:
+                        temp += m_xx[i, j, k] * xp.exp(
                             1j
                             * (
                                 (ky) * (j - self.origin_key[1])
@@ -771,6 +809,12 @@ class QTBMContact(BaseContact):
             The eigenvalues for the contact band structure.
 
         """
+        if self.comm is None:
+            raise RuntimeError(
+                "Contact subcommunicator is not initialized.\n"
+                "Ensure that the contact has local orbital indices on this rank."
+            )
+
         e_k = xp.zeros(
             (
                 len(kpoints_transport),
@@ -782,16 +826,57 @@ class QTBMContact(BaseContact):
             dtype=float,
         )
 
+        # TODO: Clean this up and merge functionality with the assembly
+        # and the allocation of QTBM.
+        # Get full sparsity
+        row_ind = [h_r.row_ind for h_r in self.device.hamiltonians.values()]
+        col_ind = [h_r.col_ind for h_r in self.device.hamiltonians.values()]
+
+        row_ind = np.concatenate(row_ind)
+        col_ind = np.concatenate(col_ind)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
+
+        h_k = DCSX.from_indices(
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=self.device.hamiltonians[(0, 0, 0)].shape,
+            symmetry="hermitian",
+            dtype=xp.complex128,
+        )
+
+        row_ind = [s_r.row_ind for s_r in self.device.overlap_matrices.values()]
+        col_ind = [s_r.col_ind for s_r in self.device.overlap_matrices.values()]
+
+        row_ind = np.concatenate(row_ind)
+        col_ind = np.concatenate(col_ind)
+        row_ind, col_ind = remove_duplicate_entries(row_ind, col_ind)
+
+        s_k = DCSX.from_indices(
+            row_ind=row_ind,
+            col_ind=col_ind,
+            shape=self.device.overlap_matrices[(0, 0, 0)].shape,
+            symmetry="hermitian",
+            dtype=xp.complex128,
+        )
+
         for m, kpoint in enumerate(self.device.kpoints):
+            h_k.data = 0.0
+            s_k.data = 0.0
+
+            for r, h_r in self.device.hamiltonians.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                # NOTE: Problem here with the data type if h_r is allocated as real.
+                h_k.add_(h_r, prefactor=phase)
+
+            for r, s_r in self.device.overlap_matrices.items():
+                phase = np.exp(2j * np.pi * np.dot(kpoint, r))
+                s_k.add_(s_r, prefactor=phase)
+
             h_xx = self._get_contact_blocks(
-                matrices=self.device.hamiltonians,
-                kpoint=kpoint,
-                upper=True,
+                matrix=h_k if h_k.symmetry is None else h_k.expand_symmetry(),
             )
             s_xx = self._get_contact_blocks(
-                matrices=self.device.overlap_matrices,
-                kpoint=kpoint,
-                upper=True,
+                matrix=s_k if s_k.symmetry is None else s_k.expand_symmetry(),
             )
 
             grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

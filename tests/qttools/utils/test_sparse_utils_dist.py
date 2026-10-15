@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI, _default_config
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -41,9 +41,6 @@ def configure_comm(request):
     # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
         block_comm_size=block_comm_size,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

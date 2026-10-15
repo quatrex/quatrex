@@ -4,12 +4,11 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 from scipy.sparse import get_index_dtype
 
-from qttools import NDArray, sparse, wave_function_solver, xp
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.csx_routines import remove_duplicate_entries
 from qttools.datastructures.dcsx import DCSX
@@ -20,6 +19,7 @@ from qttools.profiling.profiler import QTX_PROFILE_LEVEL
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
+from qttools.wave_function_solver import WFSolver, configure_solver
 from quatrex.contact.qtbm import OBCResult, QTBMContact
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.constants import e, h
@@ -149,116 +149,37 @@ class QTBM(TransportSolver):
                         "Using real arithmetic for the solver.",
                         flush=True,
                     )
-            bare_system_matrix_type = "real_symmetric_indefinite"
+            bare_system_matrix_dtype = xp.float64
+            bare_system_matrix_property = "symmetric_indefinite"
 
         else:
-            bare_system_matrix_type = "complex_hermitian_indefinite"
+            bare_system_matrix_dtype = xp.complex128
+            bare_system_matrix_property = "hermitian_indefinite"
 
         if self.low_rank_obc:
+            system_matrix_dtype = bare_system_matrix_dtype
             system_matrix_view = bare_system_matrix_view
-            system_matrix_type = bare_system_matrix_type
+            system_matrix_property = bare_system_matrix_property
         else:
+            system_matrix_dtype = xp.complex128
             system_matrix_view = "full"
-            system_matrix_type = "complex_nonsymmetric"
+            system_matrix_property = "general"
 
-        self.system_matrix_is_real = "real" in system_matrix_type
+        self.system_matrix_is_real = system_matrix_dtype == xp.float64
 
-        self._solver, self._solver_runtime_config = self._configure_solver(
+        self._solver: WFSolver = configure_solver(
             self.config.electron.solver.direct_solver,
-            matrix_type=system_matrix_type,
+            matrix_dtype=system_matrix_dtype,
+            matrix_property=system_matrix_property,
             matrix_view=system_matrix_view,
             row_offsets=self.device.row_offsets,
             petsc_options=self.config.electron.solver.petsc_options,
         )
 
-        self._allocate_bare_system_matrix(
-            np.float64 if "real" in bare_system_matrix_type else np.complex128
-        )
+        self._allocate_bare_system_matrix(bare_system_matrix_dtype)
         if not self.low_rank_obc:
-            self._allocate_system_matrix(
-                np.float64 if "real" in system_matrix_type else np.complex128
-            )
+            self._allocate_system_matrix(system_matrix_dtype)
         free_mempool()
-
-    @staticmethod
-    def _configure_solver(
-        solver_name: str,
-        matrix_type: str,
-        matrix_view: str,
-        row_offsets: NDArray,
-        petsc_options: dict[str, Any] | None = None,
-    ) -> tuple[wave_function_solver.WFSolver, dict]:
-        """Configures the wavefunction solver based on the config.
-
-        Parameters
-        ----------
-        solver_name : str
-            The name of the solver to use for solving the linear system.
-        matrix_type : str
-            The type of the system matrix, describing properties like
-            symmetry and definiteness.
-        matrix_view : str
-            The view of the system matrix sparsity, indicating which
-            part of the matrix to use for symmetric matrices.
-        row_offsets : NDArray
-            The row offsets partitioning the system matrix across MPI
-            ranks.
-        petsc_options : dict[str, Any], optional
-            Dictionary of PETSc options to configure the solver.
-
-        Returns
-        -------
-        tuple[WFSolver, dict]
-            A tuple containing the configured wavefunction solver
-            instance and a dictionary of runtime configuration options.
-
-        """
-        runtime_config = {
-            "reuse_analysis": True,
-            "reuse_factorization": False,
-        }
-
-        local_rows = (row_offsets[comm.block.rank], row_offsets[comm.block.rank + 1])
-
-        distributed = {
-            "cudss": wave_function_solver.cuDSS,
-            "petsc": wave_function_solver.PETSc,
-            "mock": wave_function_solver.Mock,
-            "auto": wave_function_solver.auto_select_solver,
-        }
-        serial = {
-            "mumps": wave_function_solver.MUMPS,
-            "superlu": wave_function_solver.SuperLU,
-            "pardiso": wave_function_solver.PARDISO,
-            "thomas": wave_function_solver.Thomas,
-        }
-
-        kwargs: dict[str, Any] = {
-            "matrix_type": matrix_type,
-            "matrix_view": matrix_view,
-        }
-
-        if solver_name in serial:
-            return serial[solver_name](**kwargs), runtime_config
-
-        if solver_name in distributed:
-            if solver_name in ("petsc", "auto"):
-                if petsc_options is None:
-                    raise ValueError(
-                        "PETSc options must be provided when "
-                        "potentially using the PETSc solver."
-                    )
-                kwargs["petsc_options"] = petsc_options
-            return (
-                distributed[solver_name](
-                    **kwargs,
-                    comm=comm.block,
-                    local_rows=local_rows,
-                ),
-                runtime_config,
-            )
-
-        raise ValueError(f"Unknown direct solver: {solver_name}")
 
     @profiler.profile("QTBM: Allocate bare system matrix", level="debug")
     def _allocate_bare_system_matrix(
@@ -1417,16 +1338,14 @@ class QTBM(TransportSolver):
                                 energy_ind=energy_ind,
                             )
 
-                        system_matrix = (
-                            self.system_matrix
-                            if not self.low_rank_obc
-                            else self.bare_system_matrix
-                        )
+                        if not self.low_rank_obc:
+                            system_matrix = self.system_matrix
+                        elif "upper" in self._solver.valid_views():
+                            system_matrix = self.bare_system_matrix
+                        else:
+                            system_matrix = self.bare_system_matrix.expand_symmetry()
 
                         # Solve for the wavefunction
-                        # TODO: `_solver_runtime_config` should be part
-                        # of the solver initialization, not passed every
-                        # time.
                         if QTX_PROFILE_LEVEL == "debug":
                             print_memory_usage(
                                 f"Before solving the linear system {batch_start + energy_ind}",
@@ -1435,7 +1354,6 @@ class QTBM(TransportSolver):
                         phi = self._solver.solve(
                             system_matrix.tocsr(),
                             rhs,
-                            **self._solver_runtime_config,
                         )
 
                         if self.low_rank_obc:

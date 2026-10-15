@@ -503,12 +503,9 @@ class SolverConfig(BaseModel):
     # TODO: The config for `wf` and `negf` should be separated.
     direct_solver: Literal[
         "superlu",
-        "mumps",
         "cudss",
-        "pardiso",
         "thomas",
         "petsc",
-        "mock",
         "auto",
     ] = "auto"
     """The direct solver to use in `wf` simulations.

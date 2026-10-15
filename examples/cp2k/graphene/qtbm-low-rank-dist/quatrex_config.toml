@@ -35,5 +35,3 @@ kpoint_shift = [0.0, 0.1, 0]
 energy_window_min = -5
 energy_window_max = -4
 energy_window_num = 10
-
-solver.direct_solver = "mock"

@@ -229,5 +229,11 @@ class QTBMDevice(BaseDevice):
             )
 
         if comm.rank == 0:
-            print(f"Loaded {len(self.hamiltonians)} Hamiltonian matrices", flush=True)
-            print(f"Loaded {len(self.overlap_matrices)} overlap matrices", flush=True)
+            print(
+                f"Loaded {len(self.hamiltonians)} Hamiltonian matrices with size {self.hamiltonians[(0, 0, 0)].shape}",
+                flush=True,
+            )
+            print(
+                f"Loaded {len(self.overlap_matrices)} overlap matrices with size {self.overlap_matrices[(0, 0, 0)].shape}",
+                flush=True,
+            )

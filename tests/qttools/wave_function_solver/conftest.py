@@ -47,7 +47,6 @@ class WFSolverSpec:
     supports_symmetric: bool = False
     supports_hermitian: bool = False
     supports_distributed: bool = False
-    solve_kwargs: dict[str, object] = field(default_factory=dict)
 
 
 SOLVER_SPECS = [
@@ -58,38 +57,6 @@ SOLVER_SPECS = [
             supports_reuse_factorization=True,
         ),
         id="superlu",
-    ),
-    pytest.param(
-        WFSolverSpec(
-            solver_type=wave_function_solver.MUMPS,
-            sparse_format="coo",
-            supports_reuse_analysis=True,
-            supports_reuse_factorization=True,
-            factorization_needs_analysis=True,
-        ),
-        id="mumps",
-        marks=[
-            pytest.mark.skipif(
-                not mumps_available, reason="Requires python-mumps package"
-            ),
-            pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend"),
-        ],
-    ),
-    pytest.param(
-        WFSolverSpec(
-            solver_type=wave_function_solver.PARDISO,
-            sparse_format="csr",
-            supports_reuse_analysis=True,
-            supports_reuse_factorization=True,
-            factorization_needs_analysis=True,
-            supports_symmetric=True,
-            supports_hermitian=True,
-        ),
-        id="pardiso",
-        marks=[
-            pytest.mark.skipif(not pardiso_available, reason="Requires pydiso package"),
-            pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend"),
-        ],
     ),
     pytest.param(
         WFSolverSpec(
@@ -110,20 +77,6 @@ SOLVER_SPECS = [
             ),
             pytest.mark.skipif(xp.__name__ != "cupy", reason="Requires cupy backend"),
         ],
-    ),
-    pytest.param(
-        WFSolverSpec(
-            solver_type=wave_function_solver.Mock,
-            sparse_format="csr",
-            order="F",
-            supports_reuse_analysis=False,
-            supports_reuse_factorization=False,
-            factorization_needs_analysis=False,
-            supports_symmetric=True,
-            supports_hermitian=True,
-            supports_distributed=True,
-        ),
-        id="mock",
     ),
     pytest.param(
         WFSolverSpec(
@@ -163,7 +116,7 @@ SOLVER_SPECS = [
             supports_reuse_analysis=True,
             supports_symmetric=True,
             supports_hermitian=True,
-            solve_kwargs={"overwrite_b": False},
+            solver_options={"overwrite_b": False},
         ),
         id="thomas",
     ),

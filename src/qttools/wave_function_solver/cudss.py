@@ -9,23 +9,23 @@ try:
     import nvmath
     from nvmath.bindings import cudss
 
-    cudss_matrix_types = {
-        "real_symmetric_positive_definite": cudss.MatrixType.SPD,
-        "real_symmetric_indefinite": cudss.MatrixType.SYMMETRIC,
-        "complex_hermitian_positive_definite": cudss.MatrixType.HPD,
-        "complex_hermitian_indefinite": cudss.MatrixType.HERMITIAN,
-        "real_nonsymmetric": cudss.MatrixType.GENERAL,
-        "complex_nonsymmetric": cudss.MatrixType.GENERAL,
+    cudss_matrix_properties = {
+        "symmetric_positive_definite": cudss.MatrixType.SPD,
+        "symmetric_indefinite": cudss.MatrixType.SYMMETRIC,
+        "hermitian_positive_definite": cudss.MatrixType.HPD,
+        "hermitian_indefinite": cudss.MatrixType.HERMITIAN,
+        "general": cudss.MatrixType.GENERAL,
     }
 
     cudss_matrix_views = {
         "full": cudss.MatrixViewType.FULL,
         "upper": cudss.MatrixViewType.UPPER,
-        "lower": cudss.MatrixViewType.LOWER,
     }
 
     cudss_value_types = {
+        cp.dtype("float32"): nvmath.CudaDataType.CUDA_R_32F,
         cp.dtype("float64"): nvmath.CudaDataType.CUDA_R_64F,
+        cp.dtype("complex64"): nvmath.CudaDataType.CUDA_C_32F,
         cp.dtype("complex128"): nvmath.CudaDataType.CUDA_C_64F,
     }
 
@@ -80,7 +80,7 @@ import os
 import numpy as np
 from mpi4py import MPI
 
-from qttools import NDArray, sparse
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
@@ -111,14 +111,31 @@ class cuDSS(WFSolver):
 
     Parameters
     ----------
-    matrix_type : str, optional
-        The type of the system matrix. This describes properties like
-        symmetry and definiteness. If None, the solver will use a
-        general matrix type.
-    matrix_view : str, optional
-        The view of the system matrix sparsity. This solver supports
-        'full', 'upper', and 'lower' views. If None, the solver will use
-        the 'full' view.
+    matrix_dtype : xp.dtype[xp.inexact]
+        The data type of the system matrix. This needs to be
+        provided to correctly initialize the solver.
+    matrix_property : str
+        The property of the system matrix. This describes properties
+        like symmetry and definiteness, which can be used by solvers
+        to optimize the solution process. Can be None if the solver
+        does not require this information or if it can be inferred
+        from the matrix itself.
+    matrix_view : str
+        The view of the system matrix sparsity. Not all solvers are
+        compatible with all views.
+    reuse_analysis : bool, optional
+        Whether to reuse the analysis phase when solve is called
+        multiple times, by default False. This typically includes
+        symbolic factorization and ordering but can vary between
+        solvers. This is useful when solving multiple linear systems
+        with the same sparsity pattern but different numerical
+        values.
+    reuse_factorization : bool, optional
+        Whether to reuse the numerical factorization when solve is
+        called multiple times, by default False. This can only be
+        True if reuse_analysis is also True. Note that this must
+        only be True if the matrix values have not changed since the
+        last factorization.
     comm : _SubCommunicator, optional
         The communicator for distributed solves. If None, the solver
         will assume a single-GPU solve. This must be provided together
@@ -129,27 +146,68 @@ class cuDSS(WFSolver):
 
     """
 
+    @staticmethod
+    def valid_views() -> list[str]:
+        """Returns the valid matrix views.
+
+        Returns
+        -------
+        list[str]
+            The valid matrix views.
+
+        """
+        return list(cudss_matrix_views.keys())
+
     def __init__(
         self,
-        matrix_type: str | None = None,
-        matrix_view: str | None = None,
+        matrix_dtype: xp.dtype[xp.inexact],
+        matrix_property: str,
+        matrix_view: str,
+        reuse_analysis: bool = False,
+        reuse_factorization: bool = False,
         comm: _SubCommunicator | None = None,
         local_rows: tuple | None = None,
     ):
         """Initializes the cuDSS solver."""
+        super().__init__(
+            matrix_dtype=matrix_dtype,
+            matrix_property=matrix_property,
+            matrix_view=matrix_view,
+            reuse_analysis=reuse_analysis,
+            reuse_factorization=reuse_factorization,
+            comm=comm,
+            local_rows=local_rows,
+        )
+
+        if reuse_factorization and not reuse_analysis:
+            raise ValueError(
+                "Cannot reuse total factorization without reusing symbolic factorization."
+            )
+
+        if matrix_dtype not in cudss_value_types:
+            raise ValueError(
+                f"Invalid matrix dtype '{matrix_dtype}'. "
+                f"Valid options are: {list(cudss_value_types.keys())}"
+            )
+
         if not cudss_available:
             raise ImportError(
                 "nvmath or its cudss bindings are not available. "
                 "Please install them to use this solver."
             )
-        if matrix_type is not None and matrix_type not in cudss_matrix_types:
+        if matrix_property not in cudss_matrix_properties:
             raise ValueError(
-                f"Invalid matrix type '{matrix_type}'. "
-                f"Valid options are: {list(cudss_matrix_types.keys())}"
+                f"Invalid matrix property '{matrix_property}'. "
+                f"Valid options are: {list(cudss_matrix_properties.keys())}"
+            )
+        if matrix_view not in cudss_matrix_views:
+            raise ValueError(
+                f"Invalid matrix view '{matrix_view}'. "
+                f"Valid options are: {list(cudss_matrix_views.keys())}"
             )
 
-        self._mtype = cudss_matrix_types.get(matrix_type, cudss.MatrixType.GENERAL)
-        self._mview = cudss_matrix_views.get(matrix_view, cudss.MatrixViewType.FULL)
+        self._mproperty = cudss_matrix_properties[matrix_property]
+        self._mview = cudss_matrix_views[matrix_view]
 
         self._solver_handle = cudss.create()
         # Set the cudss memory handler to use CuPy's memory pool for
@@ -162,17 +220,10 @@ class cuDSS(WFSolver):
         self.analyzed = False
         self.factorized = False
         self._matrix_handle = None
-        self._comm = comm
 
         self._indptr_ptr = None
         self._indices_ptr = None
         self._local_rows = None
-
-        # Comm and local_rows must be provided together or not at all.
-        if (comm is None) != (local_rows is None):
-            raise ValueError(
-                "Both 'comm' and 'local_rows' must be provided together or not at all."
-            )
 
         if local_rows is not None:
             start, stop = local_rows
@@ -307,7 +358,7 @@ class cuDSS(WFSolver):
             offset_type=nvmath.CudaDataType.CUDA_R_32I,
             index_type=nvmath.CudaDataType.CUDA_R_32I,
             value_type=value_type,
-            mtype=self._mtype,
+            mtype=self._mproperty,
             mview=self._mview,
             index_base=cudss.IndexBase.ZERO,
         )
@@ -467,8 +518,6 @@ class cuDSS(WFSolver):
         self,
         a: sparse.csr_matrix,
         b: NDArray,
-        reuse_analysis: bool = False,
-        reuse_factorization: bool = False,
     ):
         """Solves the sparse linear system a @ x = b using cuDSS.
 
@@ -478,17 +527,6 @@ class cuDSS(WFSolver):
             The sparse system matrix in CSR format.
         b : NDArray
             The dense right-hand side array with shape (n, batchsize).
-        reuse_analysis : bool, optional
-            Whether to reuse the symbolic factorization from a previous
-            solve. Default is False. This is useful when solving
-            multiple linear systems with the same sparsity pattern but
-            different numerical values.
-        reuse_factorization : bool, optional
-            Whether to reuse the numerical factorization from a previous
-            solve. Default is False. This can only be True if
-            reuse_analysis is also True. Note that this must only be
-            True if the matrix values have not changed since the last
-            factorization.
 
         Returns
         -------
@@ -500,13 +538,15 @@ class cuDSS(WFSolver):
             label="cuDSS: solve", level="default", comm=self._comm
         ):
 
-            if reuse_factorization and not reuse_analysis:
-                raise ValueError(
-                    "Cannot reuse total factorization without reusing symbolic factorization."
-                )
             if a.dtype != b.dtype:
                 raise ValueError(
                     f"Data type of a ({a.dtype}) does not match data type of b ({b.dtype}). "
+                    "Please ensure they have the same data type."
+                )
+            if a.dtype != self.matrix_dtype:
+                raise ValueError(
+                    f"Data type of a ({a.dtype}) does not "
+                    f"match the solver's matrix_dtype ({self.matrix_dtype}). "
                     "Please ensure they have the same data type."
                 )
 
@@ -540,7 +580,7 @@ class cuDSS(WFSolver):
             # Set up the linear system.
             # Dense descriptors are cheap and their column count changes, so
             # they are recreated on every call.
-            if reuse_analysis:
+            if self.reuse_analysis:
                 # It seems for reuse of analysis only indices need to stay
                 # at the same memory location. The data can be updated.
                 if self._indptr_ptr is None:
@@ -561,7 +601,9 @@ class cuDSS(WFSolver):
             # NOTE: Check if we need to redo analysis if the number
             # of right-hand sides has changed.
             local_redo = (
-                not reuse_analysis or not self.analyzed or self._matrix_handle is None
+                not self.reuse_analysis
+                or not self.analyzed
+                or self._matrix_handle is None
             )
             if self._comm is not None:
                 redo_analysis = bool(
@@ -626,7 +668,7 @@ class cuDSS(WFSolver):
                     message += "\n" + "-" * 80 + "\n"
                     print(message, flush=True)
 
-                if redo_analysis or not self.factorized or not reuse_factorization:
+                if redo_analysis or not self.factorized or not self.reuse_factorization:
                     self._factorize(self._matrix_handle, _solution_handle, _rhs_handle)
                     self.factorized = True
 

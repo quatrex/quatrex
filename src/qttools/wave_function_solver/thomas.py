@@ -2,9 +2,12 @@
 
 """Includes our Thomas algorithm based wave function solver."""
 
+import warnings
 from functools import partial
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm as quatrex_comm
+from qttools.comm.comm import _SubCommunicator
 from qttools.kernels import linalg
 from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
@@ -20,50 +23,113 @@ else:
 
 profiler = Profiler()
 
+_ALLOWED_MATRIX_VIEWS = ["full", "upper"]
+
+_ALLOWED_MARIX_PROPERTIES = [
+    "symmetric_indefinite",
+    "hermitian_indefinite",
+    "general",
+]
+
 
 class Thomas(WFSolver):
     """Wave function solver using the block Thomas algorithm.
 
     Parameters
     ----------
-    matrix_type : str, optional
-        The type of the system matrix. Must be one of
-        'real_symmetric_indefinite', 'complex_hermitian_indefinite',
-        or 'complex_nonsymmetric'. Default is 'complex_nonsymmetric'.
-    matrix_view : str, optional
-        The view of the system matrix. Must be one of 'full',
-        'upper', or 'lower'. 'upper' and 'lower' are only valid for
-        symmetric or Hermitian matrices. Default is 'full'.
+    matrix_dtype : xp.dtype[xp.inexact]
+        The data type of the system matrix. This needs to be
+        provided to correctly initialize the solver.
+    matrix_property : str
+        The property of the system matrix. This describes properties
+        like symmetry and definiteness, which can be used by solvers
+        to optimize the solution process. Can be None if the solver
+        does not require this information or if it can be inferred
+        from the matrix itself.
+    matrix_view : str
+        The view of the system matrix sparsity. Not all solvers are
+        compatible with all views.
+    reuse_analysis : bool, optional
+        Whether to reuse the analysis phase when solve is called
+        multiple times, by default False. This typically includes
+        symbolic factorization and ordering but can vary between
+        solvers. This is useful when solving multiple linear systems
+        with the same sparsity pattern but different numerical
+        values.
+    reuse_factorization : bool, optional
+        Whether to reuse the numerical factorization when solve is
+        called multiple times, by default False. This can only be
+        True if reuse_analysis is also True. Note that this must
+        only be True if the matrix values have not changed since the
+        last factorization.
+    overwrite_b : bool, optional
+        Whether to overwrite the input b with the solution. Default
+        is True. If False, a copy of b will be made before solving,
+        and the original b will remain unchanged. This can be useful
+        if the caller needs to keep the original right-hand side
+        vector for later use.
+
 
     """
 
+    @staticmethod
+    def valid_views() -> list[str]:
+        """Returns the valid matrix views.
+
+        Returns
+        -------
+        list[str]
+            The valid matrix views.
+
+        """
+        return _ALLOWED_MATRIX_VIEWS
+
     def __init__(
         self,
-        matrix_type: str = "complex_nonsymmetric",
-        matrix_view: str = "full",
+        matrix_dtype: xp.dtype[xp.inexact],
+        matrix_property: str,
+        matrix_view: str,
+        reuse_analysis: bool = False,
+        reuse_factorization: bool = False,
+        comm: _SubCommunicator | None = None,
+        local_rows: tuple | None = None,
+        overwrite_b: bool = True,
     ):
         """Initializes the Thomas solver."""
 
-        if matrix_type not in [
-            "real_symmetric_indefinite",
-            "complex_hermitian_indefinite",
-            "complex_nonsymmetric",
-        ]:
+        if comm is not None and comm.size != 1:
             raise ValueError(
-                f"Invalid matrix_type: {matrix_type}. Must be "
-                f"'real_symmetric_indefinite', 'complex_hermitian_indefinite', "
-                "or 'complex_nonsymmetric'."
+                "Thomas solver does not support distributed solves. "
+                "Please use a different solver for distributed solves."
             )
 
-        symmetric = matrix_type in [
-            "real_symmetric_indefinite",
-            "complex_hermitian_indefinite",
-        ]
-
-        if matrix_view not in ["full", "upper"]:
+        if matrix_property not in _ALLOWED_MARIX_PROPERTIES:
+            raise ValueError(
+                f"Invalid matrix_property: {matrix_property}. Must be "
+                f"'symmetric_indefinite', 'hermitian_indefinite', "
+                "or 'general'."
+            )
+        if matrix_view not in _ALLOWED_MATRIX_VIEWS:
             raise ValueError(
                 f"Invalid matrix_view: {matrix_view}. Must be 'full' or 'upper'."
             )
+
+        if reuse_factorization:
+            if quatrex_comm.rank == 0:
+                warnings.warn(
+                    "reuse_factorization is not implemented for Thomas solver."
+                )
+
+        super().__init__(
+            matrix_dtype=matrix_dtype,
+            matrix_property=matrix_property,
+            matrix_view=matrix_view,
+            reuse_analysis=reuse_analysis,
+            reuse_factorization=reuse_factorization,
+            comm=comm,
+            local_rows=local_rows,
+        )
+        symmetric = matrix_property != "general"
 
         if matrix_view == "full" and symmetric:
             raise ValueError(
@@ -78,6 +144,7 @@ class Thomas(WFSolver):
 
         self.symmetric = symmetric
         self._block_slices = None
+        self._overwrite_b = overwrite_b
 
     def _get_block(self, a: sparse.csr_matrix, row: int, col: int) -> NDArray:
         """Extracts a block from the sparse matrix.
@@ -246,9 +313,6 @@ class Thomas(WFSolver):
         self,
         a: sparse.csr_matrix,
         b: NDArray,
-        reuse_analysis: bool = False,
-        reuse_factorization: bool = False,
-        overwrite_b: bool = True,
     ) -> NDArray:
         """Solves the sparse system a @ x = b using the block Thomas algorithm.
 
@@ -261,20 +325,6 @@ class Thomas(WFSolver):
             The sparse system matrix.
         b : NDArray
             The dense right-hand side vector.
-        reuse_analysis : bool, optional
-            Whether to reuse the analysis phase from a previous solve,
-            by by default False. This is useful when solving multiple
-            linear systems with the same sparsity pattern but different
-            numerical values.
-        reuse_factorization : bool, optional
-            Not implemented for this solver.
-        overwrite_b : bool, optional
-            Whether to overwrite the input b with the solution. Default
-            is True. If False, a copy of b will be made before solving,
-            and the original b will remain unchanged. This can be useful
-            if the caller needs to keep the original right-hand side
-            vector for later use.
-
 
         Returns
         -------
@@ -282,15 +332,11 @@ class Thomas(WFSolver):
             The solution vector.
 
         """
-        if reuse_factorization:
-            raise NotImplementedError(
-                "reuse_factorization is not implemented for Thomas solver."
-            )
 
-        if not overwrite_b:
+        if not self._overwrite_b:
             b = b.copy()
 
-        if self._block_slices is None or not reuse_analysis:
+        if self._block_slices is None or not self.reuse_analysis:
             self._analyze(a)
 
         if a.shape[0] != b.shape[0]:

@@ -4,6 +4,7 @@
 orbital data from Wannier90"""
 
 import multiprocessing as mp
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -264,20 +265,16 @@ class UNKFiles:
             functions for all bands and k-points.
 
         """
-        u_nk = np.empty(
-            (self.num_bands, self.num_kpoints, *self.grid_shape),
-            dtype=np.complex128,
-        )
+
         with mp.Pool(processes=mp.cpu_count()) as pool:
             results = pool.map(self._load_kpoint, range(1, self.num_kpoints + 1))
+
+        u_nk = np.empty(
+            (self.num_bands, self.num_kpoints, *self.grid_shape),
+            dtype=np.complex64,
+        )
         for kpoint_ind, bands in enumerate(results, start=1):
             u_nk[:, kpoint_ind - 1] = bands
-        # for kpoint_ind in track(
-        #     range(1, self.num_kpoints + 1),
-        #     description="Loading UNK files",
-        # ):
-        #     with UNKFile(self.path / f"UNK{kpoint_ind:05d}.1") as unk_file:
-        #         u_nk[:, kpoint_ind - 1] = unk_file.read_bands()
 
         return u_nk
 
@@ -507,10 +504,10 @@ class Wannier90Orbitals:
         # the bands.
         self_overlap = np.einsum("nkxyz,nkxyz->nk", u_nk, np.conj(u_nk)).mean(axis=1)
         if not np.allclose(self_overlap, self_overlap[0], rtol=1e-3):
-            print(
-                "Self-overlap of Bloch functions is not constant over bands."
+            warnings.warn(
+                "Self-overlap of Bloch functions is not constant over bands. "
                 "This suggests that the UNK files were generated with "
-                "pseudopotentials that are not norm-conserving."
+                "pseudopotentials that are not norm-conserving. "
                 "The Wannier functions will be normalized regardless!"
             )
 
@@ -604,8 +601,10 @@ class Wannier90Orbitals:
         wannier_functions = self._fix_global_phase(wannier_functions)
         reality_ratios = self._reality_check(wannier_functions)
         if any(ratio > 1e-3 for ratio in reality_ratios):
-            print(
-                f"Warning: Reality check failed for some orbitals. Ratios: {reality_ratios}"
+            warnings.warn(
+                "Wannier functions are not sufficiently real. "
+                "Ratios of max |Im|/|Re| for each Wannier function: "
+                f"{reality_ratios}."
             )
 
         fractional_coords = np.stack(
@@ -633,10 +632,10 @@ class Wannier90Orbitals:
         # NOTE: It is not checked whether the self-overlap is 1, because
         # sometimes things are given in different units.
         if not np.allclose(self_overlap, self_overlap[0], rtol=1e-3):
-            print(
-                "Warning: Self-overlap of Wannier functions is not constant over orbitals."
+            warnings.warn(
+                "Self-overlap of Wannier functions is not constant over orbitals. "
                 "This suggests that the supercell is too small or that the UNK files were "
-                "generated with pseudopotentials that are not norm-conserving."
+                "generated with pseudopotentials that are not norm-conserving. "
                 "The Wannier functions will be normalized regardless!"
             )
 

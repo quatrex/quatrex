@@ -31,6 +31,7 @@ from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
 from quatrex.device import QTBMDevice
+from quatrex.device.base import map_potential_to_orbitals
 from quatrex.grid import get_electron_energies
 
 profiler = Profiler()
@@ -1131,7 +1132,7 @@ class QTBM(TransportSolver):
                     )
                 )
                 / self.device.num_kpoints
-                * (2 * e / h)
+                * (self.config.device.spin_degeneracy * e / h)
             )
 
         return contact_currents
@@ -1213,6 +1214,7 @@ class QTBM(TransportSolver):
         """
 
         # Compute the spectral electron and hole densities.
+        spin_degeneracy = self.config.device.spin_degeneracy
         electron_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
         hole_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
         for contact, ldos in self.observables.electron_ldos.items():
@@ -1222,8 +1224,8 @@ class QTBM(TransportSolver):
                 contact.temperature,
             )
 
-            electron_density += occupancy * ldos.mean(axis=0) * 2  # Spin
-            hole_density += (1 - occupancy) * ldos.mean(axis=0) * 2  # Spin
+            electron_density += occupancy * ldos.mean(axis=0) * spin_degeneracy
+            hole_density += (1 - occupancy) * ldos.mean(axis=0) * spin_degeneracy
 
         # Find the reference contact mid-gap energy to separate
         # electrons and holes.
@@ -1264,15 +1266,9 @@ class QTBM(TransportSolver):
             The new potential values to be set in the system matrix.
 
         """
-        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-            # Upscale the potential to the number of orbitals
-            orbitals_per_atom = [
-                self.config.device.num_orbitals_per_atom.get(species, 1)
-                for species in self.device.atomic_species
-            ]
-            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-
-        self.device.potential = potential
+        self.device.potential = map_potential_to_orbitals(
+            potential, self.device.atomic_species, self.config.device
+        )
 
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.

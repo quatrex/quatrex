@@ -290,6 +290,7 @@ class BaseContact(ABC):
             cell_volume=self.cell_volume,
             doping_density=doping_density,
             temperature=self.temperature,
+            spin_degeneracy=device_config.spin_degeneracy,
         )
 
         if comm.rank == 0:

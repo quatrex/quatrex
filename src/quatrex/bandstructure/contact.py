@@ -141,6 +141,7 @@ def contact_fermi_level(
     cell_volume: float,
     doping_density: float,
     temperature: float = 300,
+    spin_degeneracy: int = 2,
 ) -> float:
     """Computes the Fermi level of a device contact.
 
@@ -166,6 +167,9 @@ def contact_fermi_level(
         cell volume.
     temperature : float, optional
         The temperature in K. Default is 300 K.
+    spin_degeneracy : int, optional
+        The spin degeneracy of the bands. This is 2 for spinless band
+        structures and 1 if spin is treated explicitly. Default is 2.
 
     Returns
     -------
@@ -194,7 +198,7 @@ def contact_fermi_level(
         p = xp.trapezoid(p_k, kpoints)
 
         rho = (n - p) / (2 * xp.pi * cell_volume)
-        rho *= 2  # Spin
+        rho *= spin_degeneracy
 
         return float((rho - doping_density) ** 2)
 

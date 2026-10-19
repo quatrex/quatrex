@@ -110,7 +110,11 @@ class QTBMDevice(BaseDevice):
             raise ValueError("Hamiltonian matrix not found.")
 
         self.hamiltonians = load_matrices(
-            self.config, "hamiltonian", force_complex=False
+            self.config,
+            "hamiltonian",
+            force_complex=False,
+            num_spatial_orbitals=self.num_spatial_orbitals,
+            spin_block="identity",
         )
 
         for r, h_r in self.hamiltonians.items():
@@ -139,7 +143,12 @@ class QTBMDevice(BaseDevice):
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.h5").exists():
-            self.overlap_matrices = load_matrices(self.config, "overlap")
+            self.overlap_matrices = load_matrices(
+                self.config,
+                "overlap",
+                num_spatial_orbitals=self.num_spatial_orbitals,
+                spin_block="identity",
+            )
 
             for r in self.overlap_matrices:
                 if (

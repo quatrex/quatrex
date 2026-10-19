@@ -1,8 +1,8 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import mmgpy as mmg
+import numpy as np
 import pyvista as pv
-from mmgpy import metrics
 
 from qttools import NDArray
 
@@ -23,7 +23,7 @@ def _resample_hessian_metric(
         in the field "hessian".
     mesh : pv.UnstructuredGrid
         The tetrahedral mesh generated from the subsampled grid. The
-        Hessian data from the ImageData grid is resampled onto this
+        Hessian data from the StructuredGrid is resampled onto this
         mesh.
     target_error : float, optional
         The target error for the metric computation.
@@ -43,8 +43,8 @@ def _resample_hessian_metric(
             "Please compute the Hessian before calling this function."
         )
     hessian = mesh.sample(grid)["hessian"].reshape(-1, 3, 3, order="F")
-    metric = metrics.create_metric_from_hessian(
-        metrics.matrix_to_tensor(hessian),
+    metric = mmg.metrics.create_metric_from_hessian(
+        mmg.metrics.matrix_to_tensor(hessian),
         target_error=target_error,
         **create_metric_kwargs,
     )
@@ -67,7 +67,7 @@ def assemble_metric(
         Hessians in the field "hessian".
     mesh : pv.UnstructuredGrid
         The tetrahedral mesh on which the Hessian data from the
-        ImageData grids is resampled.
+        structured grids is resampled.
     target_error : float, optional
         The target error for the metric computation.
 
@@ -93,9 +93,43 @@ def assemble_metric(
             target_error=target_error,
             **create_metric_kwargs,
         )
-        intersection = metrics.intersect_metrics(intersection, metric)
+        intersection = mmg.metrics.intersect_metrics(intersection, metric)
 
     return intersection
+
+
+def sample_orbitals_on_mesh(
+    grids: list[pv.StructuredGrid],
+    mesh: pv.UnstructuredGrid,
+    translation: NDArray | None = None,
+) -> list[pv.UnstructuredGrid]:
+    """Sample the orbitals on a given tetrahedral mesh.
+
+    Parameters
+    ----------
+    grids : list of pv.StructuredGrid
+        The input grids containing scalar data.
+    mesh : pv.UnstructuredGrid
+        The tetrahedral mesh on which the orbitals are sampled.
+    translation : NDArray, optional
+        A translation vector to apply to the grids before sampling. If
+        None, no translation is applied.
+
+    Returns
+    -------
+    orbital_meshes : list of pv.UnstructuredGrid
+        The sampled orbitals on the tetrahedral mesh.
+
+    """
+    orbital_meshes = []
+    for grid in grids:
+        orbital_mesh = mesh.copy(deep=False)
+        if translation is not None:
+            grid = grid.translate(xyz=translation)
+        orbital_mesh["data"] = mesh.sample(grid)["data"]
+        orbital_meshes.append(orbital_mesh)
+
+    return orbital_meshes
 
 
 def remesh_orbitals_on_grid(
@@ -110,11 +144,11 @@ def remesh_orbitals_on_grid(
     Parameters
     ----------
     grids : list of pv.StructuredGrid
-        The input grids containing scalar data and the computed
-        Hessians in the field "hessian".
+        The input grids containing scalar data and the computed Hessians
+        in the field "hessian".
     mesh : pv.UnstructuredGrid
         The tetrahedral mesh on which the Hessian data from the
-        ImageData grids is resampled.
+        structured grids is resampled.
     num_iterations : int, optional
         The number of iterations to run the remeshing process.
     target_error : float, optional
@@ -126,7 +160,8 @@ def remesh_orbitals_on_grid(
     Returns
     -------
     mesh : pv.UnstructuredGrid
-        The remeshed tetrahedral mesh.
+        The remeshed tetrahedral mesh after the specified number of
+        iterations.
     remesh_info : list of dict
         A list of dictionaries containing information about each
         remeshing iteration, including the number of vertices and
@@ -145,8 +180,39 @@ def remesh_orbitals_on_grid(
         )
         mmg_mesh.set_field("tensor", metric)
         # TODO: Decide on sensible parameters for remeshing.
-        info = mmg_mesh.remesh(hgrad=100, hmin=0.01, hmax=1.0, hausd=0.01)
+        info = mmg_mesh.remesh(hgrad=3, hausd=0.01 * mesh.length)
         remesh_info.append(info)
         mesh = mmg.to_pyvista(mmg_mesh)
 
     return mesh, remesh_info
+
+
+def compute_l2_errors(
+    grids: list[pv.StructuredGrid],
+    meshes: list[pv.UnstructuredGrid],
+) -> NDArray:
+    """Compute the relative L2 errors of the orbitals on the remeshed grid.
+
+    Parameters
+    ----------
+    grids : list of pv.StructuredGrid
+        The input grids containing scalar data.
+    meshes : list of pv.UnstructuredGrid
+        The remeshed tetrahedral meshes.
+
+    Returns
+    -------
+    relative_l2_errors : NDArray
+        The relative L2 errors of the orbitals on the remeshed grid.
+
+    """
+    relative_l2_errors = []
+    for grid, mesh in zip(grids, meshes):
+        grid = grid.copy()
+        sampled = grid.sample(mesh)["data"]
+        grid["error"] = np.abs(grid["data"] - sampled) ** 2
+        grid["squared_modulus"] = np.abs(grid["data"]) ** 2
+        integrated = grid.integrate_data()
+        relative_l2_errors.append(integrated["error"] / integrated["squared_modulus"])
+
+    return np.array(relative_l2_errors)

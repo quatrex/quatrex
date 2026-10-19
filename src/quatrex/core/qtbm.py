@@ -697,19 +697,22 @@ class QTBM(TransportSolver):
 
         """
 
-        phi_inv_reflected = {
-            contact.name: obc_result.phi_inv_reflected[energy_ind]
-            for contact, obc_result in obc_results.items()
-        }
-        # TODO: Not so efficient to do pickled allgather.
-        # Unpack all gathered dictionaries into a single unified
-        # dictionary. This works around that multiple contact ranks can
-        # have the same contact.
-        phi_inv_reflected = {
-            key: val
-            for d in comm.block._mpi_comm.allgather(phi_inv_reflected)
-            for key, val in d.items()
-        }
+        phi_inv_reflected = {}
+        for contact in self.device.contacts:
+            _shape = np.empty((2,), dtype=np.int64)
+
+            if comm.block.rank == contact.root_rank:
+                _shape[:] = obc_results[contact].phi_inv_reflected[energy_ind].shape
+
+            comm.block.bcast(_shape, root=contact.root_rank, backend="device_mpi")
+
+            out = xp.empty(_shape, dtype=xp.complex128)
+            if comm.block.rank == contact.root_rank:
+                out[:] = obc_results[contact].phi_inv_reflected[energy_ind]
+
+            comm.block.bcast(out, root=contact.root_rank)
+
+            phi_inv_reflected[contact.name] = out
 
         # TODO: Refactor this part of the code since I do not understand
         # what is going on here.
@@ -791,17 +794,24 @@ class QTBM(TransportSolver):
             shape=(num_reflected.sum(), self.device.num_orbitals),
         )
 
-        # Generate the eigenvalue matrix
-        # TODO: Not so efficient to do pickled allgather.
-        eig_reflected = {
-            contact.name: obc_result.eig_reflected[energy_ind]
-            for contact, obc_result in obc_results.items()
-        }
-        eig_reflected = {
-            key: val
-            for d in comm.block._mpi_comm.allgather(eig_reflected)
-            for key, val in d.items()
-        }
+        eig_reflected = {}
+        for contact in self.device.contacts:
+            _shape = np.empty((1,), dtype=np.int64)
+
+            if comm.block.rank == contact.root_rank:
+                _shape[:] = obc_results[contact].eig_reflected[energy_ind].shape
+
+            comm.block.bcast(_shape, root=contact.root_rank, backend="device_mpi")
+
+            out = xp.empty(_shape, dtype=xp.complex128)
+
+            if comm.block.rank == contact.root_rank:
+                out[:] = obc_results[contact].eig_reflected[energy_ind]
+
+            comm.block.bcast(out, root=contact.root_rank)
+
+            eig_reflected[contact.name] = out
+
         eig_tot = xp.concatenate(
             [eig_reflected[contact.name] for contact in self.device.contacts]
         )

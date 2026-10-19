@@ -88,6 +88,12 @@ profile = "black"
 [tool.setuptools.package-data]
 "*" = ["*.cu"]
 
+[tool.ruff.lint]
+# Disable the E741 rule (ambiguous variable name) because it is a bit
+# too strict for our codebase. For example, we use "l" as a variable
+# name in several places to denote the angular momentum quantum number.
+ignore = ["E741"]
+
 
 # ==== Settings for pixi ===============================================
 [tool.pixi.workspace]

@@ -13,6 +13,7 @@ import numpy as np
 import pyvista as pv
 
 from qttools import NDArray
+from quatrex.pre_processing.orbitals.orbitals import RealSpaceOrbitals
 
 RECORD_MARKER_DTYPE = "<u4"
 INT_DTYPE = "<i4"
@@ -478,7 +479,7 @@ class CHKFile:
         )
 
 
-class Wannier90Orbitals:
+class Wannier90Orbitals(RealSpaceOrbitals):
     """A class to represent the orbitals data from Wannier90.
 
     This class encapsulates the data from both the UNK files and the CHK
@@ -514,8 +515,10 @@ class Wannier90Orbitals:
         self._u_nk = u_nk
         self._chk = chk_file
 
+        self._grids = None
+
     def assemble_orbitals(
-        self, supercell: tuple[int, int, int] = (1, 1, 1)
+        self, supercell: tuple[int, int, int] = (1, 1, 1), force_recompute: bool = False
     ) -> list[pv.StructuredGrid]:
         """Evaluate the Wannier functions on a real-space grid.
 
@@ -529,6 +532,10 @@ class Wannier90Orbitals:
             The size of the supercell in terms of home cells to evaluate
             the Wannier functions. Default is (1, 1, 1), which evaluates
             the Wannier functions only in the home cell.
+        force_recompute : bool, optional
+            If True, forces the recomputation of the Wannier functions
+            on the grid even if they have already been computed. Default
+            is False.
 
         Returns
         -------
@@ -538,6 +545,9 @@ class Wannier90Orbitals:
             specified supercell.
 
         """
+        if self._grids is not None and not force_recompute:
+            return self._grids
+
         num_kpoints = self._chk.num_kpoints
         num_wann = self._chk.num_wann
         disentangled = self._chk.disentangled
@@ -643,7 +653,108 @@ class Wannier90Orbitals:
         for g, overlap in zip(grids, self_overlap):
             g["data"] /= np.sqrt(overlap)
 
+        # Compute gradients and Hessians of the Wannier functions on the
+        # grid. Useful for remeshing.
+        for i, grid in enumerate(grids):
+            grid = grid.compute_derivative(gradient="gradient", scalars="data")
+            grid = grid.compute_derivative(gradient="hessian", scalars="gradient")
+            grids[i] = grid
+
+        self._grids = grids
+
         return grids
+
+    def _evaluate(self, positions: NDArray, field: str) -> NDArray:
+        """Evaluate the Wannier functions at the given positions.
+
+        Parameters
+        ----------
+        positions : NDArray
+            The positions at which to evaluate the Wannier functions.
+            Should be of shape (N, 3), N being the number of points.
+        field : str
+            The field name in the StructuredGrids to sample. This can be
+            "data" for the Wannier function values, "gradient" for their
+            gradients, or "hessian" for the Hessians.
+
+        Returns
+        -------
+        values : NDArray
+            The values sampled from the Wannier functions at the given
+            positions. The shape of the output will be (M, N), where M
+            is the total number of Wannier functions and N is the number
+            of points.
+
+        """
+        if self._grids is None:
+            raise ValueError(
+                "Wannier orbitals have not been assembled yet. "
+                "Call `assemble_orbitals` first."
+            )
+
+        points = pv.PolyData(positions)
+        values = np.array([points.sample(grid)[field] for grid in self._grids])
+
+        return values
+
+    def evaluate_orbitals(self, positions: NDArray) -> NDArray:
+        """Evaluate the Wannier orbitals at the given positions.
+
+        Parameters
+        ----------
+        positions : NDArray
+            The positions at which to evaluate the orbitals. Should be
+            of shape (N, 3), N being the number of points.
+
+        Returns
+        -------
+        orbitals : NDArray
+            The evaluated orbitals at the given positions. The shape of
+            the output will be (M, N), where M is the total number of
+            orbitals and N is the number of points.
+
+        """
+        return self._evaluate(positions, field="data")
+
+    def evaluate_orbital_gradients(self, positions: NDArray) -> NDArray:
+        """Evaluate the gradients of the Wannier orbitals at the given positions.
+
+        Parameters
+        ----------
+        positions : NDArray
+            The positions at which to evaluate the orbital gradients.
+            Should be of shape (N, 3), N being the number of points.
+
+        Returns
+        -------
+        gradients : NDArray
+            The evaluated orbital gradients at the given positions. The
+            shape of the output will be (M, N, 3), where M is the total
+            number of orbitals, N is the number of points, and 3
+            corresponds to the x, y, z components of the gradient.
+
+        """
+        return self._evaluate(positions, field="gradient").reshape(-1, 3, order="F")
+
+    def evaluate_orbital_hessians(self, positions: NDArray) -> NDArray:
+        """Evaluate the Hessians of the Wannier orbitals at the given positions.
+
+        Parameters
+        ----------
+        positions : NDArray
+            The positions at which to evaluate the orbital Hessians.
+            Should be of shape (N, 3), N being the number of points.
+
+        Returns
+        -------
+        hessians : NDArray
+            The evaluated orbital Hessians at the given positions. The
+            shape of the output will be (M, N, 3, 3), where M is the
+            total number of orbitals, N is the number of points, and
+            3x3 corresponds to the Hessian matrix components.
+
+        """
+        return self._evaluate(positions, field="hessian").reshape(-1, 3, 3, order="F")
 
     @staticmethod
     def _fix_global_phase(wannier_functions: NDArray) -> NDArray:
@@ -813,30 +924,30 @@ def _parse_xsf_datagrid(lines: list[str]) -> dict:
 
 def read_xsf(path: Path) -> dict:
     """Parses the contents of a `seedname.xsf` file.
-    `
-        This is a utility function to read the contents of a `seedname.xsf`
-        file and return a dictionary containing the parsed data, mainly to
-        compare against what wannier90 writes out in its .xsf files for
-        verification purposes.
 
-        Parameters
-        ----------
-        path : os.PathLike
-            Path to `seedname.xsf`.
+    This is a utility function to read the contents of a `seedname.xsf`
+    file and return a dictionary containing the parsed data, mainly to
+    compare against what wannier90 writes out in its .xsf files for
+    verification purposes.
 
-        Returns
-        -------
-        xsf : dict
-            A dictionary containing the parsed data from the `seedname.xsf`
-            file.
+    Parameters
+    ----------
+    path : os.PathLike
+        Path to `seedname.xsf`.
 
-        Notes
-        -----
-        The `seedname.xsf` file is a text file containing the coordinates
-        of the atoms in the unit cell, as well as the unit cell vectors.
+    Returns
+    -------
+    xsf : dict
+        A dictionary containing the parsed data from the `seedname.xsf`
+        file.
 
-        See the `official documentation
-        <http://www.xcrysden.org/doc/XSF.html>`_ for more information.
+    Notes
+    -----
+    The `seedname.xsf` file is a text file containing the coordinates of
+    the atoms in the unit cell, as well as the unit cell vectors.
+
+    See the official documentation at
+    http://www.xcrysden.org/doc/XSF.html for more information.
 
     """
     with open(path, "r") as f:

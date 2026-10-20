@@ -11,6 +11,7 @@ from scipy.constants import physical_constants
 from scipy.special import comb
 
 from qttools import NDArray
+from quatrex.pre_processing.orbitals.orbitals import RealSpaceOrbitals
 
 bohr = physical_constants["Bohr radius"][0] * 1e10  # Å
 
@@ -481,7 +482,7 @@ def primitive_gto_hessian(
     )
 
 
-class CP2KOrbitals:
+class CP2KOrbitals(RealSpaceOrbitals):
     """Class to evaluate CP2K orbitals based on a given parameter set.
 
     Parameters
@@ -770,12 +771,12 @@ class CP2KOrbitals:
         -------
         gradients : NDArray
             The evaluated orbital gradients at the given positions. The
-            shape of the output will be (M, 3, N), where M is the total
+            shape of the output will be (M, N, 3), where M is the total
             number of orbitals, 3 corresponds to the x, y, z components
             of the gradient, and N is the number of points.
 
         """
-        return self._evaluate(positions, primitive_gto_gradient)
+        return self._evaluate(positions, primitive_gto_gradient).swapaxes(1, 2)
 
     def evaluate_orbital_hessians(self, positions: NDArray) -> NDArray:
         """Evaluate Hessians of CP2K orbitals at the given positions.
@@ -790,9 +791,9 @@ class CP2KOrbitals:
         -------
         hessians : NDArray
             The evaluated orbital Hessians at the given positions. The
-            shape of the output will be (M, 3, 3, N), where M is the
+            shape of the output will be (M, N, 3, 3), where M is the
             total number of orbitals, 3x3 corresponds to the Hessian
             matrix, and N is the number of points.
 
         """
-        return self._evaluate(positions, primitive_gto_hessian)
+        return self._evaluate(positions, primitive_gto_hessian).swapaxes(1, 3)

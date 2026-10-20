@@ -97,33 +97,66 @@ class QTBMDevice(BaseDevice):
 
         hamiltonians = {}
         overlap_matrices = {}
-        # first desymetrize the real space matrices
+
         for r, h_r in self.hamiltonians.items():
             r_flipped = (-r[0], -r[1], -r[2])
+
+            h_flip = sparse.csr_array(self.hamiltonians[r_flipped])
+            if (
+                hasattr(h_flip, "has_canonical_format")
+                and not h_flip.has_canonical_format
+            ):
+                h_flip.sum_duplicates()
+                h_flip.sort_indices()
+
             hamiltonians[r] = (
-                self.hamiltonians[r]
-                + sparse.triu(self.hamiltonians[r_flipped], k=1).conj().transpose()
-            )
-        for r, s_r in self.overlap_matrices.items():
-            r_flipped = (-r[0], -r[1], -r[2])
-            overlap_matrices[r] = (
-                self.overlap_matrices[r]
-                + sparse.triu(self.overlap_matrices[r_flipped], k=1).conj().transpose()
+                self.hamiltonians[r] + sparse.triu(h_flip, k=1).conj().transpose()
             )
 
-        # TODO: Optimize this. Currently, we copy to the host to not go OOM.
+        for r, s_r in self.overlap_matrices.items():
+            r_flipped = (-r[0], -r[1], -r[2])
+
+            s_flip = sparse.csr_array(self.overlap_matrices[r_flipped])
+            if (
+                hasattr(s_flip, "has_canonical_format")
+                and not s_flip.has_canonical_format
+            ):
+                s_flip.sum_duplicates()
+                s_flip.sort_indices()
+
+            overlap_matrices[r] = (
+                self.overlap_matrices[r] + sparse.triu(s_flip, k=1).conj().transpose()
+            )
+
+        order = self.nd_result.orbital_perm
+        if hasattr(order, "get"):
+            order = order.get()
+        order = np.asarray(order)
+
+        # 2. Reorder orbitals and trim lower triangle
         for r, h_r in hamiltonians.items():
-            tmp = h_r.get()
-            order = self.nd_result.orbital_perm
+            tmp = h_r.get() if hasattr(h_r, "get") else h_r
+
+            # Apply permutation on CPU
             tmp = tmp[order, :][:, order]
             tmp = scipy.sparse.triu(tmp).tocsr()
-            self.hamiltonians[r] = sparse.csr_matrix(tmp)
+
+            # Clean up structure to guarantee clean indices for future operations
+            tmp.sum_duplicates()
+            tmp.sort_indices()
+
+            self.hamiltonians[r] = tmp
+
         for r, s_r in overlap_matrices.items():
-            tmp = s_r.get()
-            order = self.nd_result.orbital_perm
+            tmp = s_r.get() if hasattr(s_r, "get") else s_r
+
             tmp = tmp[order, :][:, order]
             tmp = scipy.sparse.triu(tmp).tocsr()
-            self.overlap_matrices[r] = sparse.csr_matrix(tmp)
+
+            tmp.sum_duplicates()
+            tmp.sort_indices()
+
+            self.overlap_matrices[r] = tmp
 
         self.orbital_coordinates = self.orbital_coordinates[
             self.nd_result.orbital_perm, :

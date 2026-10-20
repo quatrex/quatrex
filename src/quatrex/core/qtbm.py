@@ -1139,37 +1139,57 @@ class QTBM(TransportSolver):
                 )
 
             for contact, ldos in self.observables.electron_ldos.items():
+
+                ldos = ldos[:, self.device.nd_result.orbital_inv]
+
                 np.save(
                     f"{output_dir}/dos_{contact.name[0]}.npy",
                     (
-                        xp.add.reduceat(ldos, self.device.orbital_offsets[:-1], axis=1)
+                        xp.add.reduceat(
+                            ldos,
+                            self.device.orbital_offsets[
+                                self.device.nd_result.orbital_inv
+                            ][:-1],
+                            axis=1,
+                        )
                         if self.config.qtbm.atom_resolved_outputs
                         else ldos
                     ),
                 )
 
             if self.observables.excess_electron_density is not None:
+
+                excess_electron_density = self.observables.excess_electron_density[
+                    self.device.nd_result.orbital_inv
+                ]
                 np.save(
                     f"{output_dir}/excess_electron_density.npy",
                     (
                         xp.add.reduceat(
-                            self.observables.excess_electron_density,
-                            self.device.orbital_offsets[:-1],
+                            excess_electron_density,
+                            self.device.orbital_offsets[
+                                self.device.nd_result.orbital_inv
+                            ][:-1],
                         )
                         if self.config.qtbm.atom_resolved_outputs
-                        else self.observables.excess_electron_density
+                        else excess_electron_density
                     ),
                 )
             if self.observables.excess_hole_density is not None:
+                excess_hole_density = self.observables.excess_hole_density[
+                    self.device.nd_result.orbital_inv
+                ]
                 np.save(
                     f"{output_dir}/excess_hole_density.npy",
                     (
                         xp.add.reduceat(
-                            self.observables.excess_hole_density,
-                            self.device.orbital_offsets[:-1],
+                            excess_hole_density,
+                            self.device.orbital_offsets[
+                                self.device.nd_result.orbital_inv
+                            ][:-1],
                         )
                         if self.config.qtbm.atom_resolved_outputs
-                        else self.observables.excess_hole_density
+                        else excess_hole_density
                     ),
                 )
 
@@ -1241,12 +1261,15 @@ class QTBM(TransportSolver):
 
         """
         if potential.shape[0] == self.device.atom_coordinates.shape[0]:
+            potential = potential[self.device.nd_result.atom_perm]
             # Upscale the potential to the number of orbitals
             orbitals_per_atom = [
                 self.config.device.num_orbitals_per_atom.get(species, 1)
                 for species in self.device.atomic_species
             ]
             potential = xp.repeat(potential, orbitals_per_atom, axis=0)
+        else:
+            potential = potential[self.device.nd_result.orbital_perm]
 
         self.device.potential = potential
 

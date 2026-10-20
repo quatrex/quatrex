@@ -11,7 +11,6 @@ from qttools.wave_function_solver.petsc import PETSc, petsc_available
 from qttools.wave_function_solver.solver import WFSolver
 from qttools.wave_function_solver.strumpack import Strumpack
 from qttools.wave_function_solver.superlu import SuperLU
-from qttools.wave_function_solver.superlu_dist import SuperLUDist
 from qttools.wave_function_solver.thomas import Thomas
 
 
@@ -178,7 +177,6 @@ def configure_solver(
     distributed = {
         "cudss": cuDSS,
         "petsc": PETSc,
-        "superlu_dist": SuperLUDist,
         "strumpack": Strumpack,
     }
     serial = {

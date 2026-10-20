@@ -406,6 +406,8 @@ class PETSc(WFSolver):
             petsc.InsertMode.INSERT_VALUES,
         )
 
+        mat.assemble()
+
         return mat
 
     def _create_petsc_array(self, arr: NDArray) -> petsc.Mat:

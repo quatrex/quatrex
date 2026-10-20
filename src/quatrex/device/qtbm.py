@@ -5,6 +5,7 @@
 import warnings
 
 import numpy as np
+import scipy
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -14,6 +15,7 @@ from quatrex.contact import QTBMContact
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.base import BaseDevice
 from quatrex.device.inputs import load_matrices
+from quatrex.device.nested_dissection import nested_dissection_orbitals
 
 
 class QTBMDevice(BaseDevice):
@@ -65,9 +67,76 @@ class QTBMDevice(BaseDevice):
         self.are_matrices_complex: bool = False
         self._init_hamiltonian()
 
+        if self.config.electron.solver.order == "nested_dissection":
+            self._reorder_matrices()
+
         self.row_offsets = self._get_row_offsets()
         self._add_contacts()
         self._convert_to_dcsx()
+
+    def _reorder_matrices(self):
+        """Reorders the Hamiltonian and overlap matrices using nested dissection."""
+        if self.config.electron.solver.order != "nested_dissection":
+            raise ValueError(
+                "Nested dissection reordering is only applied when "
+                "`config.electron.solver.order` is set to 'nested_dissection'."
+            )
+        target_leaf_size = self.config.electron.solver.target_leaf_size
+        total_atoms = len(self.atom_coordinates)
+        ideal_depth = max(1, int(np.log2(total_atoms / target_leaf_size)))
+
+        n_orb_per_atom = [
+            self.device_config.num_orbitals_per_atom[s] for s in self.atomic_species
+        ]
+        self.nd_result = nested_dissection_orbitals(
+            self.atom_coordinates,
+            n_orb_per_atom,
+            max_depth=ideal_depth,
+            matrices=[*self.hamiltonians.values(), *self.overlap_matrices.values()],
+        )
+
+        hamiltonians = {}
+        overlap_matrices = {}
+        # first desymetrize the real space matrices
+        for r, h_r in self.hamiltonians.items():
+            r_flipped = (-r[0], -r[1], -r[2])
+            hamiltonians[r] = (
+                self.hamiltonians[r]
+                + sparse.triu(self.hamiltonians[r_flipped], k=1).conj().transpose()
+            )
+        for r, s_r in self.overlap_matrices.items():
+            r_flipped = (-r[0], -r[1], -r[2])
+            overlap_matrices[r] = (
+                self.overlap_matrices[r]
+                + sparse.triu(self.overlap_matrices[r_flipped], k=1).conj().transpose()
+            )
+
+        # TODO: Optimize this. Currently, we copy to the host to not go OOM.
+        for r, h_r in hamiltonians.items():
+            tmp = h_r.get()
+            order = self.nd_result.orbital_perm
+            tmp = tmp[order, :][:, order]
+            tmp = scipy.sparse.triu(tmp).tocsr()
+            self.hamiltonians[r] = sparse.csr_matrix(tmp)
+        for r, s_r in overlap_matrices.items():
+            tmp = s_r.get()
+            order = self.nd_result.orbital_perm
+            tmp = tmp[order, :][:, order]
+            tmp = scipy.sparse.triu(tmp).tocsr()
+            self.overlap_matrices[r] = sparse.csr_matrix(tmp)
+
+        self.orbital_coordinates = self.orbital_coordinates[
+            self.nd_result.orbital_perm, :
+        ]
+        self.atom_coordinates = self.atom_coordinates[self.nd_result.atom_perm, :]
+        self.atomic_species = self.atomic_species[self.nd_result.atom_perm]
+        self.potential = (
+            self.potential[self.nd_result.orbital_perm]
+            if self.potential is not None
+            else None
+        )
+
+        self.orbital_offsets = self._init_orbitals()
 
     def _get_row_offsets(self) -> NDArray:
         """Computes the row offsets for distributed execution.

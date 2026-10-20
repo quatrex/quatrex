@@ -6,6 +6,7 @@ from qttools.wave_function_solver.configure import configure_solver
 from qttools.wave_function_solver.cudss import cuDSS
 from qttools.wave_function_solver.petsc import PETSc
 from qttools.wave_function_solver.solver import WFSolver
+from qttools.wave_function_solver.strumpack import Strumpack
 from qttools.wave_function_solver.superlu import SuperLU
 from qttools.wave_function_solver.thomas import Thomas
 
@@ -16,4 +17,5 @@ __all__ = [
     "WFSolver",
     "configure_solver",
     "cuDSS",
+    "Strumpack",
 ]

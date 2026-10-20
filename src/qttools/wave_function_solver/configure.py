@@ -9,13 +9,15 @@ from qttools.comm import comm as quatrex_comm
 from qttools.wave_function_solver.cudss import cuDSS, cudss_available
 from qttools.wave_function_solver.petsc import PETSc, petsc_available
 from qttools.wave_function_solver.solver import WFSolver
+from qttools.wave_function_solver.strumpack import Strumpack
 from qttools.wave_function_solver.superlu import SuperLU
+from qttools.wave_function_solver.superlu_dist import SuperLUDist
 from qttools.wave_function_solver.thomas import Thomas
 
 
 def _select_distributed_solver(
     inputs: dict[str, Any],
-    optional_inputs: dict[str, Any] = {},
+    solver_options: dict[str, Any] = {},
 ) -> WFSolver:
     """Selects the best wave function solver for distributed execution.
 
@@ -23,7 +25,7 @@ def _select_distributed_solver(
     ----------
     inputs : dict
         dictionary of input parameters for the solver.
-    optional_inputs : dict
+    solver_options : dict
         dictionary of optional input parameters for the solver.
 
     Returns
@@ -45,17 +47,17 @@ def _select_distributed_solver(
     if quatrex_comm.rank == 0:
         print("Auto-selecting PETSc solver for distributed execution.", flush=True)
 
-    if "petsc_options" not in optional_inputs:
+    if "petsc_options" not in solver_options:
         raise ValueError(
             "PETSc options must be provided for distributed execution with PETSc."
         )
 
-    return PETSc(**inputs, petsc_options=optional_inputs["petsc_options"])
+    return PETSc(**inputs, petsc_options=solver_options["petsc_options"])
 
 
 def _select_non_distributed_solver(
     inputs: dict[str, Any],
-    optional_inputs: dict[str, Any],
+    solver_options: dict[str, Any],
 ) -> WFSolver:
     """Selects the best wave function solver for non-distributed
     execution.
@@ -64,7 +66,7 @@ def _select_non_distributed_solver(
     ----------
     inputs : dict
         dictionary of input parameters for the solver.
-    optional_inputs : dict
+    solver_options : dict
         dictionary of optional input parameters for the solver.
 
     Returns
@@ -96,7 +98,7 @@ def _select_non_distributed_solver(
 
 def _auto_select_solver(
     inputs: dict[str, Any],
-    optional_inputs: dict[str, Any],
+    solver_options: dict[str, Any],
 ) -> WFSolver:
     """Auto-selects the solver based on the matrix type.
 
@@ -110,7 +112,7 @@ def _auto_select_solver(
     ----------
     inputs : dict
          dictionary of input parameters for the solver.
-    optional_inputs : dict
+    solver_options : dict
         dictionary of optional input parameters for the solver.
 
     Returns
@@ -122,12 +124,12 @@ def _auto_select_solver(
     if "comm" in inputs and inputs["comm"] is not None and inputs["comm"].size > 1:
         return _select_distributed_solver(
             inputs,
-            optional_inputs,
+            solver_options,
         )
 
     return _select_non_distributed_solver(
         inputs,
-        optional_inputs,
+        solver_options,
     )
 
 
@@ -137,7 +139,7 @@ def configure_solver(
     matrix_property: str,
     matrix_view: str,
     row_offsets: NDArray,
-    petsc_options: dict[str, Any] | None = None,
+    solver_options: dict[str, Any] | None = None,
 ) -> WFSolver:
     """Configures the wavefunction solver based on the config.
 
@@ -156,8 +158,8 @@ def configure_solver(
     row_offsets : NDArray
         The row offsets partitioning the system matrix across MPI
         ranks.
-    petsc_options : dict[str, Any], optional
-        Dictionary of PETSc options to configure the solver.
+    solver_options : dict[str, Any], optional
+        Dictionary of solver options to configure the solver.
 
     Returns
     -------
@@ -165,6 +167,8 @@ def configure_solver(
         The configured wavefunction solver instance.
 
     """
+    if solver_options is None:
+        solver_options = {}
 
     local_rows = (
         row_offsets[quatrex_comm.block.rank],
@@ -174,6 +178,8 @@ def configure_solver(
     distributed = {
         "cudss": cuDSS,
         "petsc": PETSc,
+        "superlu_dist": SuperLUDist,
+        "strumpack": Strumpack,
     }
     serial = {
         "superlu": SuperLU,
@@ -191,29 +197,29 @@ def configure_solver(
     inputs["comm"] = quatrex_comm.block
     inputs["local_rows"] = local_rows
 
-    optional_inputs: dict[str, Any] = {}
-
-    if solver_name in ["petsc", "auto"]:
-        if petsc_options is None:
-            raise ValueError("PETSc options must be provided for PETSc solver.")
-        optional_inputs["petsc_options"] = petsc_options
+    if solver_name in ["petsc", "auto"] and (
+        "petsc_options" not in solver_options or solver_options["petsc_options"] is None
+    ):
+        raise ValueError("PETSc options must be provided for PETSc solver.")
+    elif solver_name not in ["petsc", "auto"] and "petsc_options" in solver_options:
+        solver_options.pop("petsc_options")
 
     if solver_name in serial:
         return serial[solver_name](
             **inputs,
-            **optional_inputs,
+            **solver_options,
         )
 
     if solver_name in distributed:
         return distributed[solver_name](
             **inputs,
-            **optional_inputs,
+            **solver_options,
         )
 
     if solver_name == "auto":
         return _auto_select_solver(
             inputs,
-            optional_inputs,
+            solver_options,
         )
 
     raise ValueError(f"Unknown direct solver: {solver_name}")

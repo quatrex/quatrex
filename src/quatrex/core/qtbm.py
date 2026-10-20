@@ -149,11 +149,11 @@ class QTBM(TransportSolver):
                         "Using real arithmetic for the solver.",
                         flush=True,
                     )
-            bare_system_matrix_dtype = xp.float64
+            bare_system_matrix_dtype = xp.dtype("float64")
             bare_system_matrix_property = "symmetric_indefinite"
 
         else:
-            bare_system_matrix_dtype = xp.complex128
+            bare_system_matrix_dtype = xp.dtype("complex128")
             bare_system_matrix_property = "hermitian_indefinite"
 
         if self.low_rank_obc:
@@ -161,11 +161,27 @@ class QTBM(TransportSolver):
             system_matrix_view = bare_system_matrix_view
             system_matrix_property = bare_system_matrix_property
         else:
-            system_matrix_dtype = xp.complex128
+            system_matrix_dtype = xp.dtype("complex128")
             system_matrix_view = "full"
             system_matrix_property = "general"
 
-        self.system_matrix_is_real = system_matrix_dtype == xp.float64
+        self.system_matrix_is_real = system_matrix_dtype == xp.dtype("float64")
+
+        self._allocate_bare_system_matrix(bare_system_matrix_dtype)
+        if not self.low_rank_obc:
+            self._allocate_system_matrix(system_matrix_dtype)
+
+        solver_options = {}
+        if self.config.electron.solver.petsc_options is not None:
+            solver_options["petsc_options"] = self.config.electron.solver.petsc_options
+        if self.config.electron.solver.strumpack_options is not None:
+            if "args" in self.config.electron.solver.strumpack_options:
+                solver_options["strumpack_args"] = (
+                    self.config.electron.solver.strumpack_options.pop("args", None)
+                )
+            solver_options["strumpack_options"] = (
+                self.config.electron.solver.strumpack_options
+            )
 
         self._solver: WFSolver = configure_solver(
             self.config.electron.solver.direct_solver,
@@ -173,12 +189,9 @@ class QTBM(TransportSolver):
             matrix_property=system_matrix_property,
             matrix_view=system_matrix_view,
             row_offsets=self.device.row_offsets,
-            petsc_options=self.config.electron.solver.petsc_options,
+            solver_options=solver_options,
         )
 
-        self._allocate_bare_system_matrix(bare_system_matrix_dtype)
-        if not self.low_rank_obc:
-            self._allocate_system_matrix(system_matrix_dtype)
         free_mempool()
 
     @profiler.profile("QTBM: Allocate bare system matrix", level="debug")
@@ -1365,6 +1378,31 @@ class QTBM(TransportSolver):
                             system_matrix.tocsr(),
                             rhs,
                         )
+
+                        if QTX_PROFILE_LEVEL == "debug":
+                            phi_all = comm.block.all_gather_v(phi, axis=0)
+                            _abs_res = xp.sum(
+                                xp.abs(system_matrix @ phi_all - rhs) ** 2,
+                                keepdims=True,
+                            )
+                            _rhs_norm = xp.sum(xp.abs(rhs) ** 2, keepdims=True)
+
+                            abs_res = xp.empty_like(_abs_res)
+                            rhs_norm = xp.empty_like(_rhs_norm)
+
+                            # allreduce to get the global residual
+                            comm.block.all_reduce(_abs_res, abs_res)
+                            comm.block.all_reduce(_rhs_norm, rhs_norm)
+
+                            if comm.block.rank == 0:
+                                print(
+                                    f"Absolute residual for energy index {batch_start + energy_ind}: {abs_res[0]}",
+                                    flush=True,
+                                )
+                                print(
+                                    f"Relative residual for energy index {batch_start + energy_ind}: {abs_res[0] / (rhs_norm[0] + 1e-20)}",
+                                    flush=True,
+                                )
 
                         if self.low_rank_obc:
                             phi = self._recover_full_rank_wavefunction(

@@ -506,6 +506,7 @@ class SolverConfig(BaseModel):
         "cudss",
         "thomas",
         "petsc",
+        "strumpack",
         "auto",
     ] = "auto"
     """The direct solver to use in `wf` simulations.
@@ -527,6 +528,32 @@ class SolverConfig(BaseModel):
     that the Hamiltonian is ordered in a way that results in a
     block-tridiagonal structure.
 
+    !!! note
+        This is only relevant for `wf` simulations.
+
+    """
+
+    order: Literal["nested_dissection"] | None = "nested_dissection"
+    """The order to use for the system matrix.
+
+    If `None`, no reordering is applied. If `"nested_dissection"`, the
+    nested dissection ordering is applied to the system matrix. This can
+    improve the performance since a geometric ordering of the atoms is
+    applied. It is recommended to then set the ordering for the solver
+    to natural ordering. Otherwise, the solver will apply its own
+    ordering regardless of the ordering applied here.
+
+    !!! note
+        This is only relevant for `wf` simulations.
+
+    """
+
+    target_leaf_size: PositiveInt = 2048
+    """The target leaf size for the nested dissection ordering.
+
+    !!! note
+        This is only relevant for `wf` simulations.
+
     """
 
     petsc_options: dict[str, str | int | float | bool | None] | None = None
@@ -544,6 +571,15 @@ class SolverConfig(BaseModel):
         `"superlu_dist"`, or `"strumpack"`. By default, `"super_lu"` is
         used. Additionaly, debug settings can be included see the
         official PETSc documentation for more information.
+
+    """
+
+    strumpack_options: dict[str, str | int | float | bool | None] | None = None
+    """The STRUMPACK options to use when
+    [`direct_solver`](#direct_solver) is set to `"strumpack"`.
+
+    See the official STRUMPACK documentation for a list of available
+    options.
 
     """
 
@@ -571,6 +607,31 @@ class SolverConfig(BaseModel):
 
             if "pc_factor_mat_solver_type" not in self.petsc_options:
                 self.petsc_options["pc_factor_mat_solver_type"] = "superlu_dist"
+
+        return self
+
+    @model_validator(mode="after")
+    def _check_strumpack_options(self):
+        if self.strumpack_options and self.direct_solver != "strumpack":
+            raise ValueError(
+                "STRUMPACK options should only be set "
+                "when the direct solver is set to 'strumpack'."
+            )
+        if self.direct_solver in ["strumpack", "auto"]:
+            # Set default options if not already set
+            if self.strumpack_options is None:
+                # TODO currently some random options are set here for
+                # testing purposes. Make better defaults, but this is
+                # anyways an advanced option that should be set by the
+                # user.
+                self.strumpack_options = {
+                    "Matching": "NONE",
+                    "KrylovSolver": "DIRECT",
+                    "SymmetricPattern": True,
+                    "ReorderingMethod": "NATURAL",
+                    "UseMatsolve": True,
+                    "args": "--sp_enable_replace_tiny_pivots --sp_amalgamation_threshold 2 --sp_dense_tile_size 1024",
+                }
 
         return self
 

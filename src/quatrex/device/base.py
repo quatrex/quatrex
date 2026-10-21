@@ -10,6 +10,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
+from qttools.datastructures.dcsx import DCSX
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
@@ -56,10 +57,10 @@ class BaseDevice:
     contacts : list[BaseContact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
-    hamiltonians : dict | DSDBSparse | None
+    hamiltonians : dict[DCSX] | DSDBSparse | None
         Hamiltonian matrices in either real space (QTBM) or k-space
         (SCBA).
-    overlap_matrices : dict | DSDBSparse | None
+    overlap_matrices : dict[DCSX] | DSDBSparse | None
         Overlap matrices in either real space (QTBM) or k-space (SCBA).
 
     """
@@ -76,11 +77,12 @@ class BaseDevice:
             self.atomic_species,
             self.lattice_vectors,
         ) = self._load_structure(config)
+        self.num_orbitals = self.orbital_coordinates.shape[0]
 
         # TODO Device/Contact currently assumes that these quantities are on the host
         self.atom_coordinates = get_host(self.atom_coordinates)
 
-        self._init_orbitals()
+        self.orbital_offsets = self._init_orbitals()
 
         self.potential = self._load_potential(
             self.config.input_dir,
@@ -97,10 +99,10 @@ class BaseDevice:
         # Child classes will initialize the Hamiltonian and contacts in
         # their own init methods
         self.contacts: list[BaseContact] = []
-        self.hamiltonians: dict | DSDBSparse | None = None
+        self.hamiltonians: dict[DCSX] | DSDBSparse | None = None
         # TODO: Should be `None` for QTBM if the basis is orthogonal.
         # No identity matrix should be allocated.
-        self.overlap_matrices: dict | DSDBSparse | None = None
+        self.overlap_matrices: dict[DCSX] | DSDBSparse | None = None
 
     @staticmethod
     def _load_potential(
@@ -226,7 +228,7 @@ class BaseDevice:
 
         return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
 
-    def _init_orbitals(self) -> None:
+    def _init_orbitals(self) -> NDArray:
         """Initializes the orbital indexing system for the device.
 
         Sets up the mapping between atoms and orbitals by determining
@@ -237,6 +239,13 @@ class BaseDevice:
         configuration, with a default of 1 orbital per atom if not
         specified.
 
+        Returns
+        -------
+        NDArray
+            An array of cumulative orbital counts, where the i-th entry
+            gives the starting orbital index for atom i. The last entry
+            is the total number of orbitals in the device.
+
         """
         orbitals_per_atom = np.fromiter(
             map(
@@ -246,7 +255,7 @@ class BaseDevice:
             dtype=np.int32,
         )
         # Create a vector with the starting orbital for each atom
-        self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
+        return np.hstack(([0], np.cumsum(orbitals_per_atom)))
 
     def _validate_contacts(self):
         """Validates that all required contact parameters are set.

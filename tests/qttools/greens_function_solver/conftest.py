@@ -5,7 +5,6 @@ import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
@@ -122,8 +121,5 @@ def configure_comm():
     # Configure the comm singleton.
     comm.configure(
         block_comm_size=1,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )

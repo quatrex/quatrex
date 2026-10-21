@@ -4,16 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from qttools import xp
-from qttools.wave_function_solver import (
-    MUMPS,
-    PARDISO,
-    PETSc,
-    SuperLU,
-    Thomas,
-    WFSolver,
-    cuDSS,
-)
+from qttools import wave_function_solver, xp
 
 NUM_ROWS = [
     pytest.param(27, id="27-rows"),
@@ -45,7 +36,7 @@ petsc_available = importlib.util.find_spec("petsc4py") is not None
 
 @dataclass(frozen=True)
 class WFSolverSpec:
-    solver_type: type[WFSolver]
+    solver_type: type[wave_function_solver.WFSolver]
     sparse_format: str
     order: str = "C"
     solver_options: dict[str, object] = field(default_factory=dict)
@@ -56,13 +47,12 @@ class WFSolverSpec:
     supports_symmetric: bool = False
     supports_hermitian: bool = False
     supports_distributed: bool = False
-    solve_kwargs: dict[str, object] = field(default_factory=dict)
 
 
 SOLVER_SPECS = [
     pytest.param(
         WFSolverSpec(
-            solver_type=SuperLU,
+            solver_type=wave_function_solver.SuperLU,
             sparse_format="csc",
             supports_reuse_factorization=True,
         ),
@@ -70,39 +60,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=MUMPS,
-            sparse_format="coo",
-            supports_reuse_analysis=True,
-            supports_reuse_factorization=True,
-            factorization_needs_analysis=True,
-        ),
-        id="mumps",
-        marks=[
-            pytest.mark.skipif(
-                not mumps_available, reason="Requires python-mumps package"
-            ),
-            pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend"),
-        ],
-    ),
-    pytest.param(
-        WFSolverSpec(
-            solver_type=PARDISO,
-            sparse_format="csr",
-            supports_reuse_analysis=True,
-            supports_reuse_factorization=True,
-            factorization_needs_analysis=True,
-            supports_symmetric=True,
-            supports_hermitian=True,
-        ),
-        id="pardiso",
-        marks=[
-            pytest.mark.skipif(not pardiso_available, reason="Requires pydiso package"),
-            pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend"),
-        ],
-    ),
-    pytest.param(
-        WFSolverSpec(
-            solver_type=cuDSS,
+            solver_type=wave_function_solver.cuDSS,
             sparse_format="csr",
             order="F",
             supports_reuse_analysis=True,
@@ -122,7 +80,7 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=PETSc,
+            solver_type=wave_function_solver.PETSc,
             sparse_format="csr",
             order="F",
             solver_options={
@@ -152,13 +110,13 @@ SOLVER_SPECS = [
     ),
     pytest.param(
         WFSolverSpec(
-            solver_type=Thomas,
+            solver_type=wave_function_solver.Thomas,
             sparse_format="csr",
             use_banded=True,
             supports_reuse_analysis=True,
             supports_symmetric=True,
             supports_hermitian=True,
-            solve_kwargs={"overwrite_b": False},
+            solver_options={"overwrite_b": False},
         ),
         id="thomas",
     ),

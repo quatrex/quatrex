@@ -41,22 +41,45 @@ def _get_host_meminfo() -> tuple[float, float]:
     return mem_free, mem_total
 
 
-def print_memory_usage() -> None:
-    """Print CPU/GPU memory usage for rank 0."""
-    if comm.rank != 0:
+def print_memory_usage(message: str | None = None, only_zero_rank: bool = True) -> None:
+    """Print CPU/GPU memory usage for rank 0.
+
+    Parameters
+    ----------
+    message: str | None, optional
+        An optional message to print before the memory usage
+        information.
+    only_zero_rank: bool, optional
+        If True, only print the memory usage for rank 0. If False, print
+        the memory usage for all ranks.
+
+    """
+    if comm.rank != 0 and only_zero_rank:
         return
 
-    message = "[Memory]:"
+    if message is None:
+        message = ""
+
+    message = f"\n[Memory, rank {comm.rank}]: " + message
+
+    message += "\n" + "-" * 80
 
     host_mem_free, host_mem_total = _get_host_meminfo()
     host_mem_used = host_mem_total - host_mem_free
-    message += f" CPU {host_mem_used/1024**2:.2f}/{host_mem_total/1024**2:.2f} GB"
+    message += f"\nCPU {host_mem_used/1024**2:.2f}/{host_mem_total/1024**2:.2f} GB"
 
     if xp.__name__ == "cupy":
         synchronize_device()
         gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
         gpu_mem_used = gpu_mem_total - gpu_mem_free
 
-        message += f", GPU {gpu_mem_used/1024**3:.2f}/{gpu_mem_total/1024**3:.2f} GB"
+        message += f"\nGPU {gpu_mem_used/1024**3:.2f}/{gpu_mem_total/1024**3:.2f} GB"
+
+        pool = xp.get_default_memory_pool()
+        message += f"\ncupy memory pool used: {pool.used_bytes()/1024**3:.2f}/{pool.total_bytes()/1024**3:.2f} GB"
+        message += f"\ncupy memory pool total: {pool.total_bytes()/1024**3:.2f}/{gpu_mem_total/1024**3:.2f} GB"
+        message += f"\noutside memory pool: {(gpu_mem_used - pool.total_bytes())/1024**3:.2f}/{gpu_mem_total/1024**3:.2f} GB"
+
+    message += "\n" + "-" * 80 + "\n"
 
     print(message, flush=True)

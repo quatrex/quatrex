@@ -12,6 +12,7 @@ from __future__ import annotations
 # for `MatCreateXXXAIJWithArrays`.
 import ctypes
 import os
+import warnings
 
 from qttools.utils.gpu_utils import get_array_module_name
 
@@ -20,14 +21,15 @@ try:
     import petsc4py
     from petsc4py import PETSc as petsc
 
-    petsc_matrix_types = {
-        "real_symmetric_positive_definite": petsc.Mat.Option.SPD,
-        "real_symmetric_indefinite": petsc.Mat.Option.SYMMETRIC,
-        "complex_hermitian_indefinite": petsc.Mat.Option.HERMITIAN,
-        "real_nonsymmetric": None,
-        "complex_nonsymmetric": None,
+    petsc_matrix_properties = {
+        "symmetric_positive_definite": petsc.Mat.Option.SPD,
+        "symmetric_indefinite": petsc.Mat.Option.SYMMETRIC,
+        "hermitian_indefinite": petsc.Mat.Option.HERMITIAN,
+        "general": petsc.Mat.Option.STRUCTURALLY_SYMMETRIC,
     }
-    # TODO: Default should probably be structurally_symmetric?
+    # NOTE: We set structural symmetric for complex matrices, since in
+    # QTBM, the matrices are always structural symmetric. In general,
+    # this could be problematic.
 
     # The get_config() function ignores environment variables but the
     # actual `from petsc4py import PETSc` import logic does not.
@@ -86,6 +88,7 @@ except (ImportError, OSError):
 import numpy as np
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm as quatrex_comm
 from qttools.comm.comm import _SubCommunicator
 from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
@@ -94,6 +97,18 @@ profiler = Profiler()
 
 _ALLOWED_KSP_TYPES = {"preonly"}
 _ALLOWED_PC_TYPES = {"lu"}
+
+_ALLOWED_MATRIX_VIEWS = ["full"]
+_ALLOWED_MATRIX_DTYPES = [
+    xp.dtype("float64"),
+    xp.dtype("complex128"),
+]
+
+DEFAULT_PETSC_OPTIONS = {
+    "ksp_type": "preonly",
+    "pc_type": "lu",
+    "pc_factor_mat_solver_type": "superlu_dist",
+}
 
 
 def _get_data_pointer(arr: NDArray) -> ctypes.c_void_p:
@@ -175,14 +190,31 @@ class PETSc(WFSolver):
 
     Parameters
     ----------
-    matrix_type : str, optional
-        The type of the system matrix. This describes properties like
-        symmetry and definiteness. If None, the solver will use a
-        general matrix type.
-    matrix_view : str, optional
-        The view of the system matrix sparsity. This solver supports
-        'full' and 'upper' views. If None, the solver will use the PETSc
-        default for the given `matrix_type`.
+    matrix_dtype : xp.dtype[xp.inexact]
+        The data type of the system matrix. This needs to be
+        provided to correctly initialize the solver.
+    matrix_property : str
+        The property of the system matrix. This describes properties
+        like symmetry and definiteness, which can be used by solvers
+        to optimize the solution process. Can be None if the solver
+        does not require this information or if it can be inferred
+        from the matrix itself.
+    matrix_view : str
+        The view of the system matrix sparsity. Not all solvers are
+        compatible with all views.
+    reuse_analysis : bool, optional
+        Whether to reuse the analysis phase when solve is called
+        multiple times, by default False. This typically includes
+        symbolic factorization and ordering but can vary between
+        solvers. This is useful when solving multiple linear systems
+        with the same sparsity pattern but different numerical
+        values.
+    reuse_factorization : bool, optional
+        Whether to reuse the numerical factorization when solve is
+        called multiple times, by default False. This can only be
+        True if reuse_analysis is also True. Note that this must
+        only be True if the matrix values have not changed since the
+        last factorization.
     comm : _SubCommunicator, optional
         The communicator for distributed solves. If None, the solver
         will assume a single-rank solve. This must be provided together
@@ -201,67 +233,94 @@ class PETSc(WFSolver):
 
     """
 
+    @staticmethod
+    def valid_views() -> list[str]:
+        """Returns the valid matrix views.
+
+        Returns
+        -------
+        list[str]
+            The valid matrix views.
+
+        """
+        return _ALLOWED_MATRIX_VIEWS
+
     def __init__(
         self,
-        matrix_type: str | None = None,
-        matrix_view: str | None = None,
+        matrix_dtype: xp.dtype[xp.inexact],
+        matrix_property: str,
+        matrix_view: str,
+        reuse_analysis: bool = False,
+        reuse_factorization: bool = False,
         comm: _SubCommunicator | None = None,
         local_rows: tuple[int, int] | None = None,
         petsc_options: dict | None = None,
     ):
         """Initializes the PETSc solver."""
+
+        # NOTE: This is a bit of hack to not need to modify the logic
+        # when allocating the solver in QTBM.
+        if matrix_view not in self.valid_views():
+            if quatrex_comm.rank == 0:
+                warnings.warn(
+                    f"Matrix view '{matrix_view}' is not supported by the PETSc solver. "
+                    f"Using 'full' instead."
+                )
+            matrix_view = "full"
+
+        if reuse_factorization or reuse_analysis:
+            if quatrex_comm.rank == 0:
+                warnings.warn(
+                    "Reuse of analysis or factorization is not yet supported in the PETSc solver."
+                )
+            reuse_factorization = False
+            reuse_analysis = False
+
+        super().__init__(
+            matrix_dtype=matrix_dtype,
+            matrix_property=matrix_property,
+            matrix_view=matrix_view,
+            reuse_analysis=reuse_analysis,
+            reuse_factorization=reuse_factorization,
+            comm=comm,
+            local_rows=local_rows,
+        )
+
         if not petsc_available:
             raise ImportError(
                 "petsc4py is not available. Please install it to use this solver."
             )
 
-        if matrix_type is not None and matrix_type not in petsc_matrix_types:
+        if matrix_property not in petsc_matrix_properties:
             raise ValueError(
-                f"Invalid matrix type '{matrix_type}'. "
-                f"Valid options are: {list(petsc_matrix_types.keys())}"
+                f"Invalid matrix property '{matrix_property}'. "
+                f"Valid options are: {list(petsc_matrix_properties.keys())}"
             )
-        if matrix_view not in [None, "full"]:
-            raise ValueError(
-                f"Invalid view '{matrix_view}'. " "Valid options are: None, 'full'."
-            )
-        self.matrix_view = matrix_view
-        self.matrix_type = matrix_type
 
-        if matrix_type is not None and (
-            "real" in matrix_type
-            and petsc.ScalarType != xp.float64
-            or "complex" in matrix_type
-            and petsc.ScalarType != xp.complex128
-        ):
+        if matrix_dtype not in _ALLOWED_MATRIX_DTYPES:
             raise ValueError(
-                f"Requested matrix type '{matrix_type}' does not match "
+                f"Invalid matrix dtype '{matrix_dtype}'. "
+                f"Valid options are: {_ALLOWED_MATRIX_DTYPES}."
+            )
+
+        if petsc.ScalarType != matrix_dtype:
+            raise ValueError(
+                f"Requested matrix type '{matrix_dtype}' does not match "
                 f"the PETSc scalar type '{petsc.ScalarType}'. Please "
                 "ensure that PETSc is compiled with a matching scalar "
                 "type and/or set the `PETSC_ARCH` environment variable"
                 "accordingly."
             )
 
-        # Comm and local_rows must be provided together or not at all.
-        if (comm is None) != (local_rows is None):
-            raise ValueError(
-                "Both 'comm' and 'local_rows' must be provided together or not at all."
-            )
-
-        self._distributed = (
-            comm is not None and comm.size > 1 and local_rows is not None
-        )
-
-        self.comm = comm._mpi_comm if self._distributed else petsc.COMM_SELF
-        self.local_rows = local_rows
+        self._mpi_comm = comm._mpi_comm if self._distributed else petsc.COMM_SELF
 
         self._sparse_mat_type = _get_petsc_mat_type(self._distributed, dense=False)
         self._dense_mat_type = _get_petsc_mat_type(self._distributed, dense=True)
+        self._mproperty = petsc_matrix_properties[matrix_property]
 
-        petsc_options = dict(petsc_options) if petsc_options else {}
-
-        # Default to a direct solve, and reject anything else.
-        petsc_options.setdefault("ksp_type", "preonly")
-        petsc_options.setdefault("pc_type", "lu")
+        petsc_options = (
+            dict(petsc_options) if petsc_options else DEFAULT_PETSC_OPTIONS.copy()
+        )
 
         if petsc_options["ksp_type"] not in _ALLOWED_KSP_TYPES:
             raise ValueError(
@@ -276,12 +335,18 @@ class PETSc(WFSolver):
 
         # NOTE: Object specific options are set using a prefix
         prefix = f"qttools_{id(self)}_"
-        self._ksp = petsc.KSP().create(comm=self.comm)
+        self._ksp = petsc.KSP().create(comm=self._mpi_comm)
         self._ksp.setOptionsPrefix(prefix)
         options = petsc.Options(prefix)
         for key, value in petsc_options.items():
             options.setValue(key, value)
         self._ksp.setFromOptions()
+
+    def __del__(self):
+        """Cleans up the PETSc solver."""
+        if getattr(self, "_ksp", None) is not None:
+            self._ksp.destroy()
+            self._ksp = None
 
     def _create_petsc_csr(self, a: sparse.csr_matrix) -> petsc.Mat:
         """Creates a PETSc matrix from a CSR matrix.
@@ -307,8 +372,8 @@ class PETSc(WFSolver):
         rows = xp.repeat(xp.arange(n_local, dtype=a.indptr.dtype), xp.diff(a.indptr))
 
         sizes = (n, n)
-        if self.local_rows is not None:
-            num_local_rows = self.local_rows[1] - self.local_rows[0]
+        if self._local_rows is not None:
+            num_local_rows = self._local_rows[1] - self._local_rows[0]
             # NOTE: PETSc requires that the row and colum distribution
             # is the same, especially since we want to get only a part
             # of the solution vector in the end. Since we feed in the
@@ -317,15 +382,14 @@ class PETSc(WFSolver):
             sizes = ((num_local_rows, n), (num_local_rows, n))
 
             # Include the rank offset.
-            rows += self.local_rows[0]
+            rows += self._local_rows[0]
 
-        mat = petsc.Mat().create(comm=self.comm)
+        mat = petsc.Mat().create(comm=self._mpi_comm)
         mat.setSizes(sizes)
         mat.setType(self._sparse_mat_type)
 
-        option = petsc_matrix_types.get(self.matrix_type)
-        if option is not None:
-            mat.setOption(option, True)
+        if self._mproperty is not None:
+            mat.setOption(self._mproperty, True)
 
         libpetsc.MatSetPreallocationCOO(
             mat.handle,
@@ -342,6 +406,8 @@ class PETSc(WFSolver):
             petsc.InsertMode.INSERT_VALUES,
         )
 
+        mat.assemble()
+
         return mat
 
     def _create_petsc_array(self, arr: NDArray) -> petsc.Mat:
@@ -355,7 +421,7 @@ class PETSc(WFSolver):
         """
         sizes = arr.shape
         if self._distributed:
-            num_local_rows = self.local_rows[1] - self.local_rows[0]
+            num_local_rows = self._local_rows[1] - self._local_rows[0]
             if sizes[0] != num_local_rows:
                 raise ValueError(
                     f"Local array shape {sizes} does not match the "
@@ -363,7 +429,7 @@ class PETSc(WFSolver):
                 )
             sizes = ((num_local_rows, petsc.DETERMINE), (petsc.DECIDE, sizes[1]))
 
-        mat = petsc.Mat().create(comm=self.comm)
+        mat = petsc.Mat().create(comm=self._mpi_comm)
         mat.setSizes(sizes)
         mat.setType(self._dense_mat_type)
 
@@ -381,8 +447,6 @@ class PETSc(WFSolver):
         self,
         a: sparse.csr_matrix,
         b: NDArray,
-        reuse_analysis: bool = False,
-        reuse_factorization: bool = False,
     ):
         """Solves the sparse linear system a @ x = b using PETSc.
 
@@ -400,17 +464,6 @@ class PETSc(WFSolver):
             The sparse system matrix in CSR format.
         b : NDArray
             The dense right-hand side array with shape (n, batchsize).
-        reuse_analysis : bool, optional
-            Whether to reuse the symbolic factorization from a previous
-            solve. Default is False. This is useful when solving
-            multiple linear systems with the same sparsity pattern but
-            different numerical values. Currently, this is not supported.
-        reuse_factorization : bool, optional
-            Whether to reuse the numerical factorization from a previous
-            solve. Default is False. This can only be True if
-            reuse_analysis is also True. Note that this must only be
-            True if the matrix values have not changed since the last
-            factorization. Currently, this is not supported.
 
         Returns
         -------
@@ -418,12 +471,7 @@ class PETSc(WFSolver):
             The solution array with shape (n, batchsize).
 
         """
-
-        if reuse_factorization or reuse_analysis:
-            raise ValueError(
-                "Reuse of analysis or factorization is not yet supported in the PETSc solver."
-            )
-        if a.dtype != petsc.ScalarType:
+        if (a.dtype != petsc.ScalarType) or (a.dtype != self.matrix_dtype):
             raise ValueError(
                 f"Data type of a ({a.dtype}) does not match PETSc "
                 f"scalar type ({petsc.ScalarType})."
@@ -450,6 +498,10 @@ class PETSc(WFSolver):
                 f"Data type of a.indices ({a.indices.dtype}) does not match "
                 f"PETSc int type ({petsc.IntType})."
             )
+
+        # TODO: Currently, we need to copy since we allow petsc to
+        # modify the matrix in-place.
+        a = a.copy()
 
         if not xp.isfortran(b):
             b = xp.asfortranarray(b)

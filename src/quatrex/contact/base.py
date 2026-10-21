@@ -60,13 +60,6 @@ class BaseContact(ABC):
     orbital_indices : NDArray
         Flattened array of orbital indices for the contact, sorted first
         in transport direction, then in transverse directions.
-    orbital_indices_per_layer : list[NDArray]
-        List of orbital indices for each layer in the transport
-        direction, sorted first in transverse directions, then in
-        transport direction.
-    transverse_to_transport_indices : NDArray
-        Indices to reorder the coupling matrix from transverse-first to
-        transport-first ordering.
     fermi_level : float
         Fermi level of the contact in eV.
     mid_gap_energy : float
@@ -144,29 +137,6 @@ class BaseContact(ABC):
                 for j, k, i in np.ndindex(ny, nz, self.transport_repetitions)
             ]
         )
-        # When getting the coupling matrix (01) for spill over,
-        # it is more efficient to have it sorted first in transverse, then in transport
-        # The orbital list is then different.
-        # We keep it separated over slice over transport direction.
-        self.orbital_indices_per_layer = [
-            np.concatenate(
-                [self.unit_cell_orbital_indices[i, j, k] for j, k in np.ndindex(ny, nz)]
-            )
-            for i in range(self.transport_repetitions + 1)
-        ]
-
-        # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
-        origin_num_orbitals = len(self.unit_cell_orbital_indices[self.origin_key])
-        self.transverse_to_transport_indices = np.concatenate(
-            [
-                np.arange(origin_num_orbitals)
-                + i * origin_num_orbitals
-                + k * origin_num_orbitals * ny * nz
-                for i in range(ny * nz)
-                for k in range(self.transport_repetitions)
-            ],
-            dtype=int,
-        )[None, :]
 
         self.fermi_level = contact_config.fermi_level
         self.mid_gap_energy = contact_config.mid_gap_energy

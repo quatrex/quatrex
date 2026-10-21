@@ -30,6 +30,45 @@ def get_array_module_name(arr: NDArray) -> str:
     return submodule.__name__.split(".")[0]
 
 
+def get_pointer(arr: NDArray) -> int:
+    """Returns the pointer of the given array.
+
+    Parameters
+    ----------
+    arr : NDArray
+        The array to get the pointer from.
+
+    Returns
+    -------
+    int
+        The pointer of the array.
+
+    """
+    if get_array_module_name(arr) == "numpy":
+        return arr.ctypes.data
+    return arr.data.ptr
+
+
+def check_pointers_equal(arr1: NDArray, arr2: NDArray):
+    """Checks if the two arrays have the same pointer.
+
+    Parameters
+    ----------
+    arr1 : NDArray
+        The first array.
+    arr2 : NDArray
+        The second array.
+
+    Raises
+    ------
+    ValueError
+        If the two arrays do not have the same pointer.
+
+    """
+    if get_pointer(arr1) != get_pointer(arr2):
+        raise ValueError("The two arrays do not have the same pointer.")
+
+
 def get_host(arr: NDArray, out: None | NDArray = None) -> NDArray:
     """Returns the host array of the given array.
 

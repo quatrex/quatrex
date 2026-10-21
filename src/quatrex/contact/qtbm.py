@@ -185,20 +185,14 @@ class QTBMContact(BaseContact):
         start = row_offsets[quatrex_comm.block.rank]
         end = row_offsets[quatrex_comm.block.rank + 1]
 
-        self.local_orbital_indices = (
-            self.orbital_indices[
-                (self.orbital_indices >= start) & (self.orbital_indices < end)
-            ]
-            - start
-        )
-        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+        mask = (self.orbital_indices >= start) & (self.orbital_indices < end)
+        self.local_orbital_indices = self.orbital_indices[mask] - start
+        self.local_contact_positions = xp.flatnonzero(mask)
 
-        self.local_origin_orbital_indices = (
-            origin_orbital_indices[
-                (origin_orbital_indices >= start) & (origin_orbital_indices < end)
-            ]
-            - start
-        )
+        origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
+        mask = (origin_orbital_indices >= start) & (origin_orbital_indices < end)
+        self.local_origin_orbital_indices = origin_orbital_indices[mask] - start
+        self.local_origin_positions = xp.flatnonzero(mask)
 
         # build a subcommunicator based on local_orbital_indices
         self.comm = None
@@ -531,6 +525,15 @@ class QTBMContact(BaseContact):
             self.comm,
             axis=0.0,
         )
+
+        # Allgather_csx concatenates rows in rank order. Contact
+        # orbitals can be in a different order than the contact cell
+        # ordering expected by the OBC solver.
+        gathered_positions = self.comm.all_gather_v(
+            self.local_origin_positions,
+            axis=0,
+        )
+        m_origin = m_origin.get_tile(row_ind=xp.argsort(gathered_positions))
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

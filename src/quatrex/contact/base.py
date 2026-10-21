@@ -114,6 +114,10 @@ class BaseContact(ABC):
             raise NotImplementedError(
                 f"Contact finder method '{contact_config._contact_finder_method}' not implemented."
             )
+        self.unit_cell_orbital_indices = {
+            key: xp.asarray(value)
+            for key, value in self.unit_cell_orbital_indices.items()
+        }
 
         self.transport_repetitions = repetition_grid[self.transport_direction]
         self.transverse_repetition_grid = (
@@ -131,10 +135,10 @@ class BaseContact(ABC):
 
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
-        self.orbital_indices = np.concatenate(
+        self.orbital_indices = xp.concatenate(
             [
                 self.unit_cell_orbital_indices[i, j, k]
-                for j, k, i in np.ndindex(ny, nz, self.transport_repetitions)
+                for j, k, i in xp.ndindex(ny, nz, self.transport_repetitions)
             ]
         )
 

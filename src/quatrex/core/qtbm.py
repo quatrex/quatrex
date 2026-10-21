@@ -501,10 +501,7 @@ class QTBM(TransportSolver):
                     obc_result = obc_results[contact]
 
                     local_injection = obc_result.injection[energy_ind][
-                        contact.row_offsets[contact.comm.rank] : contact.row_offsets[
-                            contact.comm.rank + 1
-                        ],
-                        :,
+                        contact.local_contact_positions, :
                     ]
 
                     rhs[
@@ -514,10 +511,7 @@ class QTBM(TransportSolver):
                     if self.low_rank_obc:
 
                         local_reflection = obc_result.reflection[energy_ind][
-                            contact.row_offsets[
-                                contact.comm.rank
-                            ] : contact.row_offsets[contact.comm.rank + 1],
-                            :,
+                            contact.local_contact_positions, :
                         ]
 
                         # Add the reflections.
@@ -561,6 +555,7 @@ class QTBM(TransportSolver):
                         self.system_matrix.data,
                         sigma[energy_ind, :, :],
                         self.sigma_update_indices[contact],
+                        contact.local_contact_positions,
                         k_t,
                         contact.transverse_repetition_grid,
                         -1.0,
@@ -887,6 +882,11 @@ class QTBM(TransportSolver):
                     contact_out.local_orbital_indices, injection_slices[contact_in]
                 ]
                 phi_nt = contact_out.comm.all_gather_v(phi_nt, axis=0)
+                contact_positions = contact_out.comm.all_gather_v(
+                    contact_out.local_contact_positions,
+                    axis=0,
+                )
+                phi_nt = phi_nt[xp.argsort(contact_positions)]
 
                 # Compute the transmission
                 if phi_nt.size != 0:
@@ -1038,19 +1038,15 @@ class QTBM(TransportSolver):
                     )
 
             # Add the spill over from the overlap
-            phi_ortho[local_orbital_indices, :] += (
-                (
-                    contact.get_coupling_matrix(
-                        matrix=overlap_matrix,
-                        kpoint=kpoint,
-                    )
+            spillover = (
+                contact.get_coupling_matrix(
+                    matrix=overlap_matrix,
+                    kpoint=kpoint,
                 )
                 @ phi_cont
-            )[
-                contact.row_offsets[contact.comm.rank] : contact.row_offsets[
-                    contact.comm.rank + 1
-                ],
-                :,
+            )
+            phi_ortho[local_orbital_indices, :] += spillover[
+                contact.local_contact_positions, :
             ]
 
         # Conjugate of the orthongonalized wavefunction

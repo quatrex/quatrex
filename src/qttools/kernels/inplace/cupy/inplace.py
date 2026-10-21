@@ -59,6 +59,7 @@ def scatter_add_scaled_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
+    row_positions: NDArray,
     k: tuple[float, float],
     transverse_repetition_grid: tuple[int, int],
     alpha: float = 1.0,
@@ -103,6 +104,7 @@ def scatter_add_scaled_obc(
         )
 
     index_type = inds.dtype.type
+    row_positions = row_positions.astype(index_type)
 
     _cupy_rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),
@@ -116,6 +118,7 @@ def scatter_add_scaled_obc(
             index_type(b.shape[1]),
             index_type(nz),
             inds,
+            row_positions,
             index_type(num_inds),
             alpha,
         ),

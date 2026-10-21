@@ -433,10 +433,7 @@ class QTBM(TransportSolver):
                     obc_result = obc_results[contact]
 
                     local_injection = obc_result.injection[energy_ind][
-                        contact.row_offsets[contact.comm.rank] : contact.row_offsets[
-                            contact.comm.rank + 1
-                        ],
-                        :,
+                        contact.local_contact_positions, :
                     ]
 
                     rhs[
@@ -446,10 +443,7 @@ class QTBM(TransportSolver):
                     if self.low_rank_obc:
 
                         local_reflection = obc_result.reflection[energy_ind][
-                            contact.row_offsets[
-                                contact.comm.rank
-                            ] : contact.row_offsets[contact.comm.rank + 1],
-                            :,
+                            contact.local_contact_positions, :
                         ]
 
                         # Add the reflections.
@@ -493,6 +487,7 @@ class QTBM(TransportSolver):
                         self.system_matrix.data,
                         sigma[energy_ind, :, :],
                         self.sigma_update_indices[contact],
+                        xp.asarray(contact.local_contact_positions),
                         k_t,
                         contact.transverse_repetition_grid,
                         -1.0,
@@ -812,6 +807,11 @@ class QTBM(TransportSolver):
                     contact_out.local_orbital_indices, injection_slices[contact_in]
                 ]
                 phi_nt = contact_out.comm.all_gather_v(phi_nt, axis=0)
+                contact_positions = contact_out.comm.all_gather_v(
+                    xp.asarray(contact_out.local_contact_positions),
+                    axis=0,
+                )
+                phi_nt = phi_nt[xp.argsort(contact_positions)]
 
                 # Compute the transmission
                 if phi_nt.size != 0:
@@ -958,19 +958,15 @@ class QTBM(TransportSolver):
                     )
 
             # Add the spill over from the overlap
-            phi_ortho[local_orbital_indices, :] += (
-                (
-                    contact.get_coupling_matrix(
-                        matrix=overlap_matrix,
-                        kpoint=kpoint,
-                    )
+            spillover = (
+                contact.get_coupling_matrix(
+                    matrix=overlap_matrix,
+                    kpoint=kpoint,
                 )
                 @ phi_cont
-            )[
-                contact.row_offsets[contact.comm.rank] : contact.row_offsets[
-                    contact.comm.rank + 1
-                ],
-                :,
+            )
+            phi_ortho[local_orbital_indices, :] += spillover[
+                contact.local_contact_positions, :
             ]
 
         # Conjugate of the orthongonalized wavefunction
@@ -1138,18 +1134,22 @@ class QTBM(TransportSolver):
                     contact_current,
                 )
 
+            if self.config.electron.solver.order == "nested_dissection":
+                offsets = self.device.original_orbital_offsets
+            else:
+                offsets = self.device.orbital_offsets
+
             for contact, ldos in self.observables.electron_ldos.items():
 
-                ldos = ldos[:, self.device.nd_result.orbital_inv]
+                if self.config.electron.solver.order == "nested_dissection":
+                    ldos = ldos[:, self.device.nd_result.orbital_inv]
 
                 np.save(
                     f"{output_dir}/dos_{contact.name[0]}.npy",
                     (
                         xp.add.reduceat(
                             ldos,
-                            self.device.orbital_offsets[
-                                self.device.nd_result.orbital_inv
-                            ][:-1],
+                            offsets[:-1],
                             axis=1,
                         )
                         if self.config.qtbm.atom_resolved_outputs
@@ -1159,34 +1159,38 @@ class QTBM(TransportSolver):
 
             if self.observables.excess_electron_density is not None:
 
-                excess_electron_density = self.observables.excess_electron_density[
-                    self.device.nd_result.orbital_inv
-                ]
+                if self.config.electron.solver.order == "nested_dissection":
+                    excess_electron_density = self.observables.excess_electron_density[
+                        self.device.nd_result.orbital_inv
+                    ]
+                else:
+                    excess_electron_density = self.observables.excess_electron_density
+
                 np.save(
                     f"{output_dir}/excess_electron_density.npy",
                     (
                         xp.add.reduceat(
                             excess_electron_density,
-                            self.device.orbital_offsets[
-                                self.device.nd_result.orbital_inv
-                            ][:-1],
+                            offsets[:-1],
                         )
                         if self.config.qtbm.atom_resolved_outputs
                         else excess_electron_density
                     ),
                 )
             if self.observables.excess_hole_density is not None:
-                excess_hole_density = self.observables.excess_hole_density[
-                    self.device.nd_result.orbital_inv
-                ]
+                if self.config.electron.solver.order == "nested_dissection":
+                    excess_hole_density = self.observables.excess_hole_density[
+                        self.device.nd_result.orbital_inv
+                    ]
+                else:
+                    excess_hole_density = self.observables.excess_hole_density
+
                 np.save(
                     f"{output_dir}/excess_hole_density.npy",
                     (
                         xp.add.reduceat(
                             excess_hole_density,
-                            self.device.orbital_offsets[
-                                self.device.nd_result.orbital_inv
-                            ][:-1],
+                            offsets[:-1],
                         )
                         if self.config.qtbm.atom_resolved_outputs
                         else excess_hole_density
@@ -1261,14 +1265,15 @@ class QTBM(TransportSolver):
 
         """
         if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-            potential = potential[self.device.nd_result.atom_perm]
+            if self.config.electron.solver.order == "nested_dissection":
+                potential = potential[self.device.nd_result.atom_perm]
             # Upscale the potential to the number of orbitals
             orbitals_per_atom = [
                 self.config.device.num_orbitals_per_atom.get(species, 1)
                 for species in self.device.atomic_species
             ]
             potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-        else:
+        elif self.config.electron.solver.order == "nested_dissection":
             potential = potential[self.device.nd_result.orbital_perm]
 
         self.device.potential = potential
@@ -1294,6 +1299,10 @@ class QTBM(TransportSolver):
         charge_density = np.add.reduceat(
             charge_density, self.device.orbital_offsets[:-1]
         )
+
+        if self.config.electron.solver.order == "nested_dissection":
+            # Electrostatics expects the original atom ordering.
+            charge_density = charge_density[np.argsort(self.device.nd_result.atom_perm)]
 
         return charge_density
 

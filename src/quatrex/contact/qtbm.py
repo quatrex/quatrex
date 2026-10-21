@@ -185,11 +185,23 @@ class QTBMContact(BaseContact):
         start = row_offsets[quatrex_comm.block.rank]
         end = row_offsets[quatrex_comm.block.rank + 1]
 
+        # TODO Clean up the descriptions of all these attributes. Some
+        # are redundant and some are not clear.
+
         self.local_orbital_indices = (
             self.orbital_indices[
                 (self.orbital_indices >= start) & (self.orbital_indices < end)
             ]
             - start
+        )
+        local_global_orbital_indices = start + self.local_orbital_indices
+        contact_position = {
+            orbital_index: position
+            for position, orbital_index in enumerate(self.orbital_indices)
+        }
+        self.local_contact_positions = np.asarray(
+            [contact_position[index] for index in local_global_orbital_indices],
+            dtype=np.int64,
         )
         origin_orbital_indices = self.unit_cell_orbital_indices[self.origin_key]
 
@@ -198,6 +210,10 @@ class QTBMContact(BaseContact):
                 (origin_orbital_indices >= start) & (origin_orbital_indices < end)
             ]
             - start
+        )
+        local_global_origin_indices = start + self.local_origin_orbital_indices
+        self.local_origin_positions = np.flatnonzero(
+            np.isin(origin_orbital_indices, local_global_origin_indices)
         )
 
         # build a subcommunicator based on local_orbital_indices
@@ -531,6 +547,23 @@ class QTBMContact(BaseContact):
             self.comm,
             axis=0.0,
         )
+
+        # allgather_csx concatenates rows in rank order. Nested dissection can
+        # distribute contact orbitals in a different order than the contact
+        # cell ordering expected by the OBC solver.
+        gathered_origin_indices = self.comm.all_gather_v(
+            self.device.row_offsets[quatrex_comm.block.rank]
+            + self.local_origin_orbital_indices,
+            axis=0,
+        )
+        desired_origin_indices = self.unit_cell_orbital_indices[self.origin_key]
+        row_order = np.asarray(
+            [
+                np.flatnonzero(gathered_origin_indices == index)[0]
+                for index in desired_origin_indices
+            ]
+        )
+        m_origin = m_origin.get_tile(row_ind=xp.asarray(row_order))
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

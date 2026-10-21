@@ -76,6 +76,9 @@ class QTBMDevice(BaseDevice):
 
     def _reorder_matrices(self):
         """Reorders the Hamiltonian and overlap matrices using nested dissection."""
+
+        self.original_orbital_offsets = self.orbital_offsets
+
         if self.config.electron.solver.order != "nested_dissection":
             raise ValueError(
                 "Nested dissection reordering is only applied when "
@@ -101,7 +104,7 @@ class QTBMDevice(BaseDevice):
         for r, h_r in self.hamiltonians.items():
             r_flipped = (-r[0], -r[1], -r[2])
 
-            h_flip = sparse.csr_array(self.hamiltonians[r_flipped])
+            h_flip = sparse.csr_matrix(self.hamiltonians[r_flipped])
             if (
                 hasattr(h_flip, "has_canonical_format")
                 and not h_flip.has_canonical_format
@@ -116,7 +119,7 @@ class QTBMDevice(BaseDevice):
         for r, s_r in self.overlap_matrices.items():
             r_flipped = (-r[0], -r[1], -r[2])
 
-            s_flip = sparse.csr_array(self.overlap_matrices[r_flipped])
+            s_flip = sparse.csr_matrix(self.overlap_matrices[r_flipped])
             if (
                 hasattr(s_flip, "has_canonical_format")
                 and not s_flip.has_canonical_format
@@ -145,7 +148,7 @@ class QTBMDevice(BaseDevice):
             tmp.sum_duplicates()
             tmp.sort_indices()
 
-            self.hamiltonians[r] = tmp
+            self.hamiltonians[r] = sparse.csr_matrix(tmp)
 
         for r, s_r in overlap_matrices.items():
             tmp = s_r.get() if hasattr(s_r, "get") else s_r
@@ -156,7 +159,7 @@ class QTBMDevice(BaseDevice):
             tmp.sum_duplicates()
             tmp.sort_indices()
 
-            self.overlap_matrices[r] = tmp
+            self.overlap_matrices[r] = sparse.csr_matrix(tmp)
 
         self.orbital_coordinates = self.orbital_coordinates[
             self.nd_result.orbital_perm, :

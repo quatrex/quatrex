@@ -62,8 +62,8 @@ class Observables:
     )
 
     contact_currents: dict[tuple[QTBMContact, QTBMContact], NDArray] | None = None
-    excess_electron_density: NDArray | None = None
-    excess_hole_density: NDArray | None = None
+    excess_electron_density: NDArray = None
+    excess_hole_density: NDArray = None
 
 
 class QTBM(TransportSolver):
@@ -120,26 +120,28 @@ class QTBM(TransportSolver):
         self.local_energies = get_local_slice(self.electron_energies)
 
         # Look for all the combinations of contacts
-        for contact_in in self.device.contacts:
-            for contact_out in self.device.contacts:
-                if contact_in == contact_out:
-                    continue
+        if self.config.outputs.transmission:
+            for contact_in in self.device.contacts:
+                for contact_out in self.device.contacts:
+                    if contact_in == contact_out:
+                        continue
 
-                # Initialize the observables
-                self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                    (self.device.num_kpoints, self.local_energies.shape[0]),
+                    # Initialize the observables
+                    self.observables.transmissions[contact_in, contact_out] = xp.zeros(
+                        (self.device.num_kpoints, self.local_energies.shape[0]),
+                        dtype=xp.float64,
+                    )
+
+        if self.config.outputs.qtbm_electron_ldos:
+            for contact in self.device.contacts:
+                self.observables.electron_ldos[contact] = xp.zeros(
+                    (
+                        self.device.num_kpoints,
+                        self.num_orbitals,
+                        self.local_energies.shape[0],
+                    ),
                     dtype=xp.float64,
                 )
-
-        for contact in self.device.contacts:
-            self.observables.electron_ldos[contact] = xp.zeros(
-                (
-                    self.device.num_kpoints,
-                    self.num_orbitals,
-                    self.local_energies.shape[0],
-                ),
-                dtype=xp.float64,
-            )
 
         if self.config.qtbm.low_rank_obc:
             self.system_matrix_view = "upper"
@@ -778,6 +780,13 @@ class QTBM(TransportSolver):
             Index of the current k-point being processed.
 
         """
+
+        if len(self.observables.transmissions) == 0:
+            raise ValueError(
+                "No transmission observables are configured. "
+                "Please enable transmission calculations in the config."
+            )
+
         for (
             contact_in,
             contact_out,
@@ -851,6 +860,11 @@ class QTBM(TransportSolver):
             Index of the current k-point being processed.
 
         """
+        if len(self.observables.electron_ldos) == 0:
+            raise ValueError(
+                "No LDOS observables are configured. "
+                "Please enable LDOS calculations in the config."
+            )
 
         # Compute the DOS
         # diag(phi^H @ S @ phi)
@@ -1084,26 +1098,34 @@ class QTBM(TransportSolver):
         }
 
         # Compute transmissions for all the possible contact couples
-        self._compute_transmissions(
-            phi,
-            injection_slices,
-            global_energy_ind,
-            energy_obc_results,
-            kpoint_ind,
-        )
+        if self.config.outputs.transmission:
+            self._compute_transmissions(
+                phi,
+                injection_slices,
+                global_energy_ind,
+                energy_obc_results,
+                kpoint_ind,
+            )
 
         # Compute the DOS
-        self._compute_ldos(
-            phi,
-            injection_slices,
-            global_energy_ind,
-            energy_obc_results,
-            kpoint,
-            kpoint_ind,
-        )
+        if self.config.outputs.qtbm_electron_ldos:
+            self._compute_ldos(
+                phi,
+                injection_slices,
+                global_energy_ind,
+                energy_obc_results,
+                kpoint,
+                kpoint_ind,
+            )
 
     def _compute_current(self):
         """Computes the electron current from the transmission data."""
+
+        if len(self.observables.transmissions) == 0:
+            raise ValueError(
+                "Transmission data has not been computed. "
+                "Please run the QTBM calculation with transmission output enabled."
+            )
 
         contact_currents = {}
 
@@ -1144,37 +1166,42 @@ class QTBM(TransportSolver):
             if not os.path.exists(self.config.output_dir):
                 os.mkdir(self.config.output_dir)
 
-            for (
-                contact_in,
-                contact_out,
-            ), transmission in self.observables.transmissions.items():
-                label = f"{contact_in.name[0]}{contact_out.name[0]}"
-                np.save(
-                    f"{output_dir}/transmission_{label}.npy",
-                    transmission,
-                )
+            if self.config.outputs.transmission:
+                for (
+                    contact_in,
+                    contact_out,
+                ), transmission in self.observables.transmissions.items():
+                    label = f"{contact_in.name[0]}{contact_out.name[0]}"
+                    np.save(
+                        f"{output_dir}/transmission_{label}.npy",
+                        transmission,
+                    )
 
-            for (
-                contact_in,
-                contact_out,
-            ), contact_current in self.observables.contact_currents.items():
-                label = f"{contact_in.name[0]}{contact_out.name[0]}"
-                np.save(
-                    f"{output_dir}/current_{label}.npy",
-                    contact_current,
-                )
+            if self.config.outputs.contact_current:
+                for (
+                    contact_in,
+                    contact_out,
+                ), contact_current in self.observables.contact_currents.items():
+                    label = f"{contact_in.name[0]}{contact_out.name[0]}"
+                    np.save(
+                        f"{output_dir}/current_{label}.npy",
+                        contact_current,
+                    )
 
-            for contact, ldos in self.observables.electron_ldos.items():
-                np.save(
-                    f"{output_dir}/dos_{contact.name[0]}.npy",
-                    (
-                        xp.add.reduceat(ldos, self.device.orbital_offsets[:-1], axis=1)
-                        if self.config.qtbm.atom_resolved_outputs
-                        else ldos
-                    ),
-                )
+            if self.config.outputs.qtbm_electron_ldos:
+                for contact, ldos in self.observables.electron_ldos.items():
+                    np.save(
+                        f"{output_dir}/dos_{contact.name[0]}.npy",
+                        (
+                            xp.add.reduceat(
+                                ldos, self.device.orbital_offsets[:-1], axis=1
+                            )
+                            if self.config.qtbm.atom_resolved_outputs
+                            else ldos
+                        ),
+                    )
 
-            if self.observables.excess_electron_density is not None:
+            if self.config.outputs.excess_electron_density:
                 np.save(
                     f"{output_dir}/excess_electron_density.npy",
                     (
@@ -1186,7 +1213,7 @@ class QTBM(TransportSolver):
                         else self.observables.excess_electron_density
                     ),
                 )
-            if self.observables.excess_hole_density is not None:
+            if self.config.outputs.excess_hole_density:
                 np.save(
                     f"{output_dir}/excess_hole_density.npy",
                     (
@@ -1211,6 +1238,12 @@ class QTBM(TransportSolver):
             The excess hole density computed from the local density of
             states.
         """
+
+        if len(self.observables.electron_ldos) == 0:
+            raise ValueError(
+                "Electron local density of states has not been computed. "
+                "Please run the QTBM calculation with electron LDOS output enabled."
+            )
 
         # Compute the spectral electron and hole densities.
         electron_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
@@ -1288,6 +1321,12 @@ class QTBM(TransportSolver):
             The computed charge density for the device.
 
         """
+        if len(self.observables.electron_ldos) == 0:
+            raise ValueError(
+                "Electron local density of states has not been computed. "
+                "Please run the QTBM calculation with electron LDOS output enabled."
+            )
+
         electron_density, hole_density = self._compute_excess_charge_densities()
         charge_density = electron_density - hole_density
 
@@ -1396,20 +1435,28 @@ class QTBM(TransportSolver):
                         free_mempool()
 
         # Gather the observables
-        for key, transmission in self.observables.transmissions.items():
-            self.observables.transmissions[key] = comm.stack.all_gather_v(
-                transmission, axis=1
-            )
-        for contact, ldos in self.observables.electron_ldos.items():
-            self.observables.electron_ldos[contact] = comm.stack.all_gather_v(
-                ldos, axis=2
-            )
+        if self.config.outputs.transmission:
+            for key, transmission in self.observables.transmissions.items():
+                self.observables.transmissions[key] = comm.stack.all_gather_v(
+                    transmission, axis=1
+                )
+        if self.config.outputs.qtbm_electron_ldos:
+            for contact, ldos in self.observables.electron_ldos.items():
+                self.observables.electron_ldos[contact] = comm.stack.all_gather_v(
+                    ldos, axis=2
+                )
 
-        self.observables.contact_currents = self._compute_current()
-        (
-            self.observables.excess_electron_density,
-            self.observables.excess_hole_density,
-        ) = self._compute_excess_charge_densities()
+        if self.config.outputs.contact_current:
+            self.observables.contact_currents = self._compute_current()
+
+        if (
+            self.config.outputs.excess_electron_density
+            and self.config.outputs.excess_hole_density
+        ):
+            (
+                self.observables.excess_electron_density,
+                self.observables.excess_hole_density,
+            ) = self._compute_excess_charge_densities()
 
         self._write_outputs()
 

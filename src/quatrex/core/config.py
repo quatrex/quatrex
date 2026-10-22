@@ -1591,6 +1591,50 @@ class OutputConfig(BaseModel):
 
     """
 
+    transmission: bool = True
+    """Whether to save the contact to contact transmissions.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    contact_current: bool = True
+    """Whether to save the contact current.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    qtbm_electron_ldos: bool = True
+    """Whether to save the QTBM electron LDOS.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    !!! note
+        This is only temporary and will be refactored when we separate
+        the `"wf"` and `"negf"` formalisms more cleanly.
+
+    """
+
+    excess_electron_density: bool = True
+    """Whether to save the excess electron density.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    excess_hole_density: bool = True
+    """Whether to save the excess hole density.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
     profiling_path: Path | None = None
     """The file to save the timing results to.
 
@@ -1641,6 +1685,28 @@ class OutputConfig(BaseModel):
                     pass
 
         assert self.profiling_path is not None, "profiling_path should be set here."
+
+        return self
+
+    @model_validator(mode="after")
+    def check_qtbm_parameters(self) -> Self:
+        """Checks that the QTBM parameters are consistent."""
+        if self.contact_current and not self.transmission:
+            raise ValueError(
+                "Contact current can only be saved if `transmission` is `True`."
+            )
+        if self.excess_electron_density and not self.qtbm_electron_ldos:
+            raise ValueError(
+                "Excess electron density can only be saved if `qtbm_electron_ldos` is `True`."
+            )
+        if self.excess_hole_density and not self.qtbm_electron_ldos:
+            raise ValueError(
+                "Excess hole density can only be saved if `qtbm_electron_ldos` is `True`."
+            )
+        if self.excess_electron_density != self.excess_hole_density:
+            raise ValueError(
+                "Excess electron and hole densities must be saved together."
+            )
 
         return self
 

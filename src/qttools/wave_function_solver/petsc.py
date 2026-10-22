@@ -12,6 +12,7 @@ from __future__ import annotations
 # for `MatCreateXXXAIJWithArrays`.
 import ctypes
 import os
+import warnings
 
 from qttools.utils.gpu_utils import get_array_module_name
 
@@ -251,8 +252,9 @@ class PETSc(WFSolver):
             comm is not None and comm.size > 1 and local_rows is not None
         )
 
-        self.comm = comm._mpi_comm if self._distributed else petsc.COMM_SELF
-        self.local_rows = local_rows
+        self._comm = comm
+        self._mpi_comm = comm._mpi_comm if self._distributed else petsc.COMM_SELF
+        self._local_rows = local_rows
 
         self._sparse_mat_type = _get_petsc_mat_type(self._distributed, dense=False)
         self._dense_mat_type = _get_petsc_mat_type(self._distributed, dense=True)
@@ -276,12 +278,18 @@ class PETSc(WFSolver):
 
         # NOTE: Object specific options are set using a prefix
         prefix = f"qttools_{id(self)}_"
-        self._ksp = petsc.KSP().create(comm=self.comm)
+        self._ksp = petsc.KSP().create(comm=self._mpi_comm)
         self._ksp.setOptionsPrefix(prefix)
         options = petsc.Options(prefix)
         for key, value in petsc_options.items():
             options.setValue(key, value)
         self._ksp.setFromOptions()
+
+    def __del__(self):
+        """Cleans up the PETSc solver."""
+        if getattr(self, "_ksp", None) is not None:
+            self._ksp.destroy()
+            self._ksp = None
 
     def _create_petsc_csr(self, a: sparse.csr_matrix) -> petsc.Mat:
         """Creates a PETSc matrix from a CSR matrix.
@@ -307,8 +315,8 @@ class PETSc(WFSolver):
         rows = xp.repeat(xp.arange(n_local, dtype=a.indptr.dtype), xp.diff(a.indptr))
 
         sizes = (n, n)
-        if self.local_rows is not None:
-            num_local_rows = self.local_rows[1] - self.local_rows[0]
+        if self._local_rows is not None:
+            num_local_rows = self._local_rows[1] - self._local_rows[0]
             # NOTE: PETSc requires that the row and colum distribution
             # is the same, especially since we want to get only a part
             # of the solution vector in the end. Since we feed in the
@@ -317,9 +325,9 @@ class PETSc(WFSolver):
             sizes = ((num_local_rows, n), (num_local_rows, n))
 
             # Include the rank offset.
-            rows += self.local_rows[0]
+            rows += self._local_rows[0]
 
-        mat = petsc.Mat().create(comm=self.comm)
+        mat = petsc.Mat().create(comm=self._mpi_comm)
         mat.setSizes(sizes)
         mat.setType(self._sparse_mat_type)
 
@@ -355,7 +363,7 @@ class PETSc(WFSolver):
         """
         sizes = arr.shape
         if self._distributed:
-            num_local_rows = self.local_rows[1] - self.local_rows[0]
+            num_local_rows = self._local_rows[1] - self._local_rows[0]
             if sizes[0] != num_local_rows:
                 raise ValueError(
                     f"Local array shape {sizes} does not match the "
@@ -363,7 +371,7 @@ class PETSc(WFSolver):
                 )
             sizes = ((num_local_rows, petsc.DETERMINE), (petsc.DECIDE, sizes[1]))
 
-        mat = petsc.Mat().create(comm=self.comm)
+        mat = petsc.Mat().create(comm=self._mpi_comm)
         mat.setSizes(sizes)
         mat.setType(self._dense_mat_type)
 
@@ -420,7 +428,7 @@ class PETSc(WFSolver):
         """
 
         if reuse_factorization or reuse_analysis:
-            raise ValueError(
+            warnings.warn(
                 "Reuse of analysis or factorization is not yet supported in the PETSc solver."
             )
         if a.dtype != petsc.ScalarType:
@@ -450,6 +458,10 @@ class PETSc(WFSolver):
                 f"Data type of a.indices ({a.indices.dtype}) does not match "
                 f"PETSc int type ({petsc.IntType})."
             )
+
+        # TODO: Currently, we need to copy since we allow petsc to
+        # modify the matrix in-place.
+        a = a.copy()
 
         if not xp.isfortran(b):
             b = xp.asfortranarray(b)

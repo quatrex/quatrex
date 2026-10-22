@@ -279,7 +279,7 @@ def test_distributed_solve(n: int, m: int, solver_spec: WFSolverSpec):
     local_rows = (section_offsets[comm.rank], section_offsets[comm.rank + 1])
 
     solver = solver_spec.solver_type(
-        comm=_SubCommunicator(comm, {}),
+        comm=_SubCommunicator(comm),
         local_rows=local_rows,
         **solver_spec.solver_options,
     )
@@ -334,7 +334,7 @@ def test_distributed_real_symmetric_system(n: int, m: int, solver_spec: WFSolver
     solver = solver_spec.solver_type(
         matrix_type="real_symmetric_indefinite",
         matrix_view="upper",
-        comm=_SubCommunicator(comm, {}),
+        comm=_SubCommunicator(comm),
         local_rows=local_rows,
         **solver_spec.solver_options,
     )

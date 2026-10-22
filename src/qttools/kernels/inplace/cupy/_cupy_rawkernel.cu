@@ -27,12 +27,11 @@ __global__ void _scatter_add_scaled(T1 *M, const T2 *U, const IndexType *ind,
 }
 
 template <typename IndexType>
-__global__ void
-_scatter_add_scaled_obc(complex<double> *M, const complex<double> *S,
-                        const double K1, const double K2,
-                        const IndexType N_S_big, const IndexType N_S,
-                        const IndexType n_rep_2, const IndexType *ind,
-                        const IndexType N, const double alpha) {
+__global__ void _scatter_add_scaled_obc(
+    complex<double> *M, const complex<double> *S, const double K1,
+    const double K2, const IndexType N_S_big, const IndexType N_S,
+    const IndexType n_rep_2, const IndexType *ind, const IndexType *row_pos,
+    const IndexType N, const double alpha) {
 
   IndexType global_block_offset = (IndexType)blockDim.x * blockIdx.x;
   IndexType i = global_block_offset + threadIdx.x;
@@ -43,7 +42,7 @@ _scatter_add_scaled_obc(complex<double> *M, const complex<double> *S,
 
   if (i < N) {
 
-    i_S_big = i / N_S_big;
+    i_S_big = row_pos[i / N_S_big];
     j_S_big = i % N_S_big;
 
     i_S = i_S_big % N_S;

@@ -10,7 +10,12 @@ from qttools import NDArray, sparse
 class WFSolver(ABC):
     """Abstract base class for wave function solvers."""
 
-    def __init__(self, matrix_type: str | None, matrix_view: str | None) -> None:
+    def __init__(
+        self,
+        matrix_type: str | None,
+        matrix_view: str | None,
+        **kwargs,
+    ) -> None:
         """Initializes the wave function solver.
 
         Parameters
@@ -28,6 +33,12 @@ class WFSolver(ABC):
             lower part is needed. Can be None if the solver does not
             require this information or if it can be inferred from the
             matrix itself.
+        kwargs : dict
+            Additional keyword arguments that may be required by specific
+            solver implementations. These can include solver-specific
+            options, parameters for distributed computing, or other
+            configuration settings that are not covered by the standard
+            parameters.
 
         """
         ...

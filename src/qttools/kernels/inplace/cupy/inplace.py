@@ -104,6 +104,7 @@ def scatter_add_scaled_obc(
         )
 
     index_type = inds.dtype.type
+    row_positions = cp.asarray(row_positions, dtype=inds.dtype)
 
     _cupy_rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),

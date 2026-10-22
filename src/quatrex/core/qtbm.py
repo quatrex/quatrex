@@ -1426,6 +1426,9 @@ class QTBM(TransportSolver):
                             comm.block.all_reduce(_abs_res, abs_res)
                             comm.block.all_reduce(_rhs_norm, rhs_norm)
 
+                            abs_res = xp.sqrt(abs_res)
+                            rhs_norm = xp.sqrt(rhs_norm)
+
                             if comm.block.rank == 0:
                                 print(
                                     f"Absolute residual for energy index {batch_start + energy_ind}: {abs_res[0]}",

@@ -5,11 +5,12 @@
 import warnings
 
 import numpy as np
-import scipy
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.datastructures.csx_routines import make_canonical_coo
 from qttools.datastructures.dcsx import DCSX
+from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.contact import QTBMContact
 from quatrex.core.config import QuatrexConfig
@@ -101,65 +102,59 @@ class QTBMDevice(BaseDevice):
         hamiltonians = {}
         overlap_matrices = {}
 
-        for r, h_r in self.hamiltonians.items():
-            r_flipped = (-r[0], -r[1], -r[2])
+        order = xp.array(self.nd_result.orbital_inv)
 
-            h_flip = sparse.csr_matrix(self.hamiltonians[r_flipped])
-            if (
-                hasattr(h_flip, "has_canonical_format")
-                and not h_flip.has_canonical_format
-            ):
-                h_flip.sum_duplicates()
-                h_flip.sort_indices()
+        free_mempool()
 
-            hamiltonians[r] = (
-                self.hamiltonians[r] + sparse.triu(h_flip, k=1).conj().transpose()
-            )
+        # TODO: This is a big memory bottleneck.
+        order = order.astype(xp.int32, copy=False)
 
-        for r, s_r in self.overlap_matrices.items():
-            r_flipped = (-r[0], -r[1], -r[2])
+        for in_dic, out_dic in zip(
+            [self.hamiltonians, self.overlap_matrices], [hamiltonians, overlap_matrices]
+        ):
+            for r, mat in in_dic.items():
+                r_flipped = (-r[0], -r[1], -r[2])
 
-            s_flip = sparse.csr_matrix(self.overlap_matrices[r_flipped])
-            if (
-                hasattr(s_flip, "has_canonical_format")
-                and not s_flip.has_canonical_format
-            ):
-                s_flip.sum_duplicates()
-                s_flip.sort_indices()
+                mat_shape = mat.shape
 
-            overlap_matrices[r] = (
-                self.overlap_matrices[r] + sparse.triu(s_flip, k=1).conj().transpose()
-            )
+                mat = mat.tocoo()
+                flip = in_dic[r_flipped].tocoo()
 
-        order = self.nd_result.orbital_perm
-        if hasattr(order, "get"):
-            order = order.get()
-        order = np.asarray(order)
+                m_rows = order[mat.row]
+                m_cols = order[mat.col]
+                m_keep = m_rows <= m_cols
+                m_rows, m_cols = m_rows[m_keep], m_cols[m_keep]
+                m_data = mat.data[m_keep]
+                del m_keep, mat
 
-        # 2. Reorder orbitals and trim lower triangle
-        for r, h_r in hamiltonians.items():
-            tmp = h_r.get() if hasattr(h_r, "get") else h_r
+                f_rows = order[flip.col]
+                f_cols = order[flip.row]
+                f_keep = f_rows < f_cols
+                f_rows, f_cols = f_rows[f_keep], f_cols[f_keep]
+                f_data = xp.conj(flip.data[f_keep])
+                del f_keep, flip
 
-            # Apply permutation on CPU
-            tmp = tmp[order, :][:, order]
-            tmp = scipy.sparse.triu(tmp).tocsr()
+                row_inds = xp.concatenate([m_rows, f_rows])
+                col_inds = xp.concatenate([m_cols, f_cols])
+                data = xp.concatenate([m_data, f_data])
+                del m_rows, m_cols, m_data, f_rows, f_cols, f_data
 
-            # Clean up structure to guarantee clean indices for future operations
-            tmp.sum_duplicates()
-            tmp.sort_indices()
+                row_inds, col_inds, sorting = make_canonical_coo(row_inds, col_inds)
+                data = data[sorting]
+                del sorting
 
-            self.hamiltonians[r] = sparse.csr_matrix(tmp)
+                out_dic[r] = sparse.coo_matrix(
+                    (data, (row_inds, col_inds)), shape=mat_shape
+                )
 
-        for r, s_r in overlap_matrices.items():
-            tmp = s_r.get() if hasattr(s_r, "get") else s_r
+                del row_inds, col_inds, data
+                free_mempool()
 
-            tmp = tmp[order, :][:, order]
-            tmp = scipy.sparse.triu(tmp).tocsr()
-
-            tmp.sum_duplicates()
-            tmp.sort_indices()
-
-            self.overlap_matrices[r] = sparse.csr_matrix(tmp)
+        for in_dic, out_dic in zip(
+            [self.hamiltonians, self.overlap_matrices], [hamiltonians, overlap_matrices]
+        ):
+            for r, mat in in_dic.items():
+                in_dic[r] = out_dic[r]
 
         self.orbital_coordinates = self.orbital_coordinates[
             self.nd_result.orbital_perm, :
@@ -195,29 +190,31 @@ class QTBMDevice(BaseDevice):
         # NOTE: Currently, the contacts need the full graph and thus the
         # conversion to `DCSX` is happening not in `_init_hamiltonian`.
         # NOTE: We know at this point `h_r` is upper diagonal.
-        for r, h_r in self.hamiltonians.items():
-            tmp = h_r[
-                self.row_offsets[comm.block.rank] : self.row_offsets[
-                    comm.block.rank + 1
-                ],
-                :,
-            ]
-            self.hamiltonians[r] = DCSX.from_sparray(
-                sparray=tmp,
-                symmetry="upper-triangular",
-            )
 
-        for r, s_r in self.overlap_matrices.items():
-            tmp = s_r[
-                self.row_offsets[comm.block.rank] : self.row_offsets[
-                    comm.block.rank + 1
-                ],
-                :,
-            ]
-            self.overlap_matrices[r] = DCSX.from_sparray(
-                sparray=tmp,
-                symmetry="upper-triangular",
-            )
+        for dic in [self.hamiltonians, self.overlap_matrices]:
+            for r, mat in dic.items():
+                row_inds = mat.row
+                col_inds = mat.col
+                data = mat.data
+                mask = (row_inds >= self.row_offsets[comm.block.rank]) & (
+                    row_inds < self.row_offsets[comm.block.rank + 1]
+                )
+                row_inds = row_inds[mask] - self.row_offsets[comm.block.rank]
+                col_inds = col_inds[mask]
+                data = data[mask]
+                mat = sparse.coo_matrix(
+                    (data, (row_inds, col_inds)),
+                    shape=(
+                        self.row_offsets[comm.block.rank + 1]
+                        - self.row_offsets[comm.block.rank],
+                        mat.shape[1],
+                    ),
+                )
+
+                dic[r] = DCSX.from_sparray(
+                    sparray=mat,
+                    symmetry="upper-triangular",
+                )
 
     def _add_contacts(self):
         """Initializes and attaches contacts to the device.

@@ -552,18 +552,20 @@ class QTBMContact(BaseContact):
         # distribute contact orbitals in a different order than the contact
         # cell ordering expected by the OBC solver.
         gathered_origin_indices = self.comm.all_gather_v(
-            self.device.row_offsets[quatrex_comm.block.rank]
-            + self.local_origin_orbital_indices,
+            xp.asarray(
+                self.device.row_offsets[quatrex_comm.block.rank]
+                + self.local_origin_orbital_indices
+            ),
             axis=0,
         )
         desired_origin_indices = self.unit_cell_orbital_indices[self.origin_key]
-        row_order = np.asarray(
+        row_order = xp.asarray(
             [
-                np.flatnonzero(gathered_origin_indices == index)[0]
+                xp.flatnonzero(gathered_origin_indices == index)[0]
                 for index in desired_origin_indices
             ]
         )
-        m_origin = m_origin.get_tile(row_ind=xp.asarray(row_order))
+        m_origin = m_origin.get_tile(row_ind=row_order)
 
         m_xx = {}
         grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid

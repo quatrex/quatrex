@@ -6,7 +6,7 @@ import itertools
 
 import numpy as np
 
-from qttools import NDArray, sparse
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from quatrex.core.config import ContactConfig, DeviceConfig
 
@@ -447,11 +447,16 @@ def _residual_coupling(
         True if there is residual coupling, False otherwise.
 
     """
+    origin_orbital_indices = xp.asarray(origin_orbital_indices)
+    residual_orbitals = xp.asarray(residual_orbitals)
 
-    return (
-        hamiltonian[origin_orbital_indices, :][:, residual_orbitals].nnz
-        + hamiltonian[residual_orbitals, :][:, origin_orbital_indices].nnz
+    coo = hamiltonian.tocoo()
+    row, col = coo.row, coo.col
+
+    mask = (xp.isin(row, origin_orbital_indices) & xp.isin(col, residual_orbitals)) | (
+        xp.isin(row, residual_orbitals) & xp.isin(col, origin_orbital_indices)
     )
+    return bool(mask.any())
 
 
 def _init_orbital_indices(
@@ -546,13 +551,10 @@ def _init_orbital_indices(
             )
         ]
 
-        if (
-            _residual_coupling(
-                hamiltonian=hamiltonian,
-                origin_orbital_indices=origin_orbital_indices,
-                residual_orbitals=residual_orbitals,
-            )
-            == 0
+        if not _residual_coupling(
+            hamiltonian=hamiltonian,
+            origin_orbital_indices=origin_orbital_indices,
+            residual_orbitals=residual_orbitals,
         ):
             return transport_index, unit_cell_orbital_indices
 

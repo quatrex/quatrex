@@ -734,7 +734,9 @@ class Wannier90Orbitals(RealSpaceOrbitals):
             corresponds to the x, y, z components of the gradient.
 
         """
-        return self._evaluate(positions, field="gradient").reshape(-1, 3, order="F")
+        return self._evaluate(positions, field="gradient").reshape(
+            -1, positions.shape[0], 3, order="F"
+        )
 
     def evaluate_orbital_hessians(self, positions: NDArray) -> NDArray:
         """Evaluate the Hessians of the Wannier orbitals at the given positions.
@@ -754,7 +756,9 @@ class Wannier90Orbitals(RealSpaceOrbitals):
             3x3 corresponds to the Hessian matrix components.
 
         """
-        return self._evaluate(positions, field="hessian").reshape(-1, 3, 3, order="F")
+        return self._evaluate(positions, field="hessian").reshape(
+            -1, positions.shape[0], 3, 3, order="F"
+        )
 
     @staticmethod
     def _fix_global_phase(wannier_functions: NDArray) -> NDArray:

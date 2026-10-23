@@ -446,6 +446,17 @@ class DeviceMesh:
         self.config = config
         self.structure = ase.io.read(config.input_dir / "structure.xyz")
 
+        # Try reading added orbital nodes from a file, if it exists.
+        try:
+            orbital_nodes = np.load(config.input_dir / "remeshed_points.npy")
+        except FileNotFoundError:
+            print(
+                "No remeshed_points.npy file found. Orbital nodes will not be embedded."
+            )
+            orbital_nodes = None
+
+        self.orbital_nodes = orbital_nodes
+
         # TODO: Set up size fields based on the configuration.
         self.default_mesh_size = config.device.geometry.default_mesh_size
 
@@ -561,6 +572,36 @@ class DeviceMesh:
 
         return [(0, tag) for tag in atom_tags]
 
+    def _embed_orbital_nodes(self, dim_tags: tuple[int, int]) -> list[tuple[int, int]]:
+        """Embeds the orbital nodes into the given gmsh entities.
+
+        Parameters
+        ----------
+        dim_tags : tuple[int, int]
+            A list of tuples containing the dimension and tag of the
+            entities in which to embed the orbital nodes.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            A list of tuples containing the dimension and tag of the
+            embedded orbital nodes.
+
+        """
+        assert self.orbital_nodes is not None, "Orbital nodes have not been set."
+
+        orbital_node_tags = []
+        for position in self.orbital_nodes:
+            tag = gmsh.model.occ.add_point(*position)
+            orbital_node_tags.append(tag)
+
+        gmsh.model.occ.synchronize()
+
+        for dim, cell in dim_tags:
+            gmsh.model.mesh.embed(0, orbital_node_tags, 3, cell)
+
+        return [(0, tag) for tag in orbital_node_tags]
+
     def _enforce_mesh_periodicity(self, dim_tags: tuple[int, int]) -> None:
         """Enforces periodic boundary conditions on the mesh.
 
@@ -637,7 +678,6 @@ class DeviceMesh:
         """
         region_fields = []
         for name, dim_tags in region_dim_tags.items():
-
             if name == "atoms":
                 # The atoms are not just a constant size field, but we
                 # want to have a finer mesh close to the atoms. We use a
@@ -709,7 +749,6 @@ class DeviceMesh:
         """
         region_node_inds = {}
         for region_name in self.region_mesh_sizes.keys():
-
             node_inds = []
             for cell_block, cell_inds in zip(
                 self.mesh.cells, self.mesh.cell_sets[region_name]
@@ -800,6 +839,13 @@ class DeviceMesh:
         print("    Embedding atoms...")
         atom_dim_tags = self._embed_atoms(region_dim_tags["bounding-box"])
         region_dim_tags["atoms"] = atom_dim_tags
+
+        if self.orbital_nodes is not None:
+            print("    Embedding orbital nodes...")
+            orbital_node_dim_tags = self._embed_orbital_nodes(
+                region_dim_tags["bounding-box"]
+            )
+            region_dim_tags["orbital-nodes"] = orbital_node_dim_tags
 
         self._enforce_mesh_periodicity(region_dim_tags["bounding-box"])
 

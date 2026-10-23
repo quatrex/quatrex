@@ -45,6 +45,7 @@ dependencies = [
     "typer",
     "h5py",
     "tomlkit",
+    "mmgpy",
 ]
     [project.optional-dependencies]
     dev = [
@@ -148,6 +149,7 @@ platforms = ["linux-64"]
     matplotlib = "*"
     tomlkit = "*"
     mmgpy = "*"
+    opt_einsum = "*"
 
 # --- Development features ---------------------------------------------
 [tool.pixi.feature.dev]

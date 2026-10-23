@@ -453,6 +453,18 @@ class DeviceMesh:
 
         self.dimensionality = config.device.geometry.dimensionality
 
+        # Try reading added orbital nodes from a file, if it exists.
+        try:
+            orbital_nodes = np.load(config.input_dir / "remeshed_points.npy")
+        except FileNotFoundError:
+            print(
+                "No remeshed_points.npy file found. Orbital nodes will not be embedded."
+            )
+            orbital_nodes = None
+
+        self.orbital_nodes = orbital_nodes
+
+        # TODO: Set up size fields based on the configuration.
         self.default_mesh_size = config.device.geometry.default_mesh_size
 
         self.region_mesh_sizes = {
@@ -816,6 +828,15 @@ class DeviceMesh:
                 atom_dim_tags.append((0, tag))
 
             region_dim_tags["atoms"] = atom_dim_tags
+
+        if self.orbital_nodes is not None:
+            print("    Adding orbital nodes...")
+            orbital_node_dim_tags = []
+            for position in self.orbital_nodes:
+                tag = gmsh.model.occ.add_point(*position)
+                orbital_node_dim_tags.append((0, tag))
+
+            region_dim_tags["orbital-nodes"] = orbital_node_dim_tags
 
         gmsh.model.occ.synchronize()
 

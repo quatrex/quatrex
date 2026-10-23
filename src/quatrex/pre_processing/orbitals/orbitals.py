@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import mmgpy as mmg
 import numpy as np
+import opt_einsum as oe
 import pyvista as pv
 
 from qttools import NDArray
@@ -114,19 +115,19 @@ def intersect_tensor_metrics(metrics_a: NDArray, metrics_b: NDArray) -> NDArray:
     ws = np.maximum(ws, eps)
 
     # Move metrics_b into the eigenbases of metrics_a.
-    sqrt_a = np.einsum("...ik,...k,...jk->...ij", vs, np.sqrt(ws), vs)
-    inv_sqrt_a = np.einsum("...ik,...k,...jk->...ij", vs, 1.0 / np.sqrt(ws), vs)
-    transformed_metric = np.einsum(
+    sqrt_a = oe.contract("...ik,...k,...jk->...ij", vs, np.sqrt(ws), vs)
+    inv_sqrt_a = oe.contract("...ik,...k,...jk->...ij", vs, 1.0 / np.sqrt(ws), vs)
+    transformed_metric = oe.contract(
         "...ij,...jk,...kl->...il", inv_sqrt_a, metrics_b, inv_sqrt_a
     )
 
     ws_transformed, vs_transformed = np.linalg.eigh(transformed_metric)
     ws_transformed = np.maximum(ws_transformed, 1.0)
 
-    middle = np.einsum(
+    middle = oe.contract(
         "...ik,...k,...jk->...ij", vs_transformed, ws_transformed, vs_transformed
     )
-    result = np.einsum("...ij,...jk,...lk->...il", sqrt_a, middle, sqrt_a)
+    result = oe.contract("...ij,...jk,...lk->...il", sqrt_a, middle, sqrt_a)
 
     return result.reshape(metrics_a.shape)
 
@@ -155,10 +156,11 @@ def reduce_metrics(metrics: NDArray) -> NDArray:
     metric : NDArray
         The reduced metric with shape (..., 3, 3).
 
-
     """
+    print(f"  Intersecting {metrics.shape[0]} metrics...")
     while metrics.shape[0] > 1:
         num_metrics = metrics.shape[0]
+        print(f"    {num_metrics} metrics remaining...")
         if num_metrics % 2:
             # In the case of an odd number of metrics, carry the last
             # one over to the next step in the reduction.
@@ -217,19 +219,20 @@ def metrics_from_hessians(
 
     # Clamp the eigenvalues of the metric to ensure that the minimum and
     # maximum edge lengths are respected.
-    w_min = max(1e-12, 1.0 / hmin**2) if hmin is not None else 1e-12
-    w_max = 1.0 / hmax**2 if hmax is not None else None
+    w_max = 1.0 / hmin**2 if hmin is not None else None
+    w_min = max(1e-12, 1.0 / hmax**2) if hmax is not None else 1e-12
 
     np.clip(metric_ws, min=w_min, max=w_max, out=metric_ws)
 
-    metrics = np.einsum("...ij,...j,...kj->...ik", vs, metric_ws, vs)
+    metrics = oe.contract("...ij,...j,...kj->...ik", vs, metric_ws, vs)
     return metrics
 
 
 def assemble_metric(
     hessians: NDArray,
     target_error: float = 1e-2,
-    **create_metric_kwargs: dict,
+    hmin: float | None = None,
+    hmax: float | None = None,
 ) -> NDArray:
     """Compute a global Hessian metric from a set of Hessian matrices.
 
@@ -244,9 +247,10 @@ def assemble_metric(
         N is the number of orbitals.
     target_error : float, optional
         The target error for the metric computation.
-    **create_metric_kwargs : dict
-        Additional keyword arguments to pass to the metric creation
-        function.
+    hmin : float, optional
+        The minimum edge length for the metric.
+    hmax : float, optional
+        The maximum edge length for the metric.
 
     Returns
     -------
@@ -256,10 +260,12 @@ def assemble_metric(
         in the order xx, xy, xz, yy, yz, zz.
 
     """
+    print(f"  Computing metrics from {hessians.shape[0]} Hessians...")
     metrics = metrics_from_hessians(
         hessians,
         target_error=target_error,
-        **create_metric_kwargs,
+        hmin=hmin,
+        hmax=hmax,
     )
 
     intersection = reduce_metrics(metrics)
@@ -268,15 +274,17 @@ def assemble_metric(
     # vector with the order xx, xy, xz, yy, yz, zz. This is the same as
     # mmgpy.metrics.matrix_to_tensor, but batched.
     i, j = np.triu_indices(3)
-    return intersection[..., i, j]
+    return np.ascontiguousarray(intersection[..., i, j])
 
 
 def remesh_for_orbitals(
     mesh: pv.UnstructuredGrid,
     compute_hessians: Callable[[pv.UnstructuredGrid], NDArray],
-    num_iterations: int = 3,
-    target_error: float = 1e-2,
-    **create_metric_kwargs: dict,
+    num_iterations: int = 2,
+    target_error: float = 5e-2,
+    hmin: float = 1e-1,
+    hmax: float = 5.0,
+    hgrad: float = 1.5,
 ) -> tuple[pv.UnstructuredGrid, list[dict]]:
     """Remesh the orbitals on a given grid.
 
@@ -286,14 +294,26 @@ def remesh_for_orbitals(
         The tetrahedral mesh on which the Hessian data from the
         structured grids is re-evaluated.
     compute_hessians : Callable[[pv.UnstructuredGrid], NDArray]
-        A function that computes the Hessian of the orbitals on a given mesh.
+        A function that computes the Hessian of the orbitals on a given
+        unstructured grid.
     num_iterations : int, optional
-        The number of iterations to run the remeshing process.
+        The number of iterations for which to run the remeshing process.
     target_error : float, optional
-        The target error for the metric computation.
-    **create_metric_kwargs : dict
-        Additional keyword arguments to pass to the metric creation
-        function.
+        The target error for the metric computation. By default, set to
+        5e-2.
+    hmin : float, optional
+        The minimum edge length in the resulting mesh. Used in the
+        computation of the Hessian metric and in the remeshing call.
+        Default is 1e-1.
+    hmax : float, optional
+        The maximum edge length in the resulting mesh. Used in the
+        computation of the Hessian metric and the remeshing call.
+        Default is 5.0.
+    hgrad : float, optional
+        The maximum allowed edge length ratio between neighboring
+        elements. Used in the remeshing call. The default value is 1.5,
+        which results in sensible looking meshes, while not overly
+        refining the surrounfing vacuum.
 
     Returns
     -------
@@ -308,17 +328,19 @@ def remesh_for_orbitals(
     """
     mesh = mesh.copy()
     remesh_info = []
-    for __ in range(num_iterations):
+    for i in range(num_iterations):
+        print(f"Remeshing iteration {i + 1}/{num_iterations}...")
+        print(f"  Computing Hessians on mesh with {mesh.n_points} nodes...")
         hessians = compute_hessians(mesh)
         metric = assemble_metric(
             hessians,
             target_error=target_error,
-            **create_metric_kwargs,
+            hmax=hmax,
+            hmin=hmin,
         )
         mmg_mesh = mmg.from_pyvista(mesh)
         mmg_mesh.set_field("tensor", metric)
-        # TODO: Decide on sensible parameters for remeshing.
-        info = mmg_mesh.remesh(hgrad=3, hausd=0.01 * mesh.length)
+        info = mmg_mesh.remesh(hgrad=hgrad, hmin=hmin, hmax=hmax)
         remesh_info.append(info)
         mesh = mmg.to_pyvista(mmg_mesh)
 

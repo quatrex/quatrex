@@ -7,6 +7,7 @@ from math import factorial
 from pathlib import Path
 
 import numpy as np
+import opt_einsum as oe
 from scipy.constants import physical_constants
 from scipy.special import comb
 
@@ -724,13 +725,13 @@ class CP2KOrbitals(RealSpaceOrbitals):
             for i_c, coefficients in enumerate(self.parameter_set.coefficients[i_l].T):
                 contraction_normalization = self.contraction_normalizations[i_l][i_c]
                 contracted = (
-                    np.einsum("j,ij...->i...", coefficients, normalized)
+                    oe.contract("j,ij...->i...", coefficients, normalized)
                     * contraction_normalization
                 )
 
                 # Transform from Cartesian to spherical harmonics.
                 values.append(
-                    np.einsum(
+                    oe.contract(
                         "mj,j...->m...",
                         self.cartesian_to_spherical_transforms[i_l],
                         contracted,

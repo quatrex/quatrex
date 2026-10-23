@@ -93,6 +93,30 @@ def _run_negf(config, device):
         typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _run_closed(config, device):
+    """Runs quatrex with the given configuration for a closed system.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
+
+    """
+
+    from quatrex.core.schroedinger import Schroedinger
+
+    scba = Schroedinger(config, device)
+
+    tic = time.perf_counter()
+    scba.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving Schroedinger after: {(toc - tic):.2f} s")
+
+
 def _run_scsp(config, device):
     """Runs the self-consistent Schrödinger-Poisson solver.
 
@@ -243,6 +267,8 @@ def run(
                 _run_wf(config, device)
             elif config.formalism == "negf":
                 _run_negf(config, device)
+            elif config.formalism == "closed":
+                _run_closed(config, device)
             else:
                 raise NotImplementedError(
                     f"Formalism '{config.formalism}' is not implemented."

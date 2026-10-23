@@ -1729,7 +1729,7 @@ class DeviceConfig(BaseModel):
 
     """
 
-    geometry: GeometryConfig
+    geometry: GeometryConfig = GeometryConfig()
     """The geometry configuration of the device.
 
     This contains a defintion of all regions in the device, such as
@@ -1770,7 +1770,7 @@ class DeviceConfig(BaseModel):
 
     """
 
-    transport_direction: Literal["a", "b", "c"]
+    transport_direction: Literal["a", "b", "c"] | None = None
     """The direction along which the transport occurs.
 
     !!! note
@@ -1845,11 +1845,12 @@ class DeviceConfig(BaseModel):
     def check_kpoint_grid(self) -> Self:
         """Checks that the k-point grid is 1 along the transport direction."""
 
-        ind = "abc".index(self.transport_direction)
-        if self.kpoint_grid[ind] != 1:
-            raise ValueError(
-                f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
-            )
+        if self.transport_direction is not None:
+            ind = "abc".index(self.transport_direction)
+            if self.kpoint_grid[ind] != 1:
+                raise ValueError(
+                    f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
+                )
 
         return self
 
@@ -1927,18 +1928,6 @@ class DeviceConfig(BaseModel):
             {tuple(tuple(v) for v in lv) for lv in lattice_vectors}
         ):
             raise ValueError("The contact lattice vectors must be unique.")
-
-        if len(names) < 2:
-            raise ValueError(
-                "At least two contacts must be defined in the device configuration."
-            )
-        if self.construct_from_unit_cell and (
-            len(names) != 2 or "left" not in names or "right" not in names
-        ):
-            raise ValueError(
-                "When the device is constructed from a unit cell,\n"
-                "both `left` and `right` contacts must be defined."
-            )
 
         return self
 
@@ -2327,16 +2316,17 @@ class QuatrexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
-    device: DeviceConfig
+    device: DeviceConfig = DeviceConfig()
     """The device configuration."""
 
-    formalism: Literal["wf", "negf"]
+    formalism: Literal["wf", "negf", "closed"]
     """The transport formalism to use.
 
     There are two supported formalisms:
 
     - `"wf"`: Wavefunction formalism
     - `"negf"`: Non-equilibrium Green's function formalism
+    - `"closed"`: Schrödinger equation formalism
 
     !!! warning "Inconsistent input formats"
 
@@ -2344,6 +2334,14 @@ class QuatrexConfig(BaseModel):
         consistent.
 
     """
+    material_model: Literal["DFT", "effective-mass"]
+    """The material model to use.
+
+    - `"DFT"`: Density Functional Theory
+    - `"effective-mass"`: Effective mass approximation
+
+    """
+
     scsp: SCSPConfig | None = None
     """Parameters for the self-consistent Schrödinger-Poisson loop."""
 
@@ -2356,7 +2354,7 @@ class QuatrexConfig(BaseModel):
     electrostatics: ElectrostaticsConfig = ElectrostaticsConfig()
     """Parameters for the electrostatics calculations."""
 
-    electron: ElectronConfig
+    electron: ElectronConfig = ElectronConfig()
     """Parameters for the electronic system."""
 
     phonon: PhononConfig | None = None
@@ -2446,7 +2444,8 @@ class QuatrexConfig(BaseModel):
         """Validates the input file paths."""
 
         if (
-            self.electron.energy_window_min is None
+            self.formalism != "closed"
+            and self.electron.energy_window_min is None
             and self.electron.energy_window_max is None
             and self.electron.energy_window_num is None
             and self.electron.energy_window_num_per_rank is None
@@ -2470,20 +2469,22 @@ class QuatrexConfig(BaseModel):
     def check_device_block_size(self) -> Self:
         """Checks that block size is consistent with other parameters."""
 
-        if self.formalism == "wf":
-            # NOTE: Block sizes are not used in the wavefunction
-            # formalism.
-            return self
+        if self.formalism == "negf":
+            if (
+                self.device.construct_from_unit_cell
+                and self.device.block_size is not None
+            ):
+                raise ValueError(
+                    "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+                )
 
-        if self.device.construct_from_unit_cell and self.device.block_size is not None:
-            raise ValueError(
-                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
-            )
-
-        if not self.device.construct_from_unit_cell and self.device.block_size is None:
-            raise ValueError(
-                "block_size must be given when construct_from_unit_cell=False."
-            )
+            if (
+                not self.device.construct_from_unit_cell
+                and self.device.block_size is None
+            ):
+                raise ValueError(
+                    "block_size must be given when construct_from_unit_cell=False."
+                )
 
         return self
 
@@ -2492,10 +2493,9 @@ class QuatrexConfig(BaseModel):
         """Checks that at least one contact exists and is grounded."""
         contacts = self.device.contacts
 
-        if len(contacts) < 2:
-            raise ValueError("At least two contacts must be defined.")
-
-        if not any(contact.voltage == 0 for contact in contacts):
+        if self.formalism != "closed" and not any(
+            contact.voltage == 0 for contact in contacts
+        ):
             raise ValueError(
                 "At least one contact must be grounded (i.e. have zero voltage)."
             )
@@ -2555,6 +2555,31 @@ class QuatrexConfig(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_contacts(self) -> Self:
+        """Validates that the required parameters are provided for the
+        contacts."""
+
+        if self.formalism != "closed":
+            names = []
+
+            for contact in self.device.contacts:
+                names.append(contact.name)
+
+            if len(names) < 2:
+                raise ValueError(
+                    "At least two contacts must be defined in the device configuration."
+                )
+            if self.device.construct_from_unit_cell and (
+                len(names) != 2 or "left" not in names or "right" not in names
+            ):
+                raise ValueError(
+                    "When the device is constructed from a unit cell,\n"
+                    "both `left` and `right` contacts must be defined."
+                )
+
+        return self
+
 
 def _parse_config(
     config_file: Path,
@@ -2575,8 +2600,9 @@ def _parse_config(
         )
 
     config["config_file"] = config_file
-    # Resolve the geometry config.
-    config["device"]["geometry"] = parse_geometry_config(config["device"])
+    if "device" in config:
+        # Resolve the geometry config.
+        config["device"]["geometry"] = parse_geometry_config(config["device"])
 
     return config
 

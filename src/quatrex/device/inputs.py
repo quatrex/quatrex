@@ -529,14 +529,15 @@ def load_matrices(
 
     # NOTE: for closed systems,
     # transport direction will be None
-    transport_ind = "abc".index(config.device.transport_direction)
+    if config.device.transport_direction is not None:
+        transport_ind = "abc".index(config.device.transport_direction)
 
-    # drop keys which are bigger than zero in the transport direction
-    matrix_dict = {
-        coord: matrix
-        for coord, matrix in matrix_dict.items()
-        if coord[transport_ind] == 0
-    }
+        # drop keys which are bigger than zero in the transport direction
+        matrix_dict = {
+            coord: matrix
+            for coord, matrix in matrix_dict.items()
+            if coord[transport_ind] == 0
+        }
 
     # make sure that the matrices are canonical
     for key, matrix in matrix_dict.items():

@@ -4,7 +4,7 @@
 
 import warnings
 
-from qttools import NDArray, xp
+from qttools import NDArray, xp, sparse
 from qttools.boundary_conditions.obc.obc import OBCSolver
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
@@ -122,7 +122,7 @@ class Spectral(OBCSolver):
             dEk_dk = -sum(
                 (1j * n)
                 * xp.diagonal(
-                    vs.conj().swapaxes(-1, -2) @ a_x @ vs,
+                    (xp.squeeze(vs.conj().swapaxes(-1, -2)) @ a_x @ xp.squeeze(vs))[xp.newaxis, :, :],
                     axis1=-2,
                     axis2=-1,
                 )
@@ -173,9 +173,10 @@ class Spectral(OBCSolver):
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
 
             products = sum(
-                a_x @ vs * ws[..., xp.newaxis, :] ** (i - len(a_xx) // 2)
+                a_x @ xp.squeeze(vs * ws[..., xp.newaxis, :] ** (i - len(a_xx) // 2))
                 for i, a_x in enumerate(a_xx)
             )
+            products = products[xp.newaxis, :, :]  # Add batch dimension
 
             residuals = xp.linalg.norm(products, axis=-2)
 
@@ -387,7 +388,7 @@ class Spectral(OBCSolver):
             m = mask[i]
             vr = vs[i][:, m]
             # Moore-Penrose pseudoinverse.
-            a_ij_i = a_ij[i, :, :].squeeze()
+            a_ij_i = a_ij
             v_inv = (
                 linalg.inv(vr.conj().T @ a_ij_i.conj().T @ a_ij_i @ vr)
                 @ vr.conj().T
@@ -440,6 +441,32 @@ class Spectral(OBCSolver):
             return_modes_only is True.
 
         """
+        
+        A, B, C = a_xx
+
+        if xp.imag(A.data).max() < 1e-10 and xp.imag(B.data).max() < 1e-10 and xp.imag(C.data).max() < 1e-10:
+            print("REAL MATRIX DETECTED", flush=True)
+            A = A.real
+            B = B.real
+            C = C.real
+
+
+        #number of elements in a row
+        counts = xp.diff(A.indptr)
+        #number of non-zero rows
+        non_zero_rows = xp.where(counts > 0)[0]
+        mask_n = counts > 0
+        mask_z = counts == 0
+        print("SPARSITY REDUCTION")
+        print("Number of non-zero rows:", len(non_zero_rows), flush=True)
+
+        B_zz_inv = xp.linalg.inv(B[mask_z,:][:, mask_z].todense())
+
+        A_prime = A[mask_n,:][:, mask_n].todense() - A[mask_n,:][:, mask_z].todense() @ B_zz_inv @ B[mask_z,:][:, mask_n].todense()
+        B_prime = B[mask_n,:][:, mask_n].todense() - A[mask_n,:][:, mask_z].todense() @ B_zz_inv @ C[mask_z,:][:, mask_n].todense() - B[mask_n,:][:, mask_z].todense() @ B_zz_inv @ B[mask_z,:][:, mask_n].todense()
+        C_prime = C[mask_n,:][:, mask_n].todense() - B[mask_n,:][:, mask_z].todense() @ B_zz_inv @ C[mask_z,:][:, mask_n].todense()
+
+        a_xx = (A_prime, B_prime, C_prime)
 
         if a_xx[0].ndim == 2:
             a_xx = tuple([a_x[xp.newaxis, :, :] for a_x in a_xx])
@@ -466,8 +493,32 @@ class Spectral(OBCSolver):
             )
 
         ws, vs = self.nevp(blocks)
-
         ws, vs = self._upscale_eigenmodes(ws, vs, block_sections)
+
+        ws=xp.squeeze(ws)
+        vs=xp.squeeze(vs)
+
+        mask_ws = (xp.abs(ws) > 1/100) & (xp.abs(ws) < 100)
+        ws = ws[mask_ws]
+        vs = vs[:, mask_ws]
+
+        print(xp.abs(ws),flush=True)
+
+        vs_z = - B_zz_inv @ (B[mask_z,:][:, mask_n] @ vs + C[mask_z,:][:, mask_n] @ vs @ sparse.diags(1/ws))
+
+        v_new = xp.zeros((vs.shape[0]+vs_z.shape[0], vs.shape[1]), dtype=ws.dtype)
+        v_new[mask_n, :] = vs
+        v_new[mask_z, :] = vs_z
+
+        vs = v_new
+
+        vs = vs[xp.newaxis, :, :]  # Add batch dimension
+        ws = ws[xp.newaxis, :]  # Add batch dimension
+
+        print(vs.shape, flush=True)
+        print(ws.shape, flush=True)
+
+        a_xx = (A,B,C)
 
         if return_injected:
             mask_reflected, mask_injected, dEk_dk = self._find_reflected_modes(
@@ -521,7 +572,7 @@ class Spectral(OBCSolver):
                 phi_reflected = []
                 eig_reflected = []
 
-            for i in range(a_ii.shape[0]):
+            for i in range(1):
                 mask_injected_i = mask_injected[i, :]
 
                 vrs_injected = vs[i][:, mask_injected_i]
@@ -553,6 +604,7 @@ class Spectral(OBCSolver):
                     )
 
             if return_modes_only:
+                print(b_injected[0].shape, phi_reflected[0].shape, eig_reflected[0].shape, phi_inv_reflected[0].shape, flush=True)
                 return None, b_injected, phi_reflected, eig_reflected, phi_inv_reflected
 
             return x_ii_ref, b_injected

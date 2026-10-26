@@ -794,6 +794,9 @@ class QTBM(TransportSolver):
 
             obc_result = obc_results[contact_out]
             if self.config.qtbm.low_rank_obc:
+                print(obc_result.reflection.shape,flush=True)
+                print(obc_result.eig_reflected.shape,flush=True)
+                print(obc_result.phi_inv_reflected.shape,flush=True)
                 S_P = obc_result.reflection @ (
                     xp.diag(1 / obc_result.eig_reflected)
                     @ (obc_result.phi_inv_reflected @ phi_nt)
@@ -816,7 +819,6 @@ class QTBM(TransportSolver):
                         sigma_obc,
                         phi_nt,
                     )
-
             transmission[kpoint_ind, global_energy_ind] = xp.trace(
                 -2 * xp.imag(phi_nt.T.conj() @ S_P)
             )
@@ -1345,6 +1347,7 @@ class QTBM(TransportSolver):
                                     list(kpoint * 2 * np.pi),
                                     return_modes_only=self.config.qtbm.low_rank_obc,
                                 )
+                                free_mempool()
 
                         rhs = self._assemble_rhs(obc_results, energy_ind)
 

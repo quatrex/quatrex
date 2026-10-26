@@ -597,13 +597,20 @@ class QTBMContact(BaseContact):
                         )
                 reduced_M.append(temp)
 
-            temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
-            A_tot = xp.split(temp, 3, axis=2)
+            #temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
+            temp = self._construct_contact_matrix(reduced_M)
+            ind1 = np.arange(temp.shape[1]//3)
+            ind2 = np.arange(temp.shape[1]//3, 2*temp.shape[1]//3)
+            ind3 = np.arange(2*temp.shape[1]//3, temp.shape[1])
+
+            A = temp[:, ind1]
+            B = temp[:, ind2]
+            C = temp[:, ind3]
 
             # HACK
-            A_tot[1][0, :, :] = (
-                A_tot[1][0, :, :] + A_tot[1][0, :, :].conj().T
-            ) / 2  # Ensure Hermitian
+            B = (B+B.conj().T)/2
+
+            A_tot = [A, B, C]
 
             if return_modes_only:
                 _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (

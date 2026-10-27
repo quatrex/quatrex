@@ -15,6 +15,8 @@ try:
 except ImportError:
     gmsh_available = False
 
+import itertools
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import meshio
@@ -28,30 +30,70 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.electrostatics.geometry_config import (
     Box,
     Cylinder,
+    Disk,
+    Line,
+    Point,
+    Rectangle,
     Shape,
     ShapeDifference,
     ShapeUnion,
-    VolumeProperties,
+    Tube,
 )
 
 GMSH_GEOMETRY_TOLERANCE = 1e-5
 
+# Regular OCC bounding box is not accurate enough for the conformal
+# meshing we want in the simulation domain.
+GMSH_OCC_USE_STL_BOUNDS = True
 
-def _add_box(shape: Shape) -> tuple[int, int]:
+_dim_to_cell_type = {
+    1: (pv.CellType.LINE, "line"),
+    2: (pv.CellType.TRIANGLE, "triangle"),
+    3: (pv.CellType.TETRA, "tetra"),
+}
+
+
+def shapes_with_volume(dim: int) -> list:
+    """Returns the shape types that have a volume for the given
+    dimension.
+
+    Parameters
+    ----------
+    dim : int
+        The dimension for which to get the shape types.
+
+    Returns
+    -------
+    list[str]
+        A list of shape types that have a volume for the given
+        dimension.
+
+    """
+    if dim == 3:
+        return (Box, Cylinder, ShapeUnion, ShapeDifference)
+    if dim == 2:
+        return (Rectangle, ShapeUnion, ShapeDifference)
+    if dim == 1:
+        return (Line, ShapeUnion, ShapeDifference)
+
+    raise ValueError(f"Unsupported dimension {dim}")
+
+
+def _add_box(box: Box) -> tuple[int, int]:
     """Adds a box to the GMSH model.
 
     Parameters
     ----------
-    shape : Shape
+    box : Box
         The shape definition for the box.
 
     Returns
     -------
-    tuple[int, int]
+    dim_tag : tuple[int, int]
         A tuple containing the dimension and tag of the added box.
 
     """
-    lower, upper = np.array(shape.bounds)
+    lower, upper = np.array(box.bounds)
 
     x, y, z = lower
     dx, dy, dz = upper - lower
@@ -59,89 +101,31 @@ def _add_box(shape: Shape) -> tuple[int, int]:
     return (3, gmsh.model.occ.add_box(x, y, z, dx, dy, dz))
 
 
-def _add_cylinder(shape: Shape) -> tuple[int, int]:
+def _add_cylinder(cylinder: Cylinder) -> tuple[int, int]:
     """Adds a cylinder to the GMSH model
 
     Parameters
     ----------
-    shape : Shape
+    cylinder : Cylinder
         The shape definition for the cylinder.
 
     Returns
     -------
-    tuple[int, int]
+    dim_tag : tuple[int, int]
         A tuple containing the dimension and tag of the added cylinder.
 
     """
-    axis = np.array(shape.axis)
+    axis = np.array(cylinder.axis)
     axis /= np.linalg.norm(axis)
-    v = axis * shape.length
+    v = axis * cylinder.length
 
-    x, y, z = shape.center - v / 2
+    x, y, z = cylinder.center - v / 2
     dx, dy, dz = v
 
-    return (3, gmsh.model.occ.add_cylinder(x, y, z, dx, dy, dz, shape.radius))
+    return (3, gmsh.model.occ.add_cylinder(x, y, z, dx, dy, dz, cylinder.radius))
 
 
-def _compute_rotation_matrix(shape: Shape) -> NDArray:
-    """Computes the rotation matrix.
-
-    Thsi function computes the rotation matrix needed to align a
-    rectangle with the specified normal and tangent.
-
-    Parameters
-    ----------
-    shape : Shape
-        The shape definition containing the normal and tangent vectors.
-
-    Returns
-    -------
-    NDArray
-        The rotation matrix as a 3x3 array.
-
-    """
-    normal = np.array(shape.normal)
-    normal /= np.linalg.norm(normal)
-    tangent = np.array(shape.tangent)
-    tangent /= np.linalg.norm(tangent)
-
-    bitangent = np.cross(normal, tangent)
-    bitangent /= np.linalg.norm(bitangent)
-
-    return np.column_stack((tangent, bitangent, normal))
-
-
-def _add_rectangle(shape: Shape) -> tuple[int, int]:
-    """Adds a rectangle to the GMSH model.
-
-    OCC only allows axis-aligned rectangles, so we create the rectangle
-    in the XY plane and then apply an affine transformation to align it
-    with the specified normal and tangent.
-
-    Parameters
-    ----------
-    shape : Shape
-        The shape definition for the rectangle.
-    Returns
-    -------
-    tuple[int, int]
-        A tuple containing the dimension and tag of the added rectangle.
-
-    """
-
-    rectangle_tag = gmsh.model.occ.add_rectangle(
-        -shape.length / 2, -shape.width / 2, 0, shape.length, shape.width
-    )
-    transform = np.eye(4)
-    transform[:3, :3] = _compute_rotation_matrix(shape)
-    transform[:3, 3] = shape.center
-
-    gmsh.model.occ.affine_transform([(2, rectangle_tag)], transform.flatten())
-
-    return (2, rectangle_tag)
-
-
-def _add_tube(shape: Shape) -> tuple[int, int]:
+def _add_tube(tube: Tube) -> tuple[int, int]:
     """Adds a tube to the GMSH model.
 
     This consists of extruding a circle along the specified axis. The
@@ -150,23 +134,23 @@ def _add_tube(shape: Shape) -> tuple[int, int]:
 
     Parameters
     ----------
-    shape : Shape
+    tube : Tube
         The shape definition for the tube.
 
     Returns
     -------
-    tuple[int, int]
+    dim_tag : tuple[int, int]
         A tuple containing the dimension and tag of the added tube.
 
     """
 
-    axis = np.array(shape.axis)
+    axis = np.array(tube.axis)
     axis /= np.linalg.norm(axis)
 
-    v = axis * shape.length
-    x, y, z = shape.center - v / 2
+    v = axis * tube.length
+    x, y, z = tube.center - v / 2
 
-    circle_tag = gmsh.model.occ.add_circle(x, y, z, shape.radius, zAxis=axis)
+    circle_tag = gmsh.model.occ.add_circle(x, y, z, tube.radius, zAxis=axis)
 
     dx, dy, dz = v
     tube_dim_tags = gmsh.model.occ.extrude(
@@ -180,12 +164,183 @@ def _add_tube(shape: Shape) -> tuple[int, int]:
     return tube_dim_tag
 
 
+def _compute_rotation_matrix(
+    normal: tuple[float, float, float],
+    tangent: tuple[float, float, float] = (1, 0, 0),
+) -> NDArray:
+    """Computes the rotation matrix.
+
+    This function computes the rotation matrix needed to align a shape
+    with the specified normal and tangent.
+
+    Parameters
+    ----------
+    normal : tuple[float, float, float]
+        The normal vector to which the shape should be aligned.
+    tangent : tuple[float, float, float], optional
+        The tangent vector to which the shape should be aligned. The
+        default is (1, 0, 0).
+
+    Returns
+    -------
+    NDArray
+        The rotation matrix as a 3x3 array.
+
+    """
+    normal = np.array(normal)
+    normal /= np.linalg.norm(normal)
+    tangent = np.array(tangent)
+    tangent /= np.linalg.norm(tangent)
+
+    bitangent = np.cross(normal, tangent)
+    bitangent /= np.linalg.norm(bitangent)
+
+    return np.column_stack((tangent, bitangent, normal))
+
+
+def _add_rectangle(rectangle: Rectangle) -> tuple[int, int]:
+    """Adds a rectangle to the GMSH model.
+
+    OCC only allows axis-aligned rectangles, so we create the rectangle
+    in the XY plane and then apply an affine transformation to align it
+    with the specified normal and tangent.
+
+    Parameters
+    ----------
+    rectangle : Rectangle
+        The shape definition for the rectangle.
+
+    Returns
+    -------
+    dim_tag : tuple[int, int]
+        A tuple containing the dimension and tag of the added rectangle.
+
+    """
+    if rectangle.bounds is not None:
+        (x_min, y_min), (x_max, y_max) = np.array(rectangle.bounds)
+        rectangle_tag = gmsh.model.occ.add_rectangle(
+            x_min, y_min, 0, x_max - x_min, y_max - y_min
+        )
+        return (2, rectangle_tag)
+
+    rectangle_tag = gmsh.model.occ.add_rectangle(
+        -rectangle.length / 2,
+        -rectangle.width / 2,
+        0,
+        rectangle.length,
+        rectangle.width,
+    )
+
+    transform = np.eye(4)
+    transform[:3, :3] = _compute_rotation_matrix(rectangle.normal, rectangle.tangent)
+    transform[:3, 3] = rectangle.center
+
+    gmsh.model.occ.affine_transform([(2, rectangle_tag)], transform.flatten())
+
+    return (2, rectangle_tag)
+
+
+def _add_disk(disk: Disk) -> tuple[int, int]:
+    """Adds a disk to the GMSH model.
+
+    OCC only allows axis-aligned disks, so we create the disk in the XY
+    plane and then apply an affine transformation to align it with the
+    specified normal.
+
+    Parameters
+    ----------
+    disk : Disk
+        The shape definition for the disk.
+
+    Returns
+    -------
+    dim_tag : tuple[int, int]
+        A tuple containing the dimension and tag of the added disk.
+
+    """
+    if disk.normal is None:
+        # disk.center will only have 2 coordinates, so we need to add a
+        # 0 for the z-coordinate.
+        return (2, gmsh.model.occ.add_disk(*disk.center, 0, disk.radius, disk.radius))
+
+    disk_tag = gmsh.model.occ.add_disk(*disk.center, disk.radius, disk.radius)
+
+    transform = np.eye(4)
+    transform[:3, :3] = _compute_rotation_matrix(disk.normal)
+    transform[:3, 3] = disk.center
+
+    gmsh.model.occ.affine_transform([(2, disk_tag)], transform.flatten())
+
+    return (2, disk_tag)
+
+
+def _add_line(line: Line) -> tuple[int, int]:
+    """Adds a line to the GMSH model.
+
+    Parameters
+    ----------
+    line : Line
+        The shape definition for the line.
+
+    Returns
+    -------
+    dim_tag : tuple[int, int]
+        A tuple containing the dimension and tag of the added line.
+
+    """
+    if isinstance(line.start, float) and isinstance(line.end, float):
+        start = (line.start, 0, 0)
+        end = (line.end, 0, 0)
+    elif len(line.start) == 2 and len(line.end) == 2:
+        start = (*line.start, 0)
+        end = (*line.end, 0)
+    else:
+        start = line.start
+        end = line.end
+
+    start_tag = gmsh.model.occ.add_point(*start)
+    end_tag = gmsh.model.occ.add_point(*end)
+    return (1, gmsh.model.occ.add_line(start_tag, end_tag))
+
+
+def _add_point(point: Point) -> tuple[int, int]:
+    """Adds a point to the GMSH model.
+
+    Parameters
+    ----------
+    point : Point
+        The shape definition for the point.
+
+    Returns
+    -------
+    dim_tag : tuple[int, int]
+        A tuple containing the dimension and tag of the added point.
+
+    """
+    # Pad the position with zeros if it has less than 3 coordinates.
+    if isinstance(point.position, float):
+        position = (point.position, 0, 0)
+    elif len(point.position) == 2:
+        position = (*point.position, 0)
+    else:
+        position = point.position
+
+    return (0, gmsh.model.occ.add_point(*position))
+
+
 # Mapping from shape to function for adding the shape to the GMSH model.
 _add_basic_entity_functions = {
+    # 3D primitives:
     "box": _add_box,
     "cylinder": _add_cylinder,
-    "rectangle": _add_rectangle,
     "tube": _add_tube,
+    # 2D primitives:
+    "rectangle": _add_rectangle,
+    "disk": _add_disk,
+    # 1D primitives:
+    "line": _add_line,
+    # 0D primitives:
+    "point": _add_point,
 }
 
 
@@ -213,7 +368,7 @@ def _add_entity(shape: Shape) -> tuple[int, int]:
     raise ValueError(f"Unsupported shape type {shape.type}")
 
 
-def _add_difference(shape: Shape) -> tuple[int, int]:
+def _add_difference(shape: ShapeDifference) -> tuple[int, int]:
     """Adds a difference of two shapes to the GMSH model.
 
     This function computes the difference of two shapes by adding them
@@ -222,7 +377,7 @@ def _add_difference(shape: Shape) -> tuple[int, int]:
 
     Parameters
     ----------
-    shape : Shape
+    shape : ShapeDifference
         The shape definition for the difference, which should have a
         `base` and `subtract` field containing the shapes to be used in
         the difference operation.
@@ -235,11 +390,11 @@ def _add_difference(shape: Shape) -> tuple[int, int]:
     """
     base_dim_tag = _add_entity(shape.base)
     subtract_dim_tag = _add_entity(shape.subtract)
-    out_dim_tags, out_map = gmsh.model.occ.cut([base_dim_tag], [subtract_dim_tag])
+    out_dim_tags, __ = gmsh.model.occ.cut([base_dim_tag], [subtract_dim_tag])
     return out_dim_tags[0]
 
 
-def _add_union(shape: Shape) -> tuple[int, int]:
+def _add_union(shape: ShapeUnion) -> tuple[int, int]:
     """Adds a union of shapes to the GMSH model.
 
     This function computes the union of multiple shapes by adding them
@@ -248,7 +403,7 @@ def _add_union(shape: Shape) -> tuple[int, int]:
 
     Parameters
     ----------
-    shape : Shape
+    shape : ShapeUnion
         The shape definition for the union, which should have a `shapes`
         field containing a list of shapes to be used in the union
         operation.
@@ -261,7 +416,7 @@ def _add_union(shape: Shape) -> tuple[int, int]:
     """
 
     shape_dim_tags = [_add_entity(shape) for shape in shape.shapes]
-    out_dim_tags, out_map = gmsh.model.occ.fuse(
+    out_dim_tags, __ = gmsh.model.occ.fuse(
         # Fuse the first shape with the union of the remaining shapes.
         shape_dim_tags[:1],
         shape_dim_tags[1:],
@@ -269,169 +424,9 @@ def _add_union(shape: Shape) -> tuple[int, int]:
     return out_dim_tags[0]
 
 
-def _inside_box(point: NDArray, box: Box) -> bool:
-    """Checks if a point is inside a box defined by its bounds.
-
-    Parameters
-    ----------
-    point : array-like
-        The coordinates of the point to check.
-    box : Box
-        The box defined by its bounds, which should be a tuple of two
-        points representing the lower and upper corners of the box.
-
-    Returns
-    -------
-    bool
-        True if the point is inside the box, False otherwise.
-
-    """
-    point = np.asarray(point)
-    (x_min, y_min, z_min), (x_max, y_max, z_max) = box.bounds
-    inside = (
-        (x_min <= point[..., 0])
-        & (point[..., 0] <= x_max)
-        & (y_min <= point[..., 1])
-        & (point[..., 1] <= y_max)
-        & (z_min <= point[..., 2])
-        & (point[..., 2] <= z_max)
-    )
-
-    return inside
-
-
-def _inside_cylinder(point: NDArray, cylinder: Cylinder) -> bool:
-    """Checks if a point is inside a cylinder defined by its center, axis, length, and radius.
-
-    Parameters
-    ----------
-    point : array-like
-        The coordinates of the point to check.
-    cylinder : Cylinder
-        The cylinder defined by its center, axis, length, and radius.
-
-    Returns
-    -------
-    bool
-        True if the point is inside the cylinder, False otherwise.
-
-    """
-    point = np.asarray(point)
-    single_point = point.ndim == 1
-    if single_point:
-        point = point[None, :]
-
-    center = np.array(cylinder.center)
-    axis = np.array(cylinder.axis)
-    axis /= np.linalg.norm(axis)
-    length = cylinder.length
-    radius = cylinder.radius
-
-    # Compute the vector from the center of the cylinder to the point.
-    v = point - center
-
-    # Project the vector onto the axis of the cylinder to get the
-    # component along the axis.
-    v_parallel = np.dot(v, axis)[:, None] * axis
-
-    # The component perpendicular to the axis is then given by:
-    v_perpendicular = v - v_parallel
-
-    # Check if the point is within the length and radius of the
-    # cylinder.
-    inside = (np.linalg.norm(v_parallel, axis=1) <= length / 2) & (
-        np.linalg.norm(v_perpendicular, axis=1) <= radius
-    )
-    return inside[0] if single_point else inside
-
-
-_inside_entity_functions = {
-    "box": _inside_box,
-    "cylinder": _inside_cylinder,
-}
-
-
-def _inside_union(point: NDArray, shape_union: ShapeUnion) -> bool:
-    """Checks if a point is inside a union of shapes.
-
-    Parameters
-    ----------
-    point : array-like
-        The coordinates of the point to check.
-    shape_union : ShapeUnion
-        The union of shapes defined by a list of shapes.
-
-    Returns
-    -------
-    bool
-        True if the point is inside any of the shapes in the union, False otherwise.
-
-    """
-    inside = np.zeros(point.shape[0], dtype=bool)
-    for shape in shape_union.shapes:
-        inside_shape = _inside_entity_functions[shape.type](point, shape)
-        inside |= inside_shape
-
-    return inside
-
-
-def _inside_difference(point: NDArray, shape_difference: ShapeDifference) -> bool:
-    """Checks if a point is inside a difference of two shapes.
-
-    Parameters
-    ----------
-    point : array-like
-        The coordinates of the point to check.
-    shape_difference : ShapeDifference
-        The difference of two shapes defined by a `base` shape and a
-        `subtract` shape.
-
-    Returns
-    -------
-    bool
-        True if the point is inside the `base` shape and not inside the
-        `subtract` shape, False otherwise.
-
-    """
-    inside_base = _inside_entity_functions[shape_difference.base.type](
-        point, shape_difference.base
-    )
-    inside_subtract = _inside_entity_functions[shape_difference.subtract.type](
-        point, shape_difference.subtract
-    )
-    inside = inside_base & ~inside_subtract
-    return inside
-
-
-def inside_shape(point: NDArray, shape: Shape) -> bool:
-    """Checks if a point is inside a shape.
-
-    Parameters
-    ----------
-    point : array-like
-        The coordinates of the point to check.
-    shape : Shape
-        The shape definition, which can be a basic shape, a union of
-        shapes, or a difference of shapes.
-
-    Returns
-    -------
-    bool
-        True if the point is inside the shape, False otherwise.
-
-    """
-    if shape.type in _inside_entity_functions:
-        return _inside_entity_functions[shape.type](point, shape)
-    if shape.type == "union":
-        return _inside_union(point, shape)
-    if shape.type == "difference":
-        return _inside_difference(point, shape)
-
-    raise ValueError(f"Unsupported shape type {shape.type}")
-
-
 class DeviceMesh:
-    """Class for generating a mesh for the device geometry defined in the configuration.
+    """Class for generating a mesh for the device geometry defined in
+    the configuration.
 
     Parameters
     ----------
@@ -444,15 +439,27 @@ class DeviceMesh:
     def __init__(self, config: QuatrexConfig):
         """Initializes the DeviceMesh with the given configuration."""
         self.config = config
-        self.structure = ase.io.read(config.input_dir / "structure.xyz")
 
-        # TODO: Set up size fields based on the configuration.
+        structure = None
+        if config.material_model == "atomistic":
+            try:
+                structure = ase.io.read(config.input_dir / "structure.xyz")
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    f"Structure file 'structure.xyz' not found in {config.input_dir}. "
+                    "Please ensure the structure file is present for atomistic simulations."
+                )
+        self.structure = structure
+
+        self.dimensionality = config.device.geometry.dimensionality
+
         self.default_mesh_size = config.device.geometry.default_mesh_size
 
         self.region_mesh_sizes = {
             region.name: region.mesh_size for region in config.device.geometry.regions
         }
-        self.region_mesh_sizes["atoms"] = config.device.geometry.atoms_mesh_size
+        if self.structure is not None:
+            self.region_mesh_sizes["atoms"] = config.device.geometry.atoms_mesh_size
 
         self._mesh = None
         self._region_node_inds = None
@@ -489,16 +496,25 @@ class DeviceMesh:
             )
         return self._region_node_inds
 
-    def _add_structure_cell(self):
+    def _add_structure_cell(self) -> tuple[int, int]:
         """Adds the structure cell to the GMSH model.
 
         This function adds a box representing the structure cell to the
         GMSH model. The box is defined by the cell vectors of the
         structure, and an affine transformation is applied to align the
         box with the cell vectors. The resulting box is added to the
-        GMSH model and synchronized.
+        GMSH model.
+
+        Returns
+        -------
+        tuple[int, int]
+            A tuple containing the dimension and tag of the added
+            structure cell.
 
         """
+        if self.structure is None:
+            raise ValueError("Structure is not defined. Cannot add structure cell.")
+
         transform = np.eye(4)
         transform[:3, :3] = self.structure.cell.T
 
@@ -507,7 +523,6 @@ class DeviceMesh:
             [(3, structure_cell)],
             transform.flatten(),
         )
-        gmsh.model.occ.synchronize()
 
         return (3, structure_cell)
 
@@ -528,38 +543,8 @@ class DeviceMesh:
         bounding_box = gmsh.model.occ.add_box(
             x_min, y_min, z_min, x_max - x_min, y_max - y_min, z_max - z_min
         )
-        gmsh.model.occ.synchronize()
 
         return (3, bounding_box)
-
-    def _embed_atoms(self, dim_tags: tuple[int, int]) -> list[tuple[int, int]]:
-        """Embeds the atoms into the given gmsh entities.
-
-        Parameters
-        ----------
-        dim_tags : tuple[int, int]
-            A list of tuples containing the dimension and tag of the
-            entities in which to embed the atoms.
-
-        Returns
-        -------
-        list[tuple[int, int]]
-            A list of tuples containing the dimension and tag of the
-            embedded atoms.
-
-        """
-
-        atom_tags = []
-        for position in self.structure.positions:
-            tag = gmsh.model.occ.add_point(*position)
-            atom_tags.append(tag)
-
-        gmsh.model.occ.synchronize()
-
-        for dim, cell in dim_tags:
-            gmsh.model.mesh.embed(0, atom_tags, 3, cell)
-
-        return [(0, tag) for tag in atom_tags]
 
     def _enforce_mesh_periodicity(self, dim_tags: tuple[int, int]) -> None:
         """Enforces periodic boundary conditions on the mesh.
@@ -634,10 +619,16 @@ class DeviceMesh:
         embedded atoms and a threshold field to control the mesh size
         based on the distance from the atoms.
 
+        Parameters
+        ----------
+        region_dim_tags : dict[str, list[tuple[int, int]]]
+            A dictionary mapping region names to lists of tuples
+            containing the dimension and tag of the entities in the GMSH
+            model.
+
         """
         region_fields = []
         for name, dim_tags in region_dim_tags.items():
-
             if name == "atoms":
                 # The atoms are not just a constant size field, but we
                 # want to have a finer mesh close to the atoms. We use a
@@ -698,18 +689,22 @@ class DeviceMesh:
         gmsh.model.mesh.field.set_numbers(min_field, "FieldsList", region_fields)
         gmsh.model.mesh.field.set_as_background_mesh(min_field)
 
-    def _map_nodes_to_physical_regions(self):
+    def _map_nodes_to_physical_regions(self) -> dict[str, NDArray]:
         """Maps the nodes in the mesh to the physical regions defined in GMSH.
 
-        This function creates a mapping from the nodes in the mesh to the
-        physical regions defined in GMSH. It identifies which nodes belong
-        to which physical groups based on the cell sets defined in the
-        mesh.
+        This function creates a mapping from the nodes in the mesh to
+        the physical regions defined in GMSH. It identifies which nodes
+        belong to which physical groups based on the cell sets defined
+        in the mesh.
+
+        Returns
+        -------
+        dict[str, NDArray]
+            A dictionary mapping region names to arrays of node indices.
 
         """
         region_node_inds = {}
-        for region_name in self.region_mesh_sizes.keys():
-
+        for region_name in self.region_mesh_sizes:
             node_inds = []
             for cell_block, cell_inds in zip(
                 self.mesh.cells, self.mesh.cell_sets[region_name]
@@ -730,9 +725,9 @@ class DeviceMesh:
     def generate_mesh(self) -> meshio.Mesh:
         """Generates the mesh for the device geometry.
 
-        This function generates a mesh for the device geometry defined in
-        the configuration. It uses GMSH to create the mesh and returns it
-        as a `meshio.Mesh` object.
+        This function generates a mesh for the device geometry defined
+        in the configuration. It uses GMSH to create the mesh and
+        returns it as a `meshio.Mesh` object.
 
         Returns
         -------
@@ -753,6 +748,7 @@ class DeviceMesh:
         gmsh.option.set_number("General.Terminal", 0)
         gmsh.option.set_number("General.Verbosity", 5)
         gmsh.option.set_number("Geometry.Tolerance", GMSH_GEOMETRY_TOLERANCE)
+        gmsh.option.set_number("Geometry.OCCBoundsUseStl", GMSH_OCC_USE_STL_BOUNDS)
 
         gmsh.logger.start()
         gmsh.model.add(".tmp")
@@ -761,47 +757,62 @@ class DeviceMesh:
         print("    Adding device geometry regions...")
         region_dim_tags = {}
         for region in self.config.device.geometry.regions:
-            if isinstance(region.properties, VolumeProperties):
-                # We do not add volumes as physical groups directly.
-                # Instead, we will find the nodes in the volumes after
-                # meshing and assign them to physical groups based on
-                # that. This is because the volumes are not meshed as
-                # separate entities,
-                continue
-
             dim_tag = _add_entity(region.shape)
-            region_dim_tags[region.name] = dim_tag
+            region_dim_tags[region.name] = [dim_tag]
 
-        print("    Adding structure cell...")
-        cell_dim_tags = [self._add_structure_cell()]
+        if self.structure is not None:
+            print("    Adding structure cell...")
+            region_dim_tags["cell"] = [self._add_structure_cell()]
+
+            print("    Adding atoms...")
+            atom_dim_tags = []
+            for position in self.structure.positions:
+                tag = gmsh.model.occ.add_point(*position)
+                atom_dim_tags.append((0, tag))
+
+            region_dim_tags["atoms"] = atom_dim_tags
+
+        gmsh.model.occ.synchronize()
 
         print("    Adding bounding box...")
         bounding_box_dim_tags = [self._add_bounding_box()]
 
-        # Remove the cell again, since we only needed it to define the
-        # bounding, but we do not want it to be part of the final
-        # geometry.
-        gmsh.model.occ.remove(cell_dim_tags, recursive=True)
-        gmsh.model.occ.synchronize()
-
         # Only fragment if there is any geometry defined, otherwise we
         # just have the bounding box.
         if region_dim_tags:
-            # Fragment and remap the entities to ensure a consistent mesh.
-            out_dim_tags, out_map = gmsh.model.occ.fragment(
+            num_dim_tags = [len(dim_tags) for dim_tags in region_dim_tags.values()]
+            dim_tag_offsets = [
+                sum(num_dim_tags[:i]) for i in range(len(num_dim_tags) + 1)
+            ]
+
+            __, out_map = gmsh.model.occ.fragment(
                 bounding_box_dim_tags,
-                list(region_dim_tags.values()),
+                list(itertools.chain.from_iterable(region_dim_tags.values())),
             )
-            region_dim_tags = dict(zip(region_dim_tags.keys(), out_map[1:]))
-            bounding_box_dim_tags = out_map[0]
+            bounding_box_dim_tags = out_map.pop(0)
+            for region, (start, stop) in zip(
+                region_dim_tags, itertools.pairwise(dim_tag_offsets)
+            ):
+                region_dim_tags[region] = list(
+                    itertools.chain.from_iterable(out_map[start:stop])
+                )
 
-        region_dim_tags["bounding-box"] = bounding_box_dim_tags
+            used_dim_tags = {
+                dim_tag for out in region_dim_tags.values() for dim_tag in out
+            }
+            bounding_box_dim_tags = [
+                dim_tag
+                for dim_tag in bounding_box_dim_tags
+                if dim_tag not in used_dim_tags
+            ]
 
-        print("    Embedding atoms...")
-        atom_dim_tags = self._embed_atoms(region_dim_tags["bounding-box"])
-        region_dim_tags["atoms"] = atom_dim_tags
+        if bounding_box_dim_tags:
+            region_dim_tags["bounding-box"] = bounding_box_dim_tags
 
-        self._enforce_mesh_periodicity(region_dim_tags["bounding-box"])
+        gmsh.model.occ.synchronize()
+
+        if self.structure is not None and any(self.structure.pbc):
+            self._enforce_mesh_periodicity(region_dim_tags["cell"])
 
         self._configure_mesh_size_fields(region_dim_tags)
 
@@ -815,31 +826,6 @@ class DeviceMesh:
         gmsh.model.mesh.generate(dim=3)
         gmsh.model.mesh.remove_duplicate_nodes()
         gmsh.model.mesh.remove_duplicate_elements()
-
-        # Set up physical groups for the volume regions based on which
-        # nodes are inside the corresponding shapes. We do this after
-        # meshing, since the volume regions may not be meshed as
-        # separate entities, but we can still identify which nodes
-        # belong to which regions based on their coordinates.
-        node_tags, node_coords, __ = gmsh.model.mesh.get_nodes()
-        node_coords = node_coords.reshape(-1, 3)
-        for region in self.config.device.geometry.regions:
-            if not isinstance(region.properties, VolumeProperties):
-                continue
-
-            inside_mask = inside_shape(node_coords, region.shape)
-            region_node_tags = node_tags[inside_mask]
-
-            discrete_entity_tag = gmsh.model.add_discrete_entity(0)
-            gmsh.model.mesh.add_nodes(
-                0, discrete_entity_tag, [], node_coords[inside_mask].flatten()
-            )
-            max_tag = gmsh.model.mesh.get_max_node_tag()
-            element_tags = np.arange(len(region_node_tags)) + max_tag + 1_000_000
-            gmsh.model.mesh.add_elements(
-                0, discrete_entity_tag, [15], [element_tags], [region_node_tags]
-            )
-            gmsh.model.add_physical_group(0, [discrete_entity_tag], name=region.name)
 
         gmsh.model.mesh.optimize(method="", niter=10)
 
@@ -907,8 +893,10 @@ class DeviceMesh:
             for i, name in enumerate(region_names)
         }
 
+        cell_type, cells_dict_key = _dim_to_cell_type[self.dimensionality]
+
         ugrid = pv.UnstructuredGrid(
-            {pv.CellType.TETRA: self.mesh.cells_dict["tetra"]}, self.mesh.points
+            {cell_type: self.mesh.cells_dict[cells_dict_key]}, self.mesh.points
         )
 
         pl = pv.Plotter(off_screen=off_screen)
@@ -925,9 +913,10 @@ class DeviceMesh:
             pl.add_points(
                 points,
                 color=region_colors[name],
-                opacity=0.35,
+                opacity=0.5,
                 show_edges=True,
                 label=name,
+                name=name,
             )
 
         pl.add_legend(loc="lower right")
@@ -936,8 +925,25 @@ class DeviceMesh:
         pl.enable_parallel_projection()
 
         if off_screen:
-            pl.screenshot("device_mesh.png")
+            pl.screenshot(self.config.output_dir / "device_mesh.png")
             return
+
+        # Add a small widget to switch visibility of the different
+        # regions.
+        def toggle_visibility(region_name: str):
+            actor = pl.renderer.actors[region_name]
+            actor.SetVisibility(not actor.GetVisibility())
+            pl.render()
+
+        for name in region_names:
+            pl.add_checkbox_button_widget(
+                lambda state, name=name: toggle_visibility(name),
+                value=True,
+                position=(10, 30 * len(region_names) - 30 * region_names.index(name)),
+                size=20,
+                color_on=region_colors[name],
+                color_off="gray",
+            )
 
         pl.show()
 

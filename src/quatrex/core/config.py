@@ -287,6 +287,31 @@ class SCBAConfig(BaseModel):
     """
 
 
+class SchroedingerConfig(BaseModel):
+    """Parameters for the closed system Schrödinger equation.
+
+    This is the main loop that computes the eigenstates of the
+    Hamiltonian in simulations where [`formalism`](quatrex#formalism)
+    is set to "closed".
+
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_modes: PositiveInt = 100
+    """The number of eigenstates to compute."""
+
+    fermi_level: FiniteFloat | None = None
+    """The Fermi level of the system.
+
+    This has to be provided in order to compute the electron density
+    from the eigenstates using the Fermi-Dirac distribution.
+
+    """
+    temperature: NonNegativeFloat = 300.0
+    """The temperature of the system in Kelvin."""
+
+
 class ElectrostaticsConfig(BaseModel):
     """Parameters for the electrostatics calculations."""
 
@@ -1798,7 +1823,7 @@ class DeviceConfig(BaseModel):
 
     """
 
-    contacts: list[ContactConfig] = Field(default_factory=list)
+    contacts: list[ContactConfig] | None = None
     """The contacts of the device."""
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
@@ -1844,6 +1869,8 @@ class DeviceConfig(BaseModel):
     @model_validator(mode="after")
     def check_kpoint_grid(self) -> Self:
         """Checks that the k-point grid is 1 along the transport direction."""
+        if self.transport_direction is None:
+            return self
 
         if self.transport_direction is not None:
             ind = "abc".index(self.transport_direction)
@@ -1858,6 +1885,8 @@ class DeviceConfig(BaseModel):
     def validate_contacts(self) -> Self:
         """Validates that the required parameters are provided for the
         contacts."""
+        if self.contacts is None:
+            return self
 
         names = []
 
@@ -2309,6 +2338,19 @@ class PreProcessConfig(BaseModel):
 
     """
 
+    assemble_hamiltonian: bool = False
+    """Whether to assemble the Hamiltonian from a provided geometry.
+
+    This pre-processing step will assemble the Hamiltonian from the
+    provided geometry and effective-mass parameters. It will be saved to
+    the input directory as `hamiltonian.h5`.
+
+    Before assembling an effective-mass Hamiltonian, a mesh has to be
+    generated using the `quatrex mesh` command. This mesh will also be
+    saved to the input directory as `device.msh`.
+
+    """
+
 
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
@@ -2334,11 +2376,20 @@ class QuatrexConfig(BaseModel):
         consistent.
 
     """
-    material_model: Literal["DFT", "effective-mass"]
+    material_model: Literal["atomistic", "effective-mass"] = "atomistic"
     """The material model to use.
 
-    - `"DFT"`: Density Functional Theory
-    - `"effective-mass"`: Effective mass approximation
+    This will mainly affect the finite-element meshes used in
+    self-consistent Schrödinger-Poisson loop. Atomisitc material models
+    require an externally provided `structure.xyz` file with the atom
+    positions, which will be embedded in the mesh.
+
+    Possible values are:
+
+    - `"atomistic"`: Ab initio or tight-binding Hamiltonian.
+    - `"effective-mass"`: Effective mass approximation. See the
+      `assemble_hamiltonian` parameter in the
+      [`pre_process`](#pre_process) section for more details.
 
     """
 
@@ -2350,6 +2401,9 @@ class QuatrexConfig(BaseModel):
 
     qtbm: QTBMConfig = QTBMConfig()
     """Parameters for the quantum transmitting boundary method."""
+
+    schroedinger: SchroedingerConfig = SchroedingerConfig()
+    """Parameters for the closed System Schrödinger equation."""
 
     electrostatics: ElectrostaticsConfig = ElectrostaticsConfig()
     """Parameters for the electrostatics calculations."""
@@ -2469,22 +2523,14 @@ class QuatrexConfig(BaseModel):
     def check_device_block_size(self) -> Self:
         """Checks that block size is consistent with other parameters."""
 
-        if self.formalism == "negf":
-            if (
-                self.device.construct_from_unit_cell
-                and self.device.block_size is not None
-            ):
-                raise ValueError(
-                    "block_size cannot be used in conjunction with construct_from_unit_cell=True."
-                )
+        if self.formalism != "negf":
+            # NOTE: Block sizes are not used outside NEGF.
+            return self
 
-            if (
-                not self.device.construct_from_unit_cell
-                and self.device.block_size is None
-            ):
-                raise ValueError(
-                    "block_size must be given when construct_from_unit_cell=False."
-                )
+        if self.device.construct_from_unit_cell and self.device.block_size is not None:
+            raise ValueError(
+                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+            )
 
         return self
 
@@ -2493,9 +2539,13 @@ class QuatrexConfig(BaseModel):
         """Checks that at least one contact exists and is grounded."""
         contacts = self.device.contacts
 
-        if self.formalism != "closed" and not any(
-            contact.voltage == 0 for contact in contacts
-        ):
+        if contacts is None and self.formalism == "closed":
+            return self
+
+        if len(contacts) < 2:
+            raise ValueError("At least two contacts must be defined.")
+
+        if not any(contact.voltage == 0 for contact in contacts):
             raise ValueError(
                 "At least one contact must be grounded (i.e. have zero voltage)."
             )
@@ -2507,6 +2557,8 @@ class QuatrexConfig(BaseModel):
         """Checks that either the Fermi level or the mid-gap energy is set."""
         contacts = self.device.contacts
 
+        if contacts is None and self.formalism == "closed":
+            return self
         for contact in contacts:
             if contact.fermi_level is None and contact.mid_gap_energy is None:
                 raise ValueError(

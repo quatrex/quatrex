@@ -1,0 +1,99 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "closed"              # "negf" or "wf" or "closed"
+material_model = "effective-mass"
+
+[scsp]
+mixer = "under-relaxation"
+mixing_factor = 0.75
+adaptive_mixing = true
+
+max_iterations = 15
+
+[electrostatics]
+# default_epsilon_r = 11.7
+electron_affinity = 4.5
+
+[device]
+kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
+
+    [device.geometry]
+    dimensionality = 2
+    default_mesh_size = 0.5
+
+        [[device.geometry.regions]]
+        name = "source"
+        shape.type = "rectangle"
+        shape.bounds = [[0, 0], [10, 3]]
+
+        properties.effective_mass = [0.19, 0.9, 0.19]
+        properties.donor_concentration = 5e19         # in cm^-3
+        properties.epsilon_r = 14.9
+
+        [[device.geometry.regions]]
+        name = "channel"
+        shape.type = "rectangle"
+        shape.bounds = [[10, 0], [22, 3]]
+
+        properties.effective_mass = [0.19, 0.9, 0.19]
+        properties.band_offset = 0                    # Defaults to 0
+        properties.epsilon_r = 14.9
+
+        [[device.geometry.regions]]
+        name = "drain"
+        shape.type = "rectangle"
+        shape.bounds = [[22, 0], [32, 3]]
+
+        properties.effective_mass = [0.19, 0.9, 0.19]
+        properties.donor_concentration = 5e19         # in cm^-3
+        properties.epsilon_r = 14.9
+
+        [[device.geometry.regions]]
+        name = "top-oxide"
+        shape.type = "rectangle"
+        shape.bounds = [[0, 3], [32, 5]]
+
+        properties.epsilon_r = 3.9
+        properties.effective_mass = 0.5
+        properties.band_offset = 3.6
+
+        [[device.geometry.regions]]
+        name = "bottom-oxide"
+        shape.type = "rectangle"
+        shape.bounds = [[0, -3], [32, 0]]
+
+        properties.epsilon_r = 3.9
+        properties.effective_mass = 0.5
+        properties.band_offset = 3.6
+
+        [[device.geometry.regions]]
+        name = "top-gate"
+        shape.type = "line"
+
+        shape.start = [10, 5]
+        shape.end = [22, 5]
+
+        properties.voltage = 0.0
+        properties.work_function = 4.5
+
+        [[device.geometry.regions]]
+        name = "bottom-gate"
+        shape.type = "line"
+
+        shape.start = [10, -3]
+        shape.end = [22, -3]
+
+        properties.voltage = 0.0
+        properties.work_function = 4.5
+
+[schroedinger]
+num_modes = 100
+
+fermi_level = 0.18  # optional?
+temperature = 300.0 # optional?
+
+
+[pre_process]
+assemble_hamiltonian = true
+plot_contact_band_structure = false

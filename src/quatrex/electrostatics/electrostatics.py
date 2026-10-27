@@ -11,7 +11,6 @@ from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import BaseDevice
-from quatrex.electrostatics.geometry_config import VolumeProperties
 from quatrex.electrostatics.meshing import DeviceMesh
 from quatrex.electrostatics.solver import (
     DirectPoissonSolver,
@@ -135,9 +134,6 @@ class ElectrostaticSolver:
         )
         fixed_density = np.zeros(device_mesh.mesh.points.shape[0])
         for region in config.device.geometry.regions:
-            if not isinstance(region.properties, VolumeProperties):
-                continue
-
             if (
                 region.properties.donor_concentration == 0.0
                 and region.properties.acceptor_concentration == 0.0

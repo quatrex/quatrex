@@ -1279,13 +1279,13 @@ class CoulombScreeningConfig(BaseModel):
 
     """
 
-    include_energy_renormalization: Literal["self-energy", "polarization", "both"] = (
-        "self-energy"
-    )
+    include_energy_renormalization: Literal[
+        "self-energy", "polarization", "both", "none"
+    ] = "self-energy"
     r"""Whether to compute the Hermitian part of the retarded
     polarization and/or self-energy.
 
-    Possible values are `"self-energy"`, `"polarization"`, and `"both"`.
+    Possible values are `"self-energy"`, `"polarization"`, `"both"`, and `"none"`.
 
     The full retarded interaction quantities are general complex-valued
     matrices, where the Hermitian part is computed from the

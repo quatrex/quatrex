@@ -256,11 +256,12 @@ class SCBA(TransportSolver):
                 if self.device.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
-            self.sigma_fock = SigmaFock(
-                self.config,
-                self.device.coulomb_matrix,
-                self.electron_energies,
-            )
+            if self.config.coulomb_screening.include_fock_term:
+                self.sigma_fock = SigmaFock(
+                    self.config,
+                    self.device.coulomb_matrix,
+                    self.electron_energies,
+                )
             # Have to transpose the coulomb matrix back to the original distribution.
             (
                 self.device.coulomb_matrix.dtranspose()
@@ -487,10 +488,11 @@ class SCBA(TransportSolver):
         self.data.p_greater.free_data()
         self.data.p_retarded_hermitian.free_data()
 
-        self.sigma_fock.compute(
-            self.data.g_lesser,
-            out=(self.data.sigma_retarded_hermitian,),
-        )
+        if self.config.coulomb_screening.include_fock_term:
+            self.sigma_fock.compute(
+                self.data.g_lesser,
+                out=(self.data.sigma_retarded_hermitian,),
+            )
 
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,

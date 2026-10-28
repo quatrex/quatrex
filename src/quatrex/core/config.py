@@ -1285,7 +1285,8 @@ class CoulombScreeningConfig(BaseModel):
     r"""Whether to compute the Hermitian part of the retarded
     polarization and/or self-energy.
 
-    Possible values are `"self-energy"`, `"polarization"`, `"both"`, and `"none"`.
+    Possible values are `"self-energy"`, `"polarization"`, `"both"` and
+    `"none"`.
 
     The full retarded interaction quantities are general complex-valued
     matrices, where the Hermitian part is computed from the
@@ -1322,6 +1323,23 @@ class CoulombScreeningConfig(BaseModel):
     self-energy.
 
     Computing the correction is slightly more expensive.
+
+    """
+
+    include_fock_term: bool = True
+    """Whether to include the Fock term in the self-energy.
+
+    The Fock term is a static, Hermitian contribution to the self-energy
+    that is computed from the lesser Green's function and the Coulomb
+    matrix as
+
+    $$
+    \mathbf{\Sigma}^R_{\mathrm{Fock}} = \left( \int dE \, G^<(E) \right)
+    \odot V.
+    $$
+
+    If no changes in the band gap are desired, this term can be
+    neglected. However, it is generally recommended to include it.
 
     """
 
@@ -2149,16 +2167,17 @@ class ConvolveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # NOTE: should be calculate from the number of energy points, ranks,
-    # and nnz.
-    batch_size: PositiveInt | None = None
-    """The batch size to use for the FFT convolution.
+    # TODO: In principle, this could be calculated from the number of
+    # energy points, ranks, and nnz. Since (unlike the energies) a user
+    # has no a priori knowledge of the rank-local nnz, we give control
+    # over the number of batches rather than the maximum batch size.
+    num_batches: PositiveInt = 1
+    """The number of batches to divide the FFT convolution into.
 
-    Since the performing FFT can lead to memory bottlenecks, the
-    convolution can be performed in batches. The `batch_size` parameter
-    determines the number of matrix elements to compute in each batch.
-    If set to `None`, the entire convolution is performed in a single
-    batch.
+    Since the performing FFT over all non-zero elements simultaneously
+    can lead to memory bottlenecks, the convolution can be performed in
+    a number of batches. If left at the default value of `1`, the entire
+    convolution is performed in a single batch over the non-zeros.
 
     """
 

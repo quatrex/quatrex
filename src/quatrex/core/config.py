@@ -1279,13 +1279,39 @@ class CoulombScreeningConfig(BaseModel):
 
     """
 
-    include_energy_renormalization: Literal["self-energy", "polarization", "both"] = (
-        "self-energy"
-    )
-    r"""Whether to compute the Hermitian part of the retarded
-    polarization and/or self-energy.
+    energy_renormalization_terms: tuple[
+        Literal["exchange", "correlation", "polarization"], ...
+    ] = ("exchange", "correlation")
+    r"""Which energy-renormalizing terms to include the Hermitian parts
+    of the retarded polarization and/or self-energy.
 
-    Possible values are `"self-energy"`, `"polarization"`, and `"both"`.
+    This is specified as a tuple of strings, where the presence of each
+    string turns on a different part of the retarded self-energy and/or
+    polarization:
+
+    - `"exchange"`: Include the Fock term in the retarded self-energy,
+      which is a static, Hermitian contribution to the self-energy that
+      is computed from the lesser Green's function and the Coulomb
+      matrix.
+    - `"correlation"`: Include the Hermitian part of the retarded
+      self-energy, which is computed from the lesser and greater parts
+      using the Kramers-Kronig relations.
+    - `"polarization"`: Include the Hermitian part of the retarded
+      polarization, which is computed from the lesser and greater
+      parts using the Kramers-Kronig relations.
+
+    The default set of energy-renormalizing terms are the `"exchange"`
+    and `"correlation"` parts in the self-energy and no renormalization
+    in the polarization.
+
+    The Fock term is a static, Hermitian contribution to the retarded
+    self-energy that is computed from the lesser Green's function and
+    the Coulomb matrix as
+
+    $$
+    \mathbf{\Sigma}^R_{\mathrm{Fock}} = \left( \int dE \, G^<(E) \right)
+    \odot V.
+    $$
 
     The full retarded interaction quantities are general complex-valued
     matrices, where the Hermitian part is computed from the
@@ -1304,12 +1330,9 @@ class CoulombScreeningConfig(BaseModel):
     \mathbf{X}^{R} \approx \frac{1}{2} (\mathbf{X}^{>} - \mathbf{X}^{<})
     $$
 
-    The default is to only include the skew-Hermitian part in the
-    Coulomb screening self-energy and not in the polarization.
-
-    The Hermitian part is computed using a Hilbert transform. For the
-    Coulomb screening self-energy, this Hilbert transform can lead to
-    errors at the edges of the energy window. The
+    In `quatrex`, this Hermitian part is computed using a Hilbert
+    transform. For the Coulomb screening self-energy, the Hilbert
+    transform can lead to errors at the edges of the energy window. The
     [`apply_hilbert_correction`](#apply_hilbert_correction) option can
     be used to apply a correction to the Hilbert transform to mitigate
     these errors.
@@ -1330,7 +1353,7 @@ class CoulombScreeningConfig(BaseModel):
         """Checks if the Hilbert correction can be applied."""
         if (
             self.apply_hilbert_correction
-            and self.include_energy_renormalization not in ["self-energy", "both"]
+            and "correlation" not in self.energy_renormalization_terms
         ):
             raise ValueError(
                 "Hilbert correction can only be applied if the real part of the self-energy is included."
@@ -1558,6 +1581,15 @@ class OutputConfig(BaseModel):
 
     This will output the energy-resolved hole density computed from the
     greater Green's function.
+
+    """
+
+    scattering_rate: bool = False
+    """Whether to save the scattering rates.
+
+    This will output the scattering rates resolved in energy and space
+    computed from the lesser and greater self-energies and Green's
+    functions.
 
     """
 
@@ -2149,16 +2181,17 @@ class ConvolveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # NOTE: should be calculate from the number of energy points, ranks,
-    # and nnz.
-    batch_size: PositiveInt | None = None
-    """The batch size to use for the FFT convolution.
+    # TODO: In principle, this could be calculated from the number of
+    # energy points, ranks, and nnz. Since (unlike the energies) a user
+    # has no a priori knowledge of the rank-local nnz, we give control
+    # over the number of batches rather than the maximum batch size.
+    num_batches: PositiveInt = 1
+    """The number of batches to divide the FFT convolution into.
 
-    Since the performing FFT can lead to memory bottlenecks, the
-    convolution can be performed in batches. The `batch_size` parameter
-    determines the number of matrix elements to compute in each batch.
-    If set to `None`, the entire convolution is performed in a single
-    batch.
+    Since the performing FFT over all non-zero elements simultaneously
+    can lead to memory bottlenecks, the convolution can be performed in
+    a number of batches. If left at the default value of `1`, the entire
+    convolution is performed in a single batch over the non-zeros.
 
     """
 

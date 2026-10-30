@@ -9,7 +9,7 @@ from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_convolve, fft_correlate_kpoints
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import free_mempool
+from qttools.utils.gpu_utils import clear_fft_plan_cache, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -83,14 +83,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
             * xp.abs(get_equal_spacing(self.energies))
             / self.kpoint_volume
         )
-        self.batch_size = config.compute.convolve.batch_size
+        self.num_batches = config.compute.convolve.num_batches
 
         self.align_to_complex_axes = (
             config.coulomb_screening.align_polarization_to_complex_axes
         )
         self.include_energy_renormalization = (
-            config.coulomb_screening.include_energy_renormalization
-            in ("polarization", "both")
+            "polarization" in config.coulomb_screening.energy_renormalization_terms
         )
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
@@ -137,38 +136,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
             comm=comm,
         ):
 
+            # Because of padding there could be no ij elements.
             if p_greater.data.shape[-1] != 0:
-                if xp.__name__ == "cupy":
-                    free_mempool()
-                    free_memory, _ = xp.cuda.Device().mem_info
-                    num_buffers = 6  # closer to 4 but overapproximating
-                    avail_buffer_size = free_memory // num_buffers
-                    ne = g_lesser.data.shape[0]
-                    no = g_greater.data.shape[-1]
-                    batch_size = avail_buffer_size // (
-                        2 * ne * 16
-                    )  # 16 bytes for complex128
-                    batch_size = max(min(batch_size, no), 1)
-                    batches = int(np.ceil(no / batch_size))
-                    batch_size = int(np.ceil(no / batches))  # Balance last batch
-                    if self.batch_size is not None and batch_size < self.batch_size:
-                        cache.clear()
-                    self.batch_size = batch_size
-                    if comm.rank == 0:
-                        print(
-                            f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
-                            flush=True,
-                        )
-                        print(cache.show_info(), flush=True)
-                else:
-                    if self.batch_size is None:
-                        # NOTE: This is a temporary solution. The batch size should be
-                        # calculated in the configuration.
-                        self.batch_size = p_greater.data.shape[-1]
+                clear_fft_plan_cache()
+                free_mempool()
 
                 batch_counts, _ = get_section_sizes(
                     p_greater.data.shape[-1],
-                    int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
+                    min(self.num_batches, p_greater.data.shape[-1]),
                 )
 
                 batch_displacements = np.cumsum(
@@ -182,13 +157,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
                     )
                     p_l_full = -p_g_full[::-1].conj()
-                    # TODO: the datastructures does not allow for easy slicing of the
-                    # data. This is a workaround.
-                    # Fill the matrices with the data. Take second part of the
-                    # energy convolution.
+                    # Fill the matrices with the data. Take second part
+                    # of the energy convolution. # Note that only the
+                    # anti-hermitian part is computed here.
                     p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
-                    # Note that only the hermitian part is computed here.
 
                     if self.include_energy_renormalization:
                         p_retarded_hermitian.data[..., batch] = (
@@ -204,6 +177,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
                             )
                             * self.kpoint_volume
                         )
+
+                clear_fft_plan_cache()
+                free_mempool()
 
         with profiler.profile_range(
             label="PCoulombScreening: nnz->stack transpose", level="default", comm=comm

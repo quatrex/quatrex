@@ -597,18 +597,18 @@ class QTBMContact(BaseContact):
                         )
                 reduced_M.append(temp)
 
-            #temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
+            # temp = self._construct_contact_matrix(reduced_M).toarray()[xp.newaxis, :, :]
             temp = self._construct_contact_matrix(reduced_M)
-            ind1 = np.arange(temp.shape[1]//3)
-            ind2 = np.arange(temp.shape[1]//3, 2*temp.shape[1]//3)
-            ind3 = np.arange(2*temp.shape[1]//3, temp.shape[1])
+            ind1 = np.arange(temp.shape[1] // 3)
+            ind2 = np.arange(temp.shape[1] // 3, 2 * temp.shape[1] // 3)
+            ind3 = np.arange(2 * temp.shape[1] // 3, temp.shape[1])
 
             A = temp[:, ind1]
             B = temp[:, ind2]
             C = temp[:, ind3]
 
             # HACK
-            B = (B+B.conj().T)/2
+            B = (B + B.conj().T) / 2
 
             A_tot = [A, B, C]
 
@@ -622,7 +622,7 @@ class QTBMContact(BaseContact):
                     )
                 )
                 reflection_k[ky, kz] = [
-                    -A_tot[0][i] @ b for i, b in enumerate(phi_reflected)
+                    -A_tot[0] @ b for i, b in enumerate(phi_reflected)
                 ]
                 phi_reflected_k[ky, kz] = phi_reflected.copy()
                 eig_reflected_k[ky, kz] = eig_reflected.copy()
@@ -634,7 +634,7 @@ class QTBMContact(BaseContact):
                 sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
                 bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
-            injection_k[ky, kz] = [-A_tot[0][i] @ b for i, b in enumerate(b_injected)]
+            injection_k[ky, kz] = [-A_tot[0] @ b for i, b in enumerate(b_injected)]
             b_injected_k[ky, kz] = b_injected
 
         # Upscale injection and Bloch injection matrices

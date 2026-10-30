@@ -4,7 +4,7 @@
 
 import warnings
 
-from qttools import NDArray, xp, sparse
+from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions.obc.obc import OBCSolver
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
@@ -122,7 +122,9 @@ class Spectral(OBCSolver):
             dEk_dk = -sum(
                 (1j * n)
                 * xp.diagonal(
-                    (xp.squeeze(vs.conj().swapaxes(-1, -2)) @ a_x @ xp.squeeze(vs))[xp.newaxis, :, :],
+                    (xp.squeeze(vs.conj().swapaxes(-1, -2)) @ a_x @ xp.squeeze(vs))[
+                        xp.newaxis, :, :
+                    ],
                     axis1=-2,
                     axis2=-1,
                 )
@@ -187,6 +189,7 @@ class Spectral(OBCSolver):
             if self.residual_normalization:
                 residuals /= xp.abs(ws)
 
+        print("Residuals:", residuals, flush=True)
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
         # polynomial eigenvalue equation with respect to k.
@@ -231,9 +234,10 @@ class Spectral(OBCSolver):
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay
 
-        mask_reflected = (mask_propagating | mask_decaying) & (
-            residuals < self.residual_tolerance
-        )
+        mask_reflected = mask_propagating | mask_decaying
+        # & (
+        #    residuals < self.residual_tolerance
+        # )
 
         # Calulate injecting modes
         if find_injected:
@@ -441,30 +445,51 @@ class Spectral(OBCSolver):
             return_modes_only is True.
 
         """
-        
+
         A, B, C = a_xx
 
-        if xp.imag(A.data).max() < 1e-10 and xp.imag(B.data).max() < 1e-10 and xp.imag(C.data).max() < 1e-10:
+        if (
+            xp.imag(A.data).max() < 1e-10
+            and xp.imag(B.data).max() < 1e-10
+            and xp.imag(C.data).max() < 1e-10
+        ):
             print("REAL MATRIX DETECTED", flush=True)
             A = A.real
             B = B.real
             C = C.real
 
-
-        #number of elements in a row
+        # number of elements in a row
         counts = xp.diff(A.indptr)
-        #number of non-zero rows
+        # number of non-zero rows
         non_zero_rows = xp.where(counts > 0)[0]
         mask_n = counts > 0
         mask_z = counts == 0
         print("SPARSITY REDUCTION")
         print("Number of non-zero rows:", len(non_zero_rows), flush=True)
 
-        B_zz_inv = xp.linalg.inv(B[mask_z,:][:, mask_z].todense())
+        B_zz_inv = xp.linalg.inv(B[mask_z, :][:, mask_z].todense())
 
-        A_prime = A[mask_n,:][:, mask_n].todense() - A[mask_n,:][:, mask_z].todense() @ B_zz_inv @ B[mask_z,:][:, mask_n].todense()
-        B_prime = B[mask_n,:][:, mask_n].todense() - A[mask_n,:][:, mask_z].todense() @ B_zz_inv @ C[mask_z,:][:, mask_n].todense() - B[mask_n,:][:, mask_z].todense() @ B_zz_inv @ B[mask_z,:][:, mask_n].todense()
-        C_prime = C[mask_n,:][:, mask_n].todense() - B[mask_n,:][:, mask_z].todense() @ B_zz_inv @ C[mask_z,:][:, mask_n].todense()
+        A_prime = (
+            A[mask_n, :][:, mask_n].todense()
+            - A[mask_n, :][:, mask_z].todense()
+            @ B_zz_inv
+            @ B[mask_z, :][:, mask_n].todense()
+        )
+        B_prime = (
+            B[mask_n, :][:, mask_n].todense()
+            - A[mask_n, :][:, mask_z].todense()
+            @ B_zz_inv
+            @ C[mask_z, :][:, mask_n].todense()
+            - B[mask_n, :][:, mask_z].todense()
+            @ B_zz_inv
+            @ B[mask_z, :][:, mask_n].todense()
+        )
+        C_prime = (
+            C[mask_n, :][:, mask_n].todense()
+            - B[mask_n, :][:, mask_z].todense()
+            @ B_zz_inv
+            @ C[mask_z, :][:, mask_n].todense()
+        )
 
         a_xx = (A_prime, B_prime, C_prime)
 
@@ -495,22 +520,25 @@ class Spectral(OBCSolver):
         ws, vs = self.nevp(blocks)
         ws, vs = self._upscale_eigenmodes(ws, vs, block_sections)
 
-        ws=xp.squeeze(ws)
-        vs=xp.squeeze(vs)
+        ws = xp.squeeze(ws)
+        vs = xp.squeeze(vs)
 
-        mask_ws = (xp.abs(ws) > 1/100) & (xp.abs(ws) < 100)
+        mask_ws = (xp.abs(ws) > 1 / 1000) & (xp.abs(ws) < 1000)
         ws = ws[mask_ws]
         vs = vs[:, mask_ws]
 
-        print(xp.abs(ws),flush=True)
+        print(xp.abs(ws), flush=True)
 
-        vs_z = - B_zz_inv @ (B[mask_z,:][:, mask_n] @ vs + C[mask_z,:][:, mask_n] @ vs @ sparse.diags(1/ws))
+        vs_z = -B_zz_inv @ (
+            B[mask_z, :][:, mask_n] @ vs
+            + C[mask_z, :][:, mask_n] @ vs @ sparse.diags(ws)
+        )
 
-        v_new = xp.zeros((vs.shape[0]+vs_z.shape[0], vs.shape[1]), dtype=ws.dtype)
+        v_new = xp.zeros((vs.shape[0] + vs_z.shape[0], vs.shape[1]), dtype=ws.dtype)
         v_new[mask_n, :] = vs
         v_new[mask_z, :] = vs_z
 
-        vs = v_new
+        vs = v_new.copy()
 
         vs = vs[xp.newaxis, :, :]  # Add batch dimension
         ws = ws[xp.newaxis, :]  # Add batch dimension
@@ -518,7 +546,7 @@ class Spectral(OBCSolver):
         print(vs.shape, flush=True)
         print(ws.shape, flush=True)
 
-        a_xx = (A,B,C)
+        a_xx = (A, B, C)
 
         if return_injected:
             mask_reflected, mask_injected, dEk_dk = self._find_reflected_modes(
@@ -599,12 +627,17 @@ class Spectral(OBCSolver):
                         vrs_injected / wrs_injected[xp.newaxis, :]
                         - vrs_reflected
                         @ xp.diag(1 / wrs_reflected)
-                        @ phi_inv_reflected[i]
-                        @ vrs_injected
+                        @ (phi_inv_reflected[i] @ vrs_injected)
                     )
 
             if return_modes_only:
-                print(b_injected[0].shape, phi_reflected[0].shape, eig_reflected[0].shape, phi_inv_reflected[0].shape, flush=True)
+                print(
+                    b_injected[0].shape,
+                    phi_reflected[0].shape,
+                    eig_reflected[0].shape,
+                    phi_inv_reflected[0].shape,
+                    flush=True,
+                )
                 return None, b_injected, phi_reflected, eig_reflected, phi_inv_reflected
 
             return x_ii_ref, b_injected

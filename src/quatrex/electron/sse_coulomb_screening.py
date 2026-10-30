@@ -86,9 +86,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.num_batches = config.compute.convolve.num_batches
 
         self.include_energy_renormalization = (
-            config.coulomb_screening.include_energy_renormalization
-            in ("self-energy", "both")
+            "correlation" in config.coulomb_screening.energy_renormalization_terms
         )
+
         self.apply_hilbert_correction = (
             config.coulomb_screening.apply_hilbert_correction
         )
@@ -325,7 +325,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 free_mempool()
 
                 batch_counts, _ = get_section_sizes(
-                    g_greater.data.shape[-1], self.num_batches
+                    g_greater.data.shape[-1],
+                    min(self.num_batches, g_greater.data.shape[-1]),
                 )
 
                 batch_displacements = np.cumsum(

@@ -14,7 +14,7 @@ from qttools.comm import comm, distributed_max
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import current_conservation, density
+from quatrex.core.observables import current_conservation, density, scattering_rate
 from quatrex.core.transport import TransportSolver
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device import BaseDevice, SCBADevice
@@ -147,12 +147,12 @@ class Observables:
 
     excess_charge_density: NDArray = None
 
-    electron_electron_scattering_rate: NDArray = None
-    electron_photon_scattering_rate: NDArray = None
-    electron_phonon_scattering_rate: NDArray = None
-
     sigma_lesser_density: NDArray = None
     sigma_greater_density: NDArray = None
+
+    scattering_rate: NDArray = None
+
+    current_conservation: NDArray = None
 
     # --- Coulomb screening --------------------------------------------
     w_lesser_density: NDArray = None
@@ -256,7 +256,7 @@ class SCBA(TransportSolver):
                 if self.device.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
-            if self.config.coulomb_screening.include_fock_term:
+            if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
                 self.sigma_fock = SigmaFock(
                     self.config,
                     self.device.coulomb_matrix,
@@ -393,7 +393,7 @@ class SCBA(TransportSolver):
         )
 
         meir_wingreen_current = self.observables.electron_current.get(
-            "meir-wingreen", [0, 0]
+            "meir-wingreen", xp.array([0, 0])
         )
         i_left = xp.real(meir_wingreen_current[..., 0])
         i_right = xp.real(meir_wingreen_current[..., -1])
@@ -405,12 +405,7 @@ class SCBA(TransportSolver):
         current_diff = xp.abs(left_current - right_current)
         rel_current_diff = current_diff / xp.abs(avg_current)
 
-        current_conservation_abs, current_conservation_rel = current_conservation(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.data.sigma_lesser,
-            self.data.sigma_greater,
-        )
+        current_conservation = self.observables.current_conservation
 
         if comm.rank == 0:
             print(
@@ -431,8 +426,10 @@ class SCBA(TransportSolver):
             print(
                 f"Relative Contact Current Difference: {rel_current_diff}", flush=True
             )
-            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
-            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
+            print(
+                f"Relative Scattering Current Conservation: {current_conservation}",
+                flush=True,
+            )
 
         return False  # TODO: :-)
 
@@ -488,7 +485,7 @@ class SCBA(TransportSolver):
         self.data.p_greater.free_data()
         self.data.p_retarded_hermitian.free_data()
 
-        if self.config.coulomb_screening.include_fock_term:
+        if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
             self.sigma_fock.compute(
                 self.data.g_lesser,
                 out=(self.data.sigma_retarded_hermitian,),
@@ -512,6 +509,21 @@ class SCBA(TransportSolver):
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
+
+        self.observables.current_conservation = current_conservation(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.sigma_lesser,
+            self.data.sigma_greater,
+        )
+        if self.config.outputs.scattering_rate:
+            self.observables.scattering_rate = scattering_rate(
+                self.data.g_lesser,
+                self.data.g_greater,
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+            )
+
         if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
@@ -585,6 +597,11 @@ class SCBA(TransportSolver):
             return
 
         outputs = {}
+
+        if self.config.outputs.scattering_rate:
+            outputs[f"scattering_rate_{iteration}.npy"] = (
+                self.observables.scattering_rate
+            )
 
         if self.config.outputs.electron_ldos:
             outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos

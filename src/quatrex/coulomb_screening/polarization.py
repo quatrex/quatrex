@@ -89,8 +89,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             config.coulomb_screening.align_polarization_to_complex_axes
         )
         self.include_energy_renormalization = (
-            config.coulomb_screening.include_energy_renormalization
-            in ("polarization", "both")
+            "polarization" in config.coulomb_screening.energy_renormalization_terms
         )
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
@@ -143,7 +142,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 free_mempool()
 
                 batch_counts, _ = get_section_sizes(
-                    p_greater.data.shape[-1], self.num_batches
+                    p_greater.data.shape[-1],
+                    min(self.num_batches, p_greater.data.shape[-1]),
                 )
 
                 batch_displacements = np.cumsum(

@@ -20,12 +20,12 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
 
     [device.geometry]
     dimensionality = 2
-    default_mesh_size = 0.5
+    default_mesh_size = 1
 
         [[device.geometry.regions]]
         name = "source"
         shape.type = "rectangle"
-        shape.bounds = [[0, 0], [10, 3]]
+        shape.bounds = [[0, 0], [100, 30]]
 
         properties.effective_mass = [0.19, 0.9, 0.19]
         properties.donor_concentration = 5e19         # in cm^-3
@@ -34,7 +34,7 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         [[device.geometry.regions]]
         name = "channel"
         shape.type = "rectangle"
-        shape.bounds = [[10, 0], [22, 3]]
+        shape.bounds = [[100, 0], [220, 30]]
 
         properties.effective_mass = [0.19, 0.9, 0.19]
         properties.band_offset = 0                    # Defaults to 0
@@ -43,7 +43,7 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         [[device.geometry.regions]]
         name = "drain"
         shape.type = "rectangle"
-        shape.bounds = [[22, 0], [32, 3]]
+        shape.bounds = [[220, 0], [320, 30]]
 
         properties.effective_mass = [0.19, 0.9, 0.19]
         properties.donor_concentration = 5e19         # in cm^-3
@@ -52,7 +52,7 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         [[device.geometry.regions]]
         name = "top-oxide"
         shape.type = "rectangle"
-        shape.bounds = [[0, 3], [32, 5]]
+        shape.bounds = [[0, 30], [320, 50]]
 
         properties.epsilon_r = 3.9
         properties.effective_mass = 0.5
@@ -61,7 +61,7 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         [[device.geometry.regions]]
         name = "bottom-oxide"
         shape.type = "rectangle"
-        shape.bounds = [[0, -3], [32, 0]]
+        shape.bounds = [[0, -30], [320, 0]]
 
         properties.epsilon_r = 3.9
         properties.effective_mass = 0.5
@@ -71,8 +71,8 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         name = "top-gate"
         shape.type = "line"
 
-        shape.start = [10, 5]
-        shape.end = [22, 5]
+        shape.start = [100, 50]
+        shape.end = [220, 50]
 
         properties.voltage = 0.0
         properties.work_function = 4.5
@@ -81,8 +81,8 @@ kpoint_grid = [1, 1, 1] # TODO: Make it so kpoint grid can be different lengths
         name = "bottom-gate"
         shape.type = "line"
 
-        shape.start = [10, -3]
-        shape.end = [22, -3]
+        shape.start = [100, -30]
+        shape.end = [220, -30]
 
         properties.voltage = 0.0
         properties.work_function = 4.5

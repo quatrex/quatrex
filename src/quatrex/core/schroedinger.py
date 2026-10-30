@@ -47,6 +47,9 @@ class Schroedinger(TransportSolver):
             else:
                 overlap += s_r * phase_factor
 
+        overlap = overlap + sparse.triu(overlap, k=1).conj().T
+        hamiltonian = hamiltonian + sparse.triu(hamiltonian, k=1).conj().T
+
         hamiltonian += 0.5 * (
             overlap.multiply(self.device.potential)
             + overlap.multiply(self.device.potential[None, :])

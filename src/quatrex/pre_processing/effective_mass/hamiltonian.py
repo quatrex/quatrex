@@ -12,7 +12,7 @@ from skfem.helpers import dot, grad, mul
 
 from qttools.utils.hdf5_utils import save_hdf5_dict
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.constants import hbar2_over_2me
+from quatrex.core.constants import hbar, m_e
 from quatrex.electrostatics.meshing import DeviceMesh
 
 _DIM_TO_CELL_TYPE = {
@@ -99,38 +99,9 @@ def _inverse_mass_tensor(m_star, dim: int) -> np.ndarray:
     return np.linalg.inv(_as_tensor(m_star, dim, name="effective mass"))
 
 
-def _element_indices_for_region(
-    mesh: meshio.Mesh,
-    region_name: str,
-    cell_type: str,
-    dim: int,
-) -> np.ndarray:
-    """Element indices for a named physical group."""
-    sets_dict = mesh.cell_sets_dict or {}
-    if region_name in sets_dict and cell_type in sets_dict[region_name]:
-        idx = np.asarray(sets_dict[region_name][cell_type], dtype=int)
-        if idx.size:
-            return np.unique(idx)
-
-    cell_data = mesh.cell_data_dict or {}
-    physical = cell_data.get("gmsh:physical", {})
-    tags = physical.get(cell_type)
-    if tags is None or mesh.field_data is None or region_name not in mesh.field_data:
-        return np.array([], dtype=int)
-
-    tag_meta = mesh.field_data[region_name]
-    # field_data[name] = [physical_tag, geometric_dimension]
-    if int(tag_meta[1]) != dim:
-        return np.array([], dtype=int)
-
-    region_tag = int(tag_meta[0])
-    tags = np.asarray(tags, dtype=int)
-    return np.flatnonzero(tags == region_tag).astype(int)
-
-
 def _build_material_quadtrature_fields(
     basis: skfem.Basis,
-    mesh: meshio.Mesh,
+    device_mesh: DeviceMesh,
     config: QuatrexConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Map effective_mass / band_offset onto quadrature points
@@ -143,6 +114,7 @@ def _build_material_quadtrature_fields(
     nelems = basis.mesh.nelements
     nqp = basis.X.shape[1]
     cell_type = _DIM_TO_CELL_TYPE[dim]
+    region_elements_inds = device_mesh.region_element_inds
 
     inv_m_qp = np.zeros((dim, dim, nelems, nqp), dtype=float)
     v_qp = np.zeros((nelems, nqp), dtype=float)
@@ -152,7 +124,7 @@ def _build_material_quadtrature_fields(
         if region.properties is None or region.properties.effective_mass is None:
             continue
 
-        elem_idx = _element_indices_for_region(mesh, region.name, cell_type, dim)
+        elem_idx = region_elements_inds.get(region.name, np.array([], dtype=int))
         if elem_idx.size == 0:
             warnings.warn(
                 f"Region '{region.name}' has effective_mass but no '{cell_type}' "
@@ -197,7 +169,7 @@ def _assemble_bdd_hamiltonian(
         if gu.ndim == 2:
             gu = gu[None, :, :]
             gv = gv[None, :, :]
-        kinetic = hbar2_over_2me * dot(mul(w["inv_m"], gu), gv)
+        kinetic = (hbar**2 / (2.0 * m_e)) * dot(mul(w["inv_m"], gu), gv)
         pot = w["V"] * u * v
         return kinetic + pot
 
@@ -216,8 +188,8 @@ def assemble_hamiltonian(config: QuatrexConfig) -> None:
     dim = config.device.geometry.dimensionality
     device_mesh = DeviceMesh.from_config(config)
 
-    sk_mesh, basis = _initialize_skfem_basis(device_mesh.mesh, dim)
-    inv_m_qp, v_qp = _build_material_quadtrature_fields(basis, device_mesh.mesh, config)
+    __, basis = _initialize_skfem_basis(device_mesh.mesh, dim)
+    inv_m_qp, v_qp = _build_material_quadtrature_fields(basis, device_mesh, config)
     hamiltonian, overlap = _assemble_bdd_hamiltonian(basis, inv_m_qp, v_qp)
 
     input_dir = config.input_dir

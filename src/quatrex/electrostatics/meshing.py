@@ -463,6 +463,7 @@ class DeviceMesh:
 
         self._mesh = None
         self._region_node_inds = None
+        self._region_element_inds = None
 
     @property
     def mesh(self) -> meshio.Mesh:
@@ -495,6 +496,22 @@ class DeviceMesh:
                 "Region node indices have not been computed yet. Call generate_mesh() first."
             )
         return self._region_node_inds
+
+    @property
+    def region_element_inds(self) -> dict[str, NDArray]:
+        """Returns the mapping from elements to physical regions.
+
+        Returns
+        -------
+        dict[str, NDArray]
+            A dictionary mapping region names to arrays of element indices.
+
+        """
+        if self._region_element_inds is None:
+            raise ValueError(
+                "Region node indices have not been computed yet. Call generate_mesh() first."
+            )
+        return self._region_element_inds
 
     def _add_structure_cell(self) -> tuple[int, int]:
         """Adds the structure cell to the GMSH model.
@@ -722,6 +739,34 @@ class DeviceMesh:
 
         return region_node_inds
 
+    def _map_elements_to_physical_regions(self) -> dict[str, NDArray]:
+        """Maps elements in the mesh to the physical regions defined in GMSH.
+
+        This function creates a mapping from the elements in the mesh to
+        the physical regions defined in GMSH. It identifies which elements
+        belong to which physical groups based on the cell sets defined
+        in the mesh.
+
+        Returns
+        -------
+        dict[str, NDArray]
+            A dictionary mapping region names to arrays of element indices.
+
+        """
+
+        __, cell_type = _dim_to_cell_type[self.dimensionality]
+        sets_dict = self.mesh.cell_sets_dict or {}
+
+        region_element_inds = {}
+        for region_name in self.region_mesh_sizes:
+            idx = sets_dict.get(region_name, {}).get(cell_type)
+            if idx is None or len(idx) == 0:
+                region_element_inds[region_name] = np.array([], dtype=int)
+            else:
+                region_element_inds[region_name] = np.unique(np.asarray(idx, dtype=int))
+
+        return region_element_inds
+
     def generate_mesh(self) -> meshio.Mesh:
         """Generates the mesh for the device geometry.
 
@@ -832,6 +877,7 @@ class DeviceMesh:
         gmsh_logs = gmsh.logger.get()
         gmsh.logger.stop()
 
+        self.config.input_dir.mkdir(parents=True, exist_ok=True)
         with open(self.config.input_dir / "gmsh.log", "w") as f:
             f.write("\n".join(gmsh_logs))
 
@@ -864,10 +910,11 @@ class DeviceMesh:
                 )
             )
 
-        # Store the mesh and the mapping from nodes to physical regions
+        # Store the mesh and the mapping from nodes/elements to physical regions
         # for later use.
         self._mesh = mesh
         self._region_node_inds = self._map_nodes_to_physical_regions()
+        self._region_element_inds = self._map_elements_to_physical_regions()
 
         return mesh
 
@@ -925,6 +972,7 @@ class DeviceMesh:
         pl.enable_parallel_projection()
 
         if off_screen:
+            self.config.output_dir.mkdir(parents=True, exist_ok=True)
             pl.screenshot(self.config.output_dir / "device_mesh.png")
             return
 
@@ -991,4 +1039,7 @@ class DeviceMesh:
         device_mesher = cls(config)
         device_mesher._mesh = meshio.read(config.input_dir / "device.msh")
         device_mesher._region_node_inds = device_mesher._map_nodes_to_physical_regions()
+        device_mesher._region_element_inds = (
+            device_mesher._map_elements_to_physical_regions()
+        )
         return device_mesher

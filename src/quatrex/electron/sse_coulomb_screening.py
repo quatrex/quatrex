@@ -9,16 +9,13 @@ from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_convolve, fft_convolve_kpoints, fft_correlate_kpoints
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import free_mempool
+from qttools.utils.gpu_utils import clear_fft_plan_cache, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
-
-if xp.__name__ == "cupy":
-    cache = xp.fft.config.get_plan_cache()
 
 
 def hilbert_transform(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
@@ -86,12 +83,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             1j / (2 * xp.pi) * get_equal_spacing(self.energies) / self.kpoint_volume
         )
         self.big_block_sizes = None
-        self.batch_size = config.compute.convolve.batch_size
+        self.num_batches = config.compute.convolve.num_batches
 
         self.include_energy_renormalization = (
-            config.coulomb_screening.include_energy_renormalization
-            in ("self-energy", "both")
+            "correlation" in config.coulomb_screening.energy_renormalization_terms
         )
+
         self.apply_hilbert_correction = (
             config.coulomb_screening.apply_hilbert_correction
         )
@@ -312,50 +309,24 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 sigma_greater,
                 sigma_retarded_hermitian,
             ):
-                # The electron Green's functions and self-energies should
-                # ideally already be in nnz-distribution. We cannot discard
-                # the data here, as we cannot be sure that this is the
-                # first/only interaction.
+                # The electron Green's functions and self-energies
+                # should ideally already be in nnz-distribution. We
+                # cannot discard the data here, as we cannot be sure
+                # that this is the first/only interaction.
                 m.dtranspose() if m.distribution_state != "nnz" else None
 
         with profiler.profile_range(
             label="SigmaCoulombScreening: SSE computation", level="default", comm=comm
         ):
 
-            # Because of padding there could be no ij elements
+            # Because of padding there could be no ij elements.
             if g_greater.data.shape[-1] != 0:
-                if xp.__name__ == "cupy":
-                    free_mempool()
-                    free_memory, _ = xp.cuda.Device().mem_info
-                    num_buffers = 12  # closer to 8 but overapproximating
-                    avail_buffer_size = free_memory // num_buffers
-                    ne = g_lesser.data.shape[0]
-                    nk = np.prod(g_lesser.data.shape[1:-1])
-                    no = g_lesser.data.shape[-1]
-                    batch_size = avail_buffer_size // (
-                        2 * ne * nk * 16
-                    )  # 16 bytes for complex128
-                    batch_size = max(min(batch_size, no), 1)
-                    batches = int(np.ceil(no / batch_size))
-                    batch_size = int(np.ceil(no / batches))  # Balance last batch
-                    if self.batch_size is not None and batch_size < self.batch_size:
-                        cache.clear()
-                    self.batch_size = batch_size
-                    if comm.rank == 0:
-                        print(
-                            f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
-                            flush=True,
-                        )
-                        print(cache.show_info(), flush=True)
-                else:
-                    if self.batch_size is None:
-                        # NOTE: This is a temporary solution. The batch size should be
-                        # calculated in the configuration.
-                        self.batch_size = g_greater.data.shape[-1]
+                clear_fft_plan_cache()
+                free_mempool()
 
                 batch_counts, _ = get_section_sizes(
                     g_greater.data.shape[-1],
-                    int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+                    min(self.num_batches, g_greater.data.shape[-1]),
                 )
 
                 batch_displacements = np.cumsum(
@@ -380,7 +351,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     energy_differences = (self.energies - self.energies[0]).reshape(
                         -1, *(len(nk) + 1) * (1,)
                     )
-                    # Set energy differences to inf at the singularity to avoid division by zero.
+                    # Set energy differences to inf at the singularity
+                    # to avoid division by zero.
                     energy_differences[0] = np.inf
 
                     hilbert_kernel_fft = xp.fft.fft(1 / energy_differences, n, axis=0)
@@ -394,6 +366,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                             slice(start, end),
                             hilbert_kernel_fft,
                         )
+
+                clear_fft_plan_cache()
+                free_mempool()
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range(

@@ -7356,9 +7356,9 @@ pre.toml-overview {
 <td><code>True</code></td>
 </tr>
 <tr>
-<td><a href="coulomb_screening/#include_energy_renormalization"><code>include_energy_renormalization</code></a></td>
-<td><code>Literal['self-energy', 'polarization', 'both']</code></td>
-<td><code>'self-energy'</code></td>
+<td><a href="coulomb_screening/#energy_renormalization_terms"><code>energy_renormalization_terms</code></a></td>
+<td><code>tuple[Literal['exchange', 'correlation', 'polarization'], ...]</code></td>
+<td><code>('exchange', 'correlation')</code></td>
 </tr>
 <tr>
 <td><a href="coulomb_screening/#apply_hilbert_correction"><code>apply_hilbert_correction</code></a></td>
@@ -7520,6 +7520,11 @@ pre.toml-overview {
 <td><code>False</code></td>
 </tr>
 <tr>
+<td><a href="output/#scattering_rate"><code>scattering_rate</code></a></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+</tr>
+<tr>
 <td><a href="output/#polarization_density"><code>polarization_density</code></a></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
@@ -7533,6 +7538,31 @@ pre.toml-overview {
 <td><a href="output/#self_energy_density"><code>self_energy_density</code></a></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
+</tr>
+<tr>
+<td><a href="output/#transmission"><code>transmission</code></a></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><a href="output/#contact_current"><code>contact_current</code></a></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><a href="output/#qtbm_electron_ldos"><code>qtbm_electron_ldos</code></a></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><a href="output/#excess_electron_density"><code>excess_electron_density</code></a></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><a href="output/#excess_hole_density"><code>excess_hole_density</code></a></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
 </tr>
 <tr>
 <td><a href="output/#profiling_path"><code>profiling_path</code></a></td>
@@ -7730,9 +7760,9 @@ pre.toml-overview {
 </thead>
 <tbody>
 <tr>
-<td><a href="convolve/#batch_size"><code>batch_size</code></a></td>
-<td><code>PositiveInt</code> or <code>None</code></td>
-<td><code>None</code></td>
+<td><a href="convolve/#num_batches"><code>num_batches</code></a></td>
+<td><code>PositiveInt</code></td>
+<td><code>1</code></td>
 </tr>
 </tbody>
 </table>

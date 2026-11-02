@@ -5119,6 +5119,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#quatrex.core.observables.scattering_rate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;scattering_rate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#quatrex.core.observables.current_conservation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6363,6 +6374,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#quatrex.core.observables.scattering_rate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;scattering_rate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#quatrex.core.observables.current_conservation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6421,6 +6443,13 @@
             –
             <div class="doc-md-description">
               <p>Computes the density from Green's function and overlap matrix.</p>
+            </div>
+          </li>
+          <li class="doc-section-item field-body">
+            <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-function&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-function-name&quot;&gt;scattering_rate&lt;/span&gt;" href="./#quatrex.core.observables.scattering_rate">scattering_rate</a></code></b>
+            –
+            <div class="doc-md-description">
+              <p>Scattering rates from Green's functions and self-energies.</p>
             </div>
           </li>
           <li class="doc-section-item field-body">
@@ -6506,24 +6535,110 @@ Green's function.</p>
 <div class="doc doc-object doc-function">
 
 
+<h2 id="quatrex.core.observables.scattering_rate" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">scattering_rate</span>
+
+
+<a href="#quatrex.core.observables.scattering_rate" class="headerlink" title="Permanent link">#</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">scattering_rate</span><span class="p">(</span><span class="n">x_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">x_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">sse_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">sse_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></span><span class="p">[</span><span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">,</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Scattering rates from Green's functions and self-energies.</p>
+<p>The in-scattering rate is given by the diagonal of the lesser
+self-energy times the greater Green's function, while the
+out-scattering rate is given by the diagonal of the greater
+self-energy times the lesser Green's function.</p>
+<p>The sign convention is such that in-scattering is positive and
+out-scattering is negative.</p>
+<p>Note that this implementation only works if the Green's functions
+and self-energies have identical sparsity patterns.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>x_lesser</code></b>
+              (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>Lesser Green's function.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>x_greater</code></b>
+              (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>Greater Green's function.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>sse_lesser</code></b>
+              (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>Lesser self-energy.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>sse_greater</code></b>
+              (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>Greater self-energy.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+<b><code>scattering</code></b> (              <code><span title="qttools.NDArray">NDArray</span></code>
+)          –
+          <div class="doc-md-description">
+            <p>The scattering rate. Positive values correspond to
+in-scattering, while negative values mean out-scattering.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h2 id="quatrex.core.observables.current_conservation" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">current_conservation</span>
 
 
 <a href="#quatrex.core.observables.current_conservation" class="headerlink" title="Permanent link">#</a></h2>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">current_conservation</span><span class="p">(</span><span class="n">x_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">x_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">se_int_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">se_int_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">current_conservation</span><span class="p">(</span><span class="n">x_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">x_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">sse_lesser</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">,</span> <span class="n">sse_greater</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a></span><span class="p">[</span><span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">,</span> <span class="n"><span title="qttools.NDArray">NDArray</span></span><span class="p">]</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
 
-        <p>Checks current conservation.
-See eq. (12.34) in H. Haug and A.-P. Jauho,
+        <p>Checks current conservation.</p>
+<p>See eq. (12.34) in H. Haug and A.-P. Jauho,
 "Quantum Kinetics in Transport and Optics of Semiconductors"</p>
 <div class="arithmatex">\[
 \int dE dk sum_{ij} sigma_{ij}^&lt; * G_{ji}^&gt; - sigma_{ij}^&gt; * G_{ji}^&lt; = 0
 \]</div>
-<p>We can use the skew-symmetric property of the Green's functions <span class="arithmatex">\(G_{ji}^&lt; = -[G_{ij}^&lt;]^*\)</span>
-such that we don't have to communicate the greater Green's function.</p>
+<p>This function computes a relative value of the current conservation
+condition. This is the absolute value of the condition divided by
+the mean of the in-scattering and out-scattering terms.</p>
+<p>We can use the fact that traces of matrix products can be computed
+using the Frobenius inner product, i.e. <span class="arithmatex">\(Tr(A B) = sum_{ij} A_{ij}
+B_{ji}\)</span>, and the skew-symmetric property of the Green's functions
+<span class="arithmatex">\(G_{ji}^&lt; = -[G_{ij}^&lt;]^*\)</span> such that we don't have to communicate
+stuff.</p>
+<p>Note that this implementation only works if the Green's functions
+and self-energies have identical sparsity patterns.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -6545,7 +6660,7 @@ such that we don't have to communicate the greater Green's function.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">
-            <b><code>se_int_lesser</code></b>
+            <b><code>sse_lesser</code></b>
               (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
           –
           <div class="doc-md-description">
@@ -6553,7 +6668,7 @@ such that we don't have to communicate the greater Green's function.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">
-            <b><code>se_int_greater</code></b>
+            <b><code>sse_greater</code></b>
               (<code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-class&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-class-name&quot;&gt;DSDBSparse&lt;/span&gt;" href="../../../qttools/datastructures/dsdbsparse/#qttools.datastructures.dsdbsparse.DSDBSparse">DSDBSparse</a></code>)
           –
           <div class="doc-md-description">
@@ -6566,11 +6681,10 @@ such that we don't have to communicate the greater Green's function.</p>
 <p><span class="doc-section-title">Returns:</span></p>
     <ul>
         <li class="doc-section-item field-body">
-              <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple">tuple</a>[<span title="qttools.NDArray">NDArray</span>, <span title="qttools.NDArray">NDArray</span>]</code>
-          –
+<b><code>current_conservation</code></b> (              <code><span title="qttools.NDArray">NDArray</span></code>
+)          –
           <div class="doc-md-description">
-            <p>The absolute value of the current conservation and the
-relative value of the current conservation.</p>
+            <p>Relative difference between in-scattering and out-scattering.</p>
           </div>
         </li>
     </ul>

@@ -4509,6 +4509,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#qttools.utils.gpu_utils.clear_fft_plan_cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;clear_fft_plan_cache
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6571,6 +6582,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#qttools.utils.gpu_utils.clear_fft_plan_cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;clear_fft_plan_cache
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6689,6 +6711,13 @@
             –
             <div class="doc-md-description">
               <p>Frees the memory pool if using cupy.</p>
+            </div>
+          </li>
+          <li class="doc-section-item field-body">
+            <b><code><a class="autorefs autorefs-internal" title="&lt;code class=&quot;doc-symbol doc-symbol-heading doc-symbol-function&quot;&gt;&lt;/code&gt;            &lt;span class=&quot;doc doc-object-name doc-function-name&quot;&gt;clear_fft_plan_cache&lt;/span&gt;" href="./#qttools.utils.gpu_utils.clear_fft_plan_cache">clear_fft_plan_cache</a></code></b>
+            –
+            <div class="doc-md-description">
+              <p>Clears the FFT plan cache if using cupy.</p>
             </div>
           </li>
     </ul>
@@ -6964,7 +6993,7 @@ and dtype. The array is allocated in pinned memory if using cupy.</p>
         </li>
         <li class="doc-section-item field-body">
             <b><code>dtype</code></b>
-              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/rectangle/#type">type</a></code>, default:
+              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/shape_difference/#type">type</a></code>, default:
                   <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#float">float</a></code>
 )
           –
@@ -7039,7 +7068,7 @@ The array is allocated in pinned memory if using cupy.</p>
         </li>
         <li class="doc-section-item field-body">
             <b><code>dtype</code></b>
-              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/rectangle/#type">type</a></code>, default:
+              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/shape_difference/#type">type</a></code>, default:
                   <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#float">float</a></code>
 )
           –
@@ -7115,7 +7144,7 @@ returned array.</p>
         </li>
         <li class="doc-section-item field-body">
             <b><code>dtype</code></b>
-              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/rectangle/#type">type</a></code>, default:
+              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/shape_difference/#type">type</a></code>, default:
                   <code>None</code>
 )
           –
@@ -7202,7 +7231,7 @@ returned array.</p>
         </li>
         <li class="doc-section-item field-body">
             <b><code>dtype</code></b>
-              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/rectangle/#type">type</a></code>, default:
+              (<code><span title="data">data</span> - <a class="autorefs autorefs-internal" href="../../../../user_guide/parameters/shape_difference/#type">type</a></code>, default:
                   <code>None</code>
 )
           –
@@ -7315,6 +7344,27 @@ result. <code>'C'</code> means C-order, <code>'F'</code> means F-order, <code>'A
     <div class="doc doc-contents ">
 
         <p>Frees the memory pool if using cupy.</p>
+<p>Does nothing if using numpy.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="qttools.utils.gpu_utils.clear_fft_plan_cache" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">clear_fft_plan_cache</span>
+
+
+<a href="#qttools.utils.gpu_utils.clear_fft_plan_cache" class="headerlink" title="Permanent link">#</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">clear_fft_plan_cache</span><span class="p">()</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Clears the FFT plan cache if using cupy.</p>
 <p>Does nothing if using numpy.</p>
 
 

@@ -2,18 +2,31 @@
 
 """Includes the geometry configuration classes."""
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Self, Union
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, field_validator
+import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, model_validator
+
+from qttools import NDArray
 
 
 class Box(BaseModel):
     """An axis-aligned box defined by its minimum and maximum corners."""
 
-    type: Literal["box"] = "box"
+    type: Literal["box"] = Field("box", frozen=True)
 
-    bounds: list[list[float]]
+    bounds: tuple[tuple[float, float, float], tuple[float, float, float]]
     """The bounds of the box defined by its minimum and maximum corners."""
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> Self:
+        """Validates that the bounds are correctly defined."""
+        min_corner, max_corner = self.bounds
+        if any(min_c > max_c for min_c, max_c in zip(min_corner, max_corner)):
+            raise ValueError(
+                "Minimum corner must be less than or equal to maximum corner."
+            )
+        return self
 
 
 class Cylinder(BaseModel):
@@ -23,16 +36,35 @@ class Cylinder(BaseModel):
 
     """
 
-    type: Literal["cylinder"] = "cylinder"
+    type: Literal["cylinder"] = Field("cylinder", frozen=True)
 
-    center: list[float]
+    center: tuple[float, float, float]
     """The center point of the cylinder."""
-    radius: float
+    radius: PositiveFloat
     """The radius of the cylinder."""
-    axis: list[float]
+    axis: tuple[float, float, float]
     """The axis along which the cylinder extends."""
-    length: float
+    length: PositiveFloat
     """The length of the cylinder along the given axis."""
+
+
+class Tube(BaseModel):
+    """A cylindrical surface.
+
+    Defined by a center point, an axis vector, a radius, and a length.
+
+    """
+
+    type: Literal["tube"] = Field("tube", frozen=True)
+
+    center: tuple[float, float, float]
+    """The center point of the tube."""
+    axis: tuple[float, float, float]
+    """The axis along which the tube extends."""
+    radius: PositiveFloat
+    """The radius of the tube."""
+    length: PositiveFloat
+    """The length of the tube along the given axis."""
 
 
 class Rectangle(BaseModel):
@@ -44,46 +76,123 @@ class Rectangle(BaseModel):
 
     """
 
-    type: Literal["rectangle"] = "rectangle"
+    type: Literal["rectangle"] = Field("rectangle", frozen=True)
 
-    center: list[float]
+    center: tuple[float, float, float] | None = None
     """The center point of the rectangle."""
-    normal: list[float]
+    normal: tuple[float, float, float] | None = None
     """The normal vector of the rectangle."""
-    tangent: list[float]
+    tangent: tuple[float, float, float] | None = None
     """The tangent vector of the rectangle.
 
     The length of the rectangle is along the tangent direction and the
     width is along the cross product of the normal and tangent.
 
     """
-    length: float
+    length: PositiveFloat | None = None
     """The length of the rectangle along the tangent direction."""
-    width: float
+    width: PositiveFloat | None = None
     """The width of the rectangle.
 
     The width is along the cross product of the normal and tangent.
 
     """
+    bounds: tuple[tuple[float, float], tuple[float, float]] | None = None
+
+    @model_validator(mode="after")
+    def _either_bounds_or_center_normal_tangent(self) -> Self:
+        """Validates that either bounds or center/normal/tangent are provided."""
+
+        bounds_defined = self.bounds is not None
+        center_normal_tangent_defined = [
+            attr is not None
+            for attr in (
+                self.center,
+                self.normal,
+                self.tangent,
+                self.length,
+                self.width,
+            )
+        ]
+
+        if bounds_defined == any(center_normal_tangent_defined):
+            raise ValueError(
+                "Either only the 'bounds' or  the parameters 'center', "
+                "'normal', 'tangent', 'length', and 'width' must be "
+                "provided, but not both."
+            )
+        if not all(center_normal_tangent_defined) and not bounds_defined:
+            raise ValueError(
+                "If 'bounds' is not provided, then all of the parameters "
+                "'center', 'normal', 'tangent', 'length', and 'width' must "
+                "be provided."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> Self:
+        """Validates that the bounds are correctly defined."""
+        min_corner, max_corner = self.bounds
+        if any(min_c > max_c for min_c, max_c in zip(min_corner, max_corner)):
+            raise ValueError(
+                "Minimum corner must be less than or equal to maximum corner."
+            )
+        return self
 
 
-class Tube(BaseModel):
-    """A cylindrical surface.
+class Disk(BaseModel):
+    """A disk surface.
 
-    Defined by a center point, an axis vector, a radius, and a length.
+    Defined by a center point, a normal vector, and a radius.
 
     """
 
-    type: Literal["tube"] = "tube"
+    type: Literal["disk"] = Field("disk", frozen=True)
 
-    center: list[float]
-    """The center point of the tube."""
-    axis: list[float]
-    """The axis along which the tube extends."""
-    radius: float
-    """The radius of the tube."""
-    length: float
-    """The length of the tube along the given axis."""
+    normal: tuple[float, float, float] | None = None
+    """The normal vector of the disk."""
+    center: tuple[float, ...]
+    """The center point of the disk."""
+    radius: PositiveFloat
+    """The radius of the disk."""
+
+    @model_validator(mode="after")
+    def _validate_center_dimension(self) -> Self:
+        if self.normal is not None and len(self.center) != len(self.normal):
+            raise ValueError(
+                "The dimension of the center point must match the dimension of the normal vector."
+            )
+        return self
+
+
+class Line(BaseModel):
+    """A line segment defined by its two endpoints."""
+
+    type: Literal["line"] = Field("line", frozen=True)
+
+    start: float | tuple[float, ...]
+    """The starting point of the line segment."""
+    end: float | tuple[float, ...]
+    """The endpoint of the line segment."""
+
+    @model_validator(mode="after")
+    def _validate_endpoints(self) -> Self:
+        """Validates that the bounds are correctly defined."""
+        if isinstance(self.start, float) and isinstance(self.end, float):
+            return self  # 1D case is valid
+
+        if len(self.start) != len(self.end):
+            raise ValueError("All endpoints must have the same dimension.")
+        return self
+
+
+class Point(BaseModel):
+    """A point in space."""
+
+    type: Literal["point"] = Field("point", frozen=True)
+
+    position: float | tuple[float, ...]
+    """The coordinates of the point."""
 
 
 class ShapeUnion(BaseModel):
@@ -126,21 +235,30 @@ class _ShapeDifferenceReference(BaseModel):
 # The main Shape type used in Region definitions, allowing for direct
 # shapes and unions/differences.
 Shape = Annotated[
-    Union[Box, Cylinder, Rectangle, Tube, ShapeUnion, ShapeDifference],
+    Box
+    | Cylinder
+    | Tube
+    | Rectangle
+    | Disk
+    | Line
+    | Point
+    | ShapeUnion
+    | ShapeDifference,
     Field(discriminator="type"),
 ]
 
 # _ConfigShape is used in the raw config parsing stage, allowing for
 # named references before resolution.
 _ConfigShape = Annotated[
-    Union[
-        Box,
-        Cylinder,
-        Rectangle,
-        Tube,
-        _ShapeUnionReference,
-        _ShapeDifferenceReference,
-    ],
+    Box
+    | Cylinder
+    | Tube
+    | Rectangle
+    | Disk
+    | Line
+    | Point
+    | _ShapeUnionReference
+    | _ShapeDifferenceReference,
     Field(discriminator="type"),
 ]
 
@@ -152,8 +270,169 @@ _ShapeUnionReference.model_rebuild()
 _ShapeDifferenceReference.model_rebuild()
 
 
-class VolumeProperties(BaseModel):
-    """Properties associated with a volumetric region."""
+def _inside_box(point: NDArray, box: Box) -> bool:
+    """Checks if a point is inside a box defined by its bounds.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    box : Box
+        The box defined by its bounds, which should be a tuple of two
+        points representing the lower and upper corners of the box.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the box, False otherwise.
+
+    """
+    point = np.asarray(point)
+    (x_min, y_min, z_min), (x_max, y_max, z_max) = box.bounds
+    inside = (
+        (x_min <= point[..., 0])
+        & (point[..., 0] <= x_max)
+        & (y_min <= point[..., 1])
+        & (point[..., 1] <= y_max)
+        & (z_min <= point[..., 2])
+        & (point[..., 2] <= z_max)
+    )
+
+    return inside
+
+
+def _inside_cylinder(point: NDArray, cylinder: Cylinder) -> bool:
+    """Checks if a point is inside a cylinder defined by its center, axis, length, and radius.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    cylinder : Cylinder
+        The cylinder defined by its center, axis, length, and radius.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the cylinder, False otherwise.
+
+    """
+    point = np.asarray(point)
+    single_point = point.ndim == 1
+    if single_point:
+        point = point[None, :]
+
+    center = np.array(cylinder.center)
+    axis = np.array(cylinder.axis)
+    axis /= np.linalg.norm(axis)
+    length = cylinder.length
+    radius = cylinder.radius
+
+    # Compute the vector from the center of the cylinder to the point.
+    v = point - center
+
+    # Project the vector onto the axis of the cylinder to get the
+    # component along the axis.
+    v_parallel = np.dot(v, axis)[:, None] * axis
+
+    # The component perpendicular to the axis is then given by:
+    v_perpendicular = v - v_parallel
+
+    # Check if the point is within the length and radius of the
+    # cylinder.
+    inside = (np.linalg.norm(v_parallel, axis=1) <= length / 2) & (
+        np.linalg.norm(v_perpendicular, axis=1) <= radius
+    )
+    return inside[0] if single_point else inside
+
+
+_inside_entity_functions = {
+    "box": _inside_box,
+    "cylinder": _inside_cylinder,
+}
+
+
+def _inside_union(point: NDArray, shape_union: ShapeUnion) -> bool:
+    """Checks if a point is inside a union of shapes.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape_union : ShapeUnion
+        The union of shapes defined by a list of shapes.
+
+    Returns
+    -------
+    bool
+        True if the point is inside any of the shapes in the union, False otherwise.
+
+    """
+    inside = np.zeros(point.shape[0], dtype=bool)
+    for shape in shape_union.shapes:
+        inside_shape = _inside_entity_functions[shape.type](point, shape)
+        inside |= inside_shape
+
+    return inside
+
+
+def _inside_difference(point: NDArray, shape_difference: ShapeDifference) -> bool:
+    """Checks if a point is inside a difference of two shapes.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape_difference : ShapeDifference
+        The difference of two shapes defined by a `base` shape and a
+        `subtract` shape.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the `base` shape and not inside the
+        `subtract` shape, False otherwise.
+
+    """
+    inside_base = _inside_entity_functions[shape_difference.base.type](
+        point, shape_difference.base
+    )
+    inside_subtract = _inside_entity_functions[shape_difference.subtract.type](
+        point, shape_difference.subtract
+    )
+    inside = inside_base & ~inside_subtract
+    return inside
+
+
+def inside_shape(point: NDArray, shape: Shape) -> bool:
+    """Checks if a point is inside a shape.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape : Shape
+        The shape definition, which can be a basic shape, a union of
+        shapes, or a difference of shapes.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the shape, False otherwise.
+
+    """
+    if shape.type in _inside_entity_functions:
+        return _inside_entity_functions[shape.type](point, shape)
+    if shape.type == "union":
+        return _inside_union(point, shape)
+    if shape.type == "difference":
+        return _inside_difference(point, shape)
+
+    raise ValueError(f"Unsupported shape type {shape.type}")
+
+
+class Properties(BaseModel):
+    """Properties associated with a geometry region."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -177,48 +456,14 @@ class VolumeProperties(BaseModel):
     the contact Fermi levels.
 
     """
-
-
-class SurfaceProperties(BaseModel):
-    """Properties associated with a surface region."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    work_function: NonNegativeFloat | None = None
-    """The work function of the surface."""
-
-    voltage: float
-    """The voltage applied at the surface."""
-
-
-Properties = Union[VolumeProperties, SurfaceProperties]
-
-
-def _expected_properties_model(shape: Shape) -> type[BaseModel]:
-    """Returns the properties model implied by a resolved shape."""
-    if isinstance(shape, (Rectangle, Tube)):
-        return SurfaceProperties
-    return VolumeProperties
-
-
-def _coerce_properties_for_shape(shape: Shape, value: Any) -> Properties:
-    """Validates and coerces the properties for a given shape."""
-    expected_model = _expected_properties_model(shape)
-
-    if isinstance(value, expected_model):
-        return value
-
-    if isinstance(value, (VolumeProperties, SurfaceProperties)):
-        raise ValueError(
-            f"properties type {type(value).__name__} does not match shape type {type(shape).__name__}"
-        )
-
-    if not isinstance(value, dict):
-        raise TypeError(
-            f"properties for shape type {type(shape).__name__} must be a mapping"
-        )
-
-    return expected_model.model_validate(value)
+    effective_mass: float | tuple[float, float, float] | None = None
+    """The effective mass of the material in this region."""
+    band_offset: float | None = None
+    """The conduction band offset of the material in this region."""
+    work_function: float | None = None
+    """The work function of the geometry region."""
+    voltage: float | None = None
+    """The voltage applied at the geometry region."""
 
 
 class Region(BaseModel):
@@ -229,17 +474,15 @@ class Region(BaseModel):
 
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     """A unique name for the region."""
     shape: Shape
     """The geometry of the region."""
-    properties: Any
-    """The properties associated with the region.
-
-    The type of the properties is determined by the shape of the region.
-
-    """
-    mesh_size: float | None = None
+    properties: Properties | None = None
+    """The properties associated with the region."""
+    mesh_size: PositiveFloat | None = None
     """The target mesh size for this region.
 
     This is an optional hint for the meshing process to control the
@@ -247,14 +490,6 @@ class Region(BaseModel):
     used.
 
     """
-
-    @field_validator("properties", mode="before")
-    @classmethod
-    def _validate_properties_against_shape(cls, value: Any, info) -> Any:
-        shape = info.data.get("shape")
-        if shape is None:
-            return value
-        return _coerce_properties_for_shape(shape, value)
 
 
 class _ConfigRegion(BaseModel):
@@ -266,18 +501,31 @@ class _ConfigRegion(BaseModel):
     """
 
     name: str
-    shape: Union[_ConfigShape, str]
-    properties: Any
-    mesh_size: float | None = None
+    shape: _ConfigShape | str
+    properties: Any | None = None
+    mesh_size: PositiveFloat | None = None
+
+
+_shape_type_to_valid_dimensions = {
+    "box": (3,),
+    "cylinder": (3,),
+    "tube": (3,),
+    "rectangle": (2, 3),
+    "disk": (2, 3),
+    "line": (1, 2, 3),
+    "point": (1, 2, 3),
+}
 
 
 class GeometryConfig(BaseModel):
     """Final resolved geometry configuration for the device."""
 
+    model_config = ConfigDict(extra="forbid")
+
     regions: list[Region] | None = None
     """The list of regions in the device geometry."""
 
-    atoms_mesh_size: float | None = None
+    atoms_mesh_size: PositiveFloat | None = None
     """The target mesh size for atomistic regions.
 
     This is an optional hint for the meshing process to control the local
@@ -285,65 +533,75 @@ class GeometryConfig(BaseModel):
     size will be used.
 
     """
-    default_mesh_size: float = 5.0
+    default_mesh_size: PositiveFloat = 5.0
     """The default target mesh size.
     
     Used for regions without a specified mesh size.
 
     """
+    dimensionality: Literal[1, 2, 3] = 3
+    """The dimensionality of the device geometry.
+
+    This is used to determine the types of shapes that are valid in the
+    geometry configuration. For example, in a 2D device, only 2D shapes
+    (and lower-dimensional shapes) like rectangles (and lines) are
+    allowed, while in a 3D device, 3D shapes like boxes are allowed.
+
+    Dimensionalities lower than 3 imply that the material is homogeneous
+    in the missing dimensions.
+
+    """
+
+    # TODO: Consider adding a `from_file` field to indicate if the
+    # geometry is provided in a file. This could be useful for future
+    # extensions where geometry configurations might be loaded from
+    # external sources.
+    # from_file: bool = False
+    # """Whether the geometry is provided in a file."""
+
+    @model_validator(mode="after")
+    def _validate_region_dimensionalities(self) -> Self:
+        """Validates that the shapes of all regions are compatible with
+        the specified dimensionality of the device.
+
+        Raises
+        ------
+        ValueError
+            If any region's shape is not compatible with the device's
+            dimensionality.
+
+        """
+        if self.regions is None:
+            return self
+
+        for region in self.regions:
+            valid_dims = _shape_type_to_valid_dimensions.get(region.shape.type)
+            if valid_dims and self.dimensionality not in valid_dims:
+                raise ValueError(
+                    f"Region '{region.name}' has shape type '{region.shape.type}' "
+                    f"which is not compatible with the device dimensionality "
+                    f"{self.dimensionality}D."
+                )
+        return self
 
 
 class _RawGeometryConfig(BaseModel):
     """Raw config before resolving named shape references."""
 
+    model_config = ConfigDict(extra="forbid")
+
     regions: list[_ConfigRegion] | None = None
     atoms_mesh_size: float | None = None
     default_mesh_size: float = 5.0
-
-
-def _resolve_shape_reference(
-    ref: str,
-    shape_defs: dict[str, _ConfigShape],
-    stack: tuple[str, ...],
-) -> Shape:
-    """Resolves a shape reference to an actual Shape.
-
-    This function checks for cyclic references by maintaining a stack of
-    currently resolving references. If a reference is encountered that
-    is already in the stack, a ValueError is raised.
-
-    Parameters
-    ----------
-    ref : str
-        The name of the shape reference to resolve.
-    shape_defs : dict[str, _ConfigShape]
-        A dictionary of shape definitions from the config.
-    stack : tuple[str, ...]
-        A tuple representing the current stack of references being
-        resolved, used for cycle detection.
-
-    Returns
-    -------
-    Shape
-        The resolved shape corresponding to the reference.
-
-    """
-    if ref not in shape_defs:
-        raise ValueError(f"Unknown shape reference '{ref}'")
-
-    if ref in stack:
-        cycle = " -> ".join((*stack, ref))
-        raise ValueError(f"Cyclic shape reference detected: {cycle}")
-
-    return _resolve_config_shape(shape_defs[ref], shape_defs, (*stack, ref))
+    dimensionality: Literal[1, 2, 3] = 3
 
 
 def _resolve_config_shape(
-    shape: _ConfigShape,
+    shape: _ConfigShape | str,
     shape_defs: dict[str, _ConfigShape],
     stack: tuple[str, ...] = (),
 ) -> Shape:
-    """Resolves a _ConfigShape to a Shape.
+    """Resolves a _ConfigShape or shape reference to a Shape.
 
     This function recursively resolves any shape definitions,
     including unions and differences, while also checking for cyclic
@@ -351,7 +609,7 @@ def _resolve_config_shape(
 
     Parameters
     ----------
-    shape : _ConfigShape
+    shape : _ConfigShape | str
         The shape to resolve, which may include references.
     shape_defs : dict[str, _ConfigShape]
         A dictionary of shape definitions from the config.
@@ -366,34 +624,42 @@ def _resolve_config_shape(
         shape definitions.
 
     """
-
-    if isinstance(shape, (Box, Cylinder, Rectangle, Tube)):
+    if isinstance(
+        shape,
+        (
+            Box,
+            Cylinder,
+            Tube,
+            Rectangle,
+            Disk,
+            Line,
+            Point,
+            ShapeUnion,
+            ShapeDifference,
+        ),
+    ):
         return shape
 
+    if isinstance(shape, str):
+        # Handling a shape reference.
+        if shape not in shape_defs:
+            raise ValueError(f"Unknown shape reference '{shape}'")
+
+        if shape in stack:
+            cycle = " -> ".join((*stack, shape))
+            raise ValueError(f"Cyclic shape reference detected: {cycle}")
+
+        return _resolve_config_shape(shape_defs[shape], shape_defs, (*stack, shape))
+
     if isinstance(shape, _ShapeUnionReference):
-        resolved_shapes: list[Shape] = []
-        for child in shape.shapes:
-            if isinstance(child, str):
-                resolved_shapes.append(
-                    _resolve_shape_reference(child, shape_defs, stack)
-                )
-            else:
-                resolved_shapes.append(_resolve_config_shape(child, shape_defs, stack))
+        resolved_shapes = [
+            _resolve_config_shape(child, shape_defs, stack) for child in shape.shapes
+        ]
         return ShapeUnion(type="union", shapes=resolved_shapes)
 
     if isinstance(shape, _ShapeDifferenceReference):
-        if isinstance(shape.base, str):
-            resolved_base = _resolve_shape_reference(shape.base, shape_defs, stack)
-        else:
-            resolved_base = _resolve_config_shape(shape.base, shape_defs, stack)
-
-        if isinstance(shape.subtract, str):
-            resolved_subtract = _resolve_shape_reference(
-                shape.subtract, shape_defs, stack
-            )
-        else:
-            resolved_subtract = _resolve_config_shape(shape.subtract, shape_defs, stack)
-
+        resolved_base = _resolve_config_shape(shape.base, shape_defs, stack)
+        resolved_subtract = _resolve_config_shape(shape.subtract, shape_defs, stack)
         return ShapeDifference(
             type="difference", base=resolved_base, subtract=resolved_subtract
         )
@@ -439,18 +705,13 @@ def parse_geometry_config(raw_device_config: dict[str, Any]) -> GeometryConfig:
 
     resolved_regions: list[Region] = []
     for region in raw_geometry_config.regions or []:
-        if isinstance(region.shape, str):
-            resolved_shape = _resolve_shape_reference(region.shape, shape_defs, ())
-        else:
-            resolved_shape = _resolve_config_shape(region.shape, shape_defs)
+        resolved_shape = _resolve_config_shape(region.shape, shape_defs)
 
         resolved_regions.append(
             Region(
                 name=region.name,
                 shape=resolved_shape,
-                properties=_coerce_properties_for_shape(
-                    resolved_shape, region.properties
-                ),
+                properties=region.properties,
                 mesh_size=region.mesh_size,
             )
         )
@@ -459,4 +720,5 @@ def parse_geometry_config(raw_device_config: dict[str, Any]) -> GeometryConfig:
         regions=resolved_regions,
         default_mesh_size=raw_geometry_config.default_mesh_size,
         atoms_mesh_size=raw_geometry_config.atoms_mesh_size,
+        dimensionality=raw_geometry_config.dimensionality,
     )

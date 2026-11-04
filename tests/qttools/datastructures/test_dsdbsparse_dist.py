@@ -9,8 +9,9 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.comm.comm import _default_config
+from qttools.datastructures import DSDBCOO, DSDBCSR
 from qttools.datastructures.dsdbsparse import DSDBSparse, symmetry_ops
-from qttools.utils.gpu_utils import get_array_module_name
+from qttools.utils.gpu_utils import get_array_module_name, get_host
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -188,6 +189,112 @@ class TestConversion:
 @pytest.mark.mpi(min_size=2)
 class TestConversionDist(TestConversion):
     """Tests all tests of TestConversion in distributed setting."""
+
+    pass
+
+
+class TestSave:
+    """Tests the distributed saving of DSDBSparse matrices."""
+
+    @pytest.mark.parametrize("distribution_state", ["stack", "nnz"])
+    def test_save(
+        self,
+        dsdbsparse_type_dist: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        distribution_state: str,
+        tmp_path,
+    ):
+        """Tests that the saved file reproduces the global matrix."""
+        h5py = pytest.importorskip("h5py")
+
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist, block_sizes, global_stack_shape
+        )
+
+        # Make the data depend on the global stack index to catch
+        # wrong stack offsets.
+        stack_offset = int(dsdbsparse.stack_section_offsets[comm.stack.rank])
+        local_stack_size = dsdbsparse.data.shape[0]
+        scale = xp.arange(stack_offset, stack_offset + local_stack_size) + 1
+        dsdbsparse.data[:] *= scale.reshape(-1, *[1] * (dsdbsparse.data.ndim - 1))
+
+        if distribution_state == "nnz":
+            dsdbsparse.dtranspose()
+
+        filename = global_comm.bcast(str(tmp_path / "dsdbsparse.h5"), root=0)
+        dsdbsparse.save(filename)
+
+        if global_comm.rank == 0:
+            with h5py.File(filename, "r") as f:
+                data = f["data"][()]
+                rows = f["rows"][()]
+                cols = f["cols"][()]
+                assert tuple(f.attrs["global_stack_shape"]) == tuple(global_stack_shape)
+                assert np.array_equal(f.attrs["block_sizes"], block_sizes)
+
+            size = int(np.sum(block_sizes))
+            dense = np.zeros((*global_stack_shape, size, size), dtype=data.dtype)
+            dense[..., rows, cols] = data
+
+            global_scale = np.arange(global_stack_shape[0]) + 1
+            reference = np.broadcast_to(
+                np.asarray(get_host(coo.toarray())),
+                (*global_stack_shape, size, size),
+            ) * global_scale.reshape(-1, *[1] * (len(global_stack_shape) + 1))
+            assert np.allclose(dense, reference)
+
+        global_comm.Barrier()
+
+    @pytest.mark.parametrize("distribution_state", ["stack", "nnz"])
+    @pytest.mark.parametrize(
+        "load_type",
+        # DSDBCSR is not fully supported for distributed yet.
+        [None, DSDBCOO] + ([DSDBCSR] if global_comm.size == 1 else []),
+    )
+    def test_load(
+        self,
+        dsdbsparse_type_dist: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry: str | None,
+        distribution_state: str,
+        load_type: DSDBSparse | None,
+        tmp_path,
+    ):
+        """Tests that loading a saved matrix restores it."""
+        pytest.importorskip("h5py")
+
+        __, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist, block_sizes, global_stack_shape, symmetry
+        )
+        stack_offset = int(dsdbsparse.stack_section_offsets[comm.stack.rank])
+        local_stack_size = dsdbsparse.data.shape[0]
+        scale = xp.arange(stack_offset, stack_offset + local_stack_size) + 1
+        dsdbsparse.data[:] *= scale.reshape(-1, *[1] * (dsdbsparse.data.ndim - 1))
+        reference = dsdbsparse.to_dense()
+
+        if distribution_state == "nnz":
+            dsdbsparse.dtranspose()
+
+        filename = global_comm.bcast(str(tmp_path / "dsdbsparse.h5"), root=0)
+        dsdbsparse.save(filename)
+
+        loaded = (DSDBSparse if load_type is None else load_type).load(filename)
+
+        expected_type = dsdbsparse_type_dist if load_type is None else load_type
+        assert type(loaded) is expected_type
+        assert loaded.distribution_state == "stack"
+        assert loaded.symmetry == symmetry
+        assert loaded.global_stack_shape == tuple(global_stack_shape)
+        assert xp.allclose(loaded.to_dense(), reference)
+
+        global_comm.Barrier()
+
+
+@pytest.mark.mpi(min_size=2)
+class TestSaveDist(TestSave):
+    """Tests all tests of TestSave in distributed setting."""
 
     pass
 

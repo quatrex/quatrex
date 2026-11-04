@@ -339,7 +339,7 @@ def _assemble_kpoint(
         )
         kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-        index = np.argwhere(kpoint_grid > 1)[0]
+        index = np.where(kpoint_grid > 1)[0]
         for stack_index in np.ndindex(kpoints.shape[:-1]):
             kpoint = kpoints[stack_index]
             stack_index = np.array(stack_index)

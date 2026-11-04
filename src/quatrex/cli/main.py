@@ -7,12 +7,11 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import Annotated, NoReturn
 
 import typer
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
-from typing_extensions import Annotated
 
 import quatrex
 
@@ -93,6 +92,30 @@ def _run_negf(config, device):
         typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _run_closed(config, device):
+    """Runs quatrex with the given configuration for a closed system.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
+
+    """
+
+    from quatrex.core.schroedinger import Schroedinger
+
+    scba = Schroedinger(config, device)
+
+    tic = time.perf_counter()
+    scba.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving Schroedinger after: {(toc - tic):.2f} s")
+
+
 def _run_scsp(config, device):
     """Runs the self-consistent Schrödinger-Poisson solver.
 
@@ -116,9 +139,7 @@ def _run_scsp(config, device):
         typer.secho(f"Leaving SCSP after: {(toc - tic):.2f} s")
 
 
-def _resolve_config_path(
-    config: Optional[Path],
-) -> Path:
+def _resolve_config_path(config: Path | None) -> Path:
     """Resolves the configuration file path based on the provided argument.
 
     Parameters
@@ -156,9 +177,7 @@ def _resolve_config_path(
     return config.resolve()
 
 
-def _abort_quatrex(
-    e: Exception,
-) -> NoReturn:
+def _abort_quatrex(e: Exception) -> NoReturn:
     """Handles exceptions by printing the error and aborting the MPI program.
 
     Parameters
@@ -174,7 +193,7 @@ def _abort_quatrex(
         full_traceback = "".join(traceback.format_exception(e))
 
         error_msg = (
-            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
+            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n{full_traceback}\n"
         )
 
         sys.stderr.write(error_msg)
@@ -195,7 +214,7 @@ def _abort_quatrex(
 @quatrex_cli.command()
 def run(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file.",
@@ -243,6 +262,8 @@ def run(
                 _run_wf(config, device)
             elif config.formalism == "negf":
                 _run_negf(config, device)
+            elif config.formalism == "closed":
+                _run_closed(config, device)
             else:
                 raise NotImplementedError(
                     f"Formalism '{config.formalism}' is not implemented."
@@ -260,7 +281,7 @@ def run(
 @quatrex_cli.command()
 def pre_process(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file.",
@@ -289,7 +310,7 @@ def pre_process(
         config = _resolve_config_path(config)
 
         from quatrex.core.config import parse_config, setup_context
-        from quatrex.pre_processsing import pre_process as main
+        from quatrex.pre_processing import pre_process as main
 
         config = parse_config(config)
         setup_context(config)
@@ -367,7 +388,6 @@ def main(
     ] = False,
 ):
     """Quantum Transport at the Exascale and Beyond."""
-    pass
 
 
 def run_cli():

@@ -2,6 +2,6 @@
 
 """Includes pre-processing functions."""
 
-from quatrex.pre_processsing.pre_process import pre_process
+from quatrex.pre_processing.pre_process import pre_process
 
 __all__ = ["pre_process"]

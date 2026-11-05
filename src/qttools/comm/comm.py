@@ -92,22 +92,14 @@ GPU_AWARE_MPI = _check_gpu_aware_mpi()
 
 _backends = ("nccl", "host_mpi", "device_mpi")
 
+# For cupy, the default backend is host mpi, since it should always be
+# available. nccl or gpu-aware mpi are not always available. For numpy,
+# the default backend is "device mpi" which is just normal mpi. It is
+# not host mpi, since that would lead to extra copies.
 if xp.__name__ == "cupy":
-    _default_config = {
-        "all_to_all": "host_mpi",
-        "all_gather": "host_mpi",
-        "all_reduce": "host_mpi",
-        "bcast": "host_mpi",
-        "send_recv": "host_mpi",
-    }
+    _default_backend = "host_mpi"
 elif xp.__name__ == "numpy":
-    _default_config = {
-        "all_to_all": "device_mpi",
-        "all_gather": "device_mpi",
-        "all_reduce": "device_mpi",
-        "bcast": "device_mpi",
-        "send_recv": "device_mpi",
-    }
+    _default_backend = "device_mpi"
 
 _mpi_ops = {
     "sum": MPI.SUM,
@@ -152,26 +144,31 @@ class _SubCommunicator:
     ----------
     mpi_comm : MPI.Comm
         The MPI communicator to use.
-    config : dict
-        The configuration for the communication backend. The keys
-        are the names of the communication operations and the values
-        are the backends to use. The available backends are "nccl",
-        "host_mpi", and "device_mpi". The default is "host_mpi".
+    backend : str, optional
+        The backend to use for the communication. If None, the default
+        backend will be used. The available backends are "nccl",
+        "host_mpi", and "device_mpi".
 
     """
 
-    def __init__(self, mpi_comm: MPI.Comm, config: dict):
+    def __init__(
+        self,
+        mpi_comm: MPI.Comm,
+        backend: str | None = None,
+    ):
         """Initializes the communication backend."""
-        _SubCommunicator._validate_config(config)
-        self._config = _default_config.copy()
-        self._config.update(config)
+        if backend is None:
+            backend = _default_backend
+
+        _SubCommunicator._validate_backend(backend)
+        self._backend = backend
 
         self.rank = mpi_comm.rank
         self.size = mpi_comm.size
 
         self._mpi_comm = mpi_comm
 
-        if "nccl" in config.values():
+        if self._backend == "nccl":
             self._init_nccl()
 
         # NOTE: One can create still very unexpected behavior by using
@@ -181,29 +178,21 @@ class _SubCommunicator:
         self._group_start_called = False
 
     @classmethod
-    def _validate_config(cls, config: dict):
-        """Validate the configuration for the communication backend."""
-        if not isinstance(config, dict):
-            raise ValueError("Configuration must be a dictionary.")
+    def _validate_backend(cls, backend: str):
+        """Validate the communication backend."""
 
-        for key, value in config.items():
-            if key not in _default_config:
-                raise ValueError(f"Invalid configuration key: {key}")
+        if backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
-            if value not in _backends:
-                raise ValueError(
-                    f"Invalid backend: {value}. Must be one of {_backends}."
-                )
-
-            if value != "device_mpi" and xp.__name__ == "numpy":
-                raise ValueError(
-                    f"Backend '{value}' is not available with NumPy."
-                    "Use 'device_mpi' instead."
-                )
-            if value == "device_mpi" and xp.__name__ == "cupy" and not GPU_AWARE_MPI:
-                raise ValueError(
-                    f"Backend '{value}' is not available with this MPI implementation."
-                )
+        if backend != "device_mpi" and xp.__name__ == "numpy":
+            raise ValueError(
+                f"Backend '{backend}' is not available with NumPy."
+                "Use 'device_mpi' instead."
+            )
+        if backend == "device_mpi" and xp.__name__ == "cupy" and not GPU_AWARE_MPI:
+            raise ValueError(
+                f"Backend '{backend}' is not available with this MPI implementation."
+            )
 
     def _init_nccl(self):
         """Initializes the NCCL backend."""
@@ -277,7 +266,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["all_to_all"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -340,7 +329,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["all_gather"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -410,7 +399,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["all_reduce"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -474,7 +463,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["bcast"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -595,7 +584,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -741,7 +730,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -797,7 +786,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -864,7 +853,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -922,7 +911,7 @@ class _SubCommunicator:
             )
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._backend
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -975,9 +964,9 @@ class QuatrexCommunicator:
     def configure(
         self,
         block_comm_size: int,
-        block_comm_config: dict,
-        stack_comm_config: dict,
-        global_comm_config: dict,
+        block_comm_backend: str | None = None,
+        stack_comm_backend: str | None = None,
+        global_comm_backend: str | None = None,
         override: bool = False,
     ):
         """Configures the communicator.
@@ -986,16 +975,18 @@ class QuatrexCommunicator:
         ----------
         block_comm_size : int
             The size of the block communicator.
-        block_comm_config : dict
-            The configuration for the block sub-communicator.
-        stack_comm_config : dict
-            The configuration for the stack sub-communicator.
-        global_comm_config : dict
-            The configuration for the global communicator.
+        block_comm_backend : str | None, optional
+            The backend to use for the block communicator. If not
+            provided, the default backend will be used.
+        stack_comm_backend : str | None, optional
+            The backend to use for the stack communicator. If not
+            provided, the default backend will be used.
+        global_comm_backend : str | None, optional
+            The backend to use for the global communicator. If not
+            provided, the default backend will be used.
         override : bool, optional
-            Whether to override a previous configuration. Defaul
-            is False.
-
+            Whether to override a previous configuration. Default is
+            False.
 
         Raises
         -------
@@ -1028,9 +1019,9 @@ class QuatrexCommunicator:
         block_comm = global_comm.Split(color=color, key=key)
         stack_comm = global_comm.Split(color=key, key=color)
 
-        self.block = _SubCommunicator(block_comm, block_comm_config)
-        self.stack = _SubCommunicator(stack_comm, stack_comm_config)
-        self.global_ = _SubCommunicator(global_comm, global_comm_config)
+        self.block = _SubCommunicator(block_comm, block_comm_backend)
+        self.stack = _SubCommunicator(stack_comm, stack_comm_backend)
+        self.global_ = _SubCommunicator(global_comm, global_comm_backend)
 
         self._is_configured = True
 

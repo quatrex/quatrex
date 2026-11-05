@@ -6,7 +6,6 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures import DSDBCOO
 from qttools.greens_function_solver.rgf_dist import RGFDist
 
@@ -32,9 +31,6 @@ def setup_module():
     # Configure the comm singleton.
     comm.configure(
         block_comm_size=3,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

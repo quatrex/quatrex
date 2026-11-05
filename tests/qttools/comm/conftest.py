@@ -5,9 +5,9 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI, _backends, _default_config
+from qttools.comm.comm import GPU_AWARE_MPI, _backends
 
-BACKEND_TYPE = [pytest.param(backend, id=backend) for backend in _backends]
+BACKEND = [pytest.param(backend, id=backend) for backend in _backends]
 
 BLOCK_COMM_SIZES = [
     pytest.param(1, id="1"),
@@ -17,8 +17,8 @@ BLOCK_COMM_SIZES = [
 ]
 
 
-@pytest.fixture(params=BACKEND_TYPE)
-def backend_type(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(params=BACKEND)
+def backend(request: pytest.FixtureRequest) -> str:
     return request.param
 
 
@@ -30,7 +30,7 @@ def block_comm_size(request: pytest.FixtureRequest) -> int:
 @pytest.fixture(autouse=True)
 def configure(
     request,
-    backend_type: str,
+    backend: str,
     block_comm_size: int,
 ):
     # To specifically test the `configure` function, we can use the
@@ -39,29 +39,25 @@ def configure(
         yield
         return
 
-    # set config to all the same backend type
-    config = _default_config.copy()
-    config = {key: backend_type for key in config.keys()}
-
     if (block_comm_size > global_comm.size) | (global_comm.size % block_comm_size != 0):
         pytest.skip("Config not valid")
 
-    if xp.__name__ == "numpy" and backend_type in ["nccl", "host_mpi"]:
+    if xp.__name__ == "numpy" and backend in ["nccl", "host_mpi"]:
         pytest.skip("Config not valid")
 
     if xp.__name__ == "cupy":
         from cupy.cuda import nccl
 
-        if not nccl.available and backend_type == "nccl":
+        if not nccl.available and backend == "nccl":
             pytest.skip("Config not valid")
-        if not GPU_AWARE_MPI and backend_type == "device_mpi":
+        if not GPU_AWARE_MPI and backend == "device_mpi":
             pytest.skip("Config not valid")
 
     comm.configure(
         block_comm_size=block_comm_size,
-        block_comm_config=config,
-        stack_comm_config=config,
-        global_comm_config=config,
+        block_comm_backend=backend,
+        stack_comm_backend=backend,
+        global_comm_backend=backend,
         override=True,
     )
     yield

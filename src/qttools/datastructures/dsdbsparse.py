@@ -16,9 +16,9 @@ from qttools.utils.mpi_utils import get_section_sizes
 
 symmetry_ops = {
     "symmetric": lambda x: x,
-    "hermitian": xp.conj,
+    "hermitian": lambda x: x.conjugate(),
     "skew-symmetric": lambda x: -x,
-    "skew-hermitian": lambda x: -xp.conj(x),
+    "skew-hermitian": lambda x: -x.conjugate(),
 }
 
 

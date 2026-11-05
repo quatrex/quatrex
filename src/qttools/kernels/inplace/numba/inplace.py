@@ -38,6 +38,7 @@ def scatter_add_scaled_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
+    row_positions: NDArray,
     k: tuple[float, float],
     transverse_repetition_grid: tuple[int, int],
     alpha: np.complex128,
@@ -72,7 +73,7 @@ def scatter_add_scaled_obc(
     b = b.reshape(-1)
 
     for i in nb.prange(num_inds):
-        i_S_big = i // N_S_big
+        i_S_big = row_positions[i // N_S_big]
         j_S_big = i % N_S_big
 
         i_S = i_S_big % N_S

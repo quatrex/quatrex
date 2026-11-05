@@ -5,7 +5,6 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures import DSDBSparse, bd_matmul, bd_sandwich
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -55,9 +54,6 @@ class TestNonDistr:
         # Configure the comm singleton.
         comm.configure(
             block_comm_size=cls.block_comm_size,
-            block_comm_config=_default_config,
-            stack_comm_config=_default_config,
-            global_comm_config=_default_config,
             override=True,
         )
 

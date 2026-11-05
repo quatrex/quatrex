@@ -6,7 +6,6 @@ import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import _default_config
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
@@ -20,9 +19,6 @@ def setup_module():
     """setup any state specific to the execution of the given module."""
     comm.configure(
         block_comm_size=1,
-        block_comm_config=_default_config,
-        stack_comm_config=_default_config,
-        global_comm_config=_default_config,
         override=True,
     )
 

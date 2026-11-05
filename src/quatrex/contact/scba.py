@@ -156,13 +156,6 @@ class SCBAContact(BaseContact):
     orbital_indices : NDArray
         Flattened array of orbital indices for the contact, sorted first
         in transport direction, then in transverse directions.
-    orbital_indices_per_layer : list[NDArray]
-        List of orbital indices for each layer in the transport
-        direction, sorted first in transverse directions, then in
-        transport direction.
-    transverse_to_transport_indices : NDArray
-        Indices to reorder the coupling matrix from transverse-first to
-        transport-first ordering.
     fermi_level : float
         Fermi level of the contact in eV.
     mid_gap_energy : float

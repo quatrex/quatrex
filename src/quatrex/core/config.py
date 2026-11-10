@@ -335,7 +335,7 @@ class ElectrostaticsConfig(BaseModel):
 
     """
 
-    density_model: Literal["single-band", "omen"] = "single-band"
+    density_model: Literal["single-band", "omen", "graphene"] = "single-band"
     """The density model to use for the root-finding scheme.
 
     - `"single-band"`: Uses a simple single-band density model where the
@@ -345,6 +345,11 @@ class ElectrostaticsConfig(BaseModel):
       almost identical to the single-band model with `density_model_dim
       = 2`. However, it uses slightly different physical constants,
       i.e., not the CODATA values used everywhere else in `quatrex`.
+    - `"graphene"`: Uses an ambipolar Dirac-cone density model for
+      graphene, where the net excess charge is given by Fermi-Dirac
+      integrals of order 1 for electrons and holes. Configured via
+      [`graphene_fermi_velocity`](#graphene_fermi_velocity) and
+      [`graphene_area_per_atom`](#graphene_area_per_atom).
 
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding".
@@ -362,6 +367,23 @@ class ElectrostaticsConfig(BaseModel):
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding" and [`density_model`](#density_model) is set to
     "single-band".
+
+    """
+
+    graphene_fermi_velocity: PositiveFloat = 1e6
+    """The Fermi velocity of graphene in m/s.
+
+    Only used if [`density_model`](#density_model) is set to
+    "graphene".
+
+    """
+
+    graphene_area_per_atom: PositiveFloat = 3 * 3**0.5 / 4 * 1.42**2
+    """The area per atom of the graphene sheet in Å^2.
+
+    Defaults to the value for a C-C bond length of 1.42 Å (≈ 2.62 Å^2).
+    Only used if [`density_model`](#density_model) is set to
+    "graphene".
 
     """
 

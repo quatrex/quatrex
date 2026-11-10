@@ -188,6 +188,25 @@ evaluated numerically for density models with other dimensionalities.
     that this does not have to be the same as the actual dimensionality
     of the system, e.g., a 2D model can work very well for 1D systems.
 
+!!! tip "Graphene and Other Dirac Semimetals"
+    The single parabolic band picture breaks down for graphene, which
+    has a linear density of states and no band gap. Setting
+    [`density_model = "graphene"`](../parameters/electrostatics/#density_model)
+    uses an ambipolar Dirac-cone model instead, with the charge
+    neutrality level at the Dirac point:
+
+    $$
+    \rho[\phi(\mathbf{r})] = N_G \left[ \mathcal{F}_1(\eta) -
+    \mathcal{F}_1(-\eta) \right], \qquad N_G = \frac{2}{\pi} \left(
+    \frac{k_B T}{\hbar v_F} \right)^2.
+    $$
+
+    Electrons and holes are treated simultaneously, so the excess
+    charge may change sign during the iterations (e.g., in p-n
+    junctions), and the density derivative (quantum capacitance)
+    $\propto \mathcal{F}_0(\eta) + \mathcal{F}_0(-\eta)$ remains finite
+    at the Dirac point.
+
 !!! info "Fermi-Dirac Integral Evaluation"
     In `quatrex`, Fermi-Dirac integrals of orders $k=0$ and $k=-1$ are
     evaluated via their analytic form, while they are computed by

@@ -17,6 +17,7 @@ from quatrex.core.constants import epsilon_0
 from quatrex.electrostatics import assembly
 from quatrex.electrostatics.density_response import (
     DensityModel,
+    GrapheneDensityModel,
     OMENDensityModel,
     SingleBandDensityModel,
 )
@@ -186,6 +187,12 @@ class NonlinearPoissonSolver(PoissonSolver):
             return functools.partial(
                 SingleBandDensityModel,
                 dim=electrostatics_config.density_model_dim,
+            )
+        if electrostatics_config.density_model == "graphene":
+            return functools.partial(
+                GrapheneDensityModel,
+                fermi_velocity=electrostatics_config.graphene_fermi_velocity,
+                area_per_atom=electrostatics_config.graphene_area_per_atom,
             )
         raise ValueError(
             f"Unknown density model: {electrostatics_config.density_model}"

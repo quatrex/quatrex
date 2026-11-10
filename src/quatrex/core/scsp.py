@@ -54,11 +54,6 @@ class SCSP:
             config.electrostatics.solving_scheme == "root-finding"
             and config.electrostatics.density_model == "ldos"
         )
-        if self.use_spectral_dos and config.formalism != "wf":
-            raise ValueError(
-                "The 'ldos' density model is currently only available for "
-                "the wave-function formalism (formalism = 'wf')."
-            )
 
         self.convergence_tol = config.scsp.convergence_tol
 

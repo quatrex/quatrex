@@ -6,12 +6,15 @@ import pytest
 
 from quatrex.core.constants import hbar, k_B
 from quatrex.core.qtbm import QTBM
+from quatrex.core.scba import SCBA
 from quatrex.core.statistics import fermi_dirac
+from quatrex.core.utils import split_trapezoid
 from quatrex.electrostatics.density_response import (
     GrapheneDensityModel,
     LDOSDensityModel,
     SpectralDensityOfStates,
     dirac_net_density,
+    local_quasi_fermi_levels,
 )
 
 TEMPERATURE = 300.0
@@ -177,14 +180,177 @@ def test_qtbm_spectral_dos_consistent_with_charge_density():
     assert np.allclose(spectral_dos.chemical_potentials, [0.05, 0.13])
 
     # Orbital-resolved states below the local neutrality level.
-    below = energies <= potential[:, np.newaxis]
     total_ldos = 2 * sum(value.mean(axis=0) for value in ldos.values())
     valence = np.add.reduceat(
-        np.trapezoid(total_ldos * below, energies, axis=1),
+        split_trapezoid(total_ldos, energies, potential)[0],
         qtbm.device.orbital_offsets[:-1],
     )
     occupied = sum(
         np.trapezoid(dos * fermi_dirac(energies - mu, TEMPERATURE), energies, axis=1)
         for dos, mu in zip(spectral_dos.spectral_dos, spectral_dos.chemical_potentials)
     )
-    assert np.allclose(occupied - valence, charge_density, atol=1e-2)
+    assert np.allclose(occupied - valence, charge_density, rtol=1e-10, atol=1e-12)
+
+
+def _net_excess(dos, chemical_potential, neutrality_levels):
+    """Reference net excess density (electrons above, holes below)."""
+    f = fermi_dirac(ENERGIES - chemical_potential, TEMPERATURE)
+    __, electrons = split_trapezoid(dos * f, ENERGIES, neutrality_levels)
+    holes, __ = split_trapezoid(dos * (1 - f), ENERGIES, neutrality_levels)
+    return electrons - holes
+
+
+def _structured_dos(seed: int, num_components: int, num_atoms: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    peaks = rng.uniform(-0.3, 0.3, (num_components, num_atoms, 1))
+    return 0.5 + np.exp(-(((ENERGIES - peaks) / 0.05) ** 2))
+
+
+def test_quasi_fermi_levels_equilibrium():
+    """Tests that the fit recovers Fermi-Dirac chemical potentials,
+    including one inside a gap of the spectral function."""
+    dos = _structured_dos(seed=2, num_components=1, num_atoms=4)[0]
+    chemical_potentials = np.array([-0.2, 0.0, 0.05, 0.3])
+    # Gap of +-0.3 eV around the chemical potential of the last atom.
+    dos[-1, np.abs(ENERGIES - chemical_potentials[-1]) < 0.3] = 0.0
+    neutrality_levels = np.array([0.0, -0.1, 0.1, 0.3])
+
+    net_density = np.array(
+        [
+            _net_excess(dos[[i]], mu, neutrality_levels[[i]])[0]
+            for i, mu in enumerate(chemical_potentials)
+        ]
+    )
+    fitted = local_quasi_fermi_levels(
+        dos, net_density, ENERGIES, neutrality_levels, TEMPERATURE
+    )
+    assert np.allclose(fitted, chemical_potentials, atol=1e-6)
+
+
+def _contact_resolved_and_fitted(chemical_potentials):
+    """Contact-resolved model and its single-component (NEGF) analogue."""
+    num_atoms = 5
+    dos = _structured_dos(seed=0, num_components=2, num_atoms=num_atoms)
+    neutrality_levels = np.full(num_atoms, -0.4)
+    density = sum(
+        _net_excess(d, mu, neutrality_levels) for d, mu in zip(dos, chemical_potentials)
+    )
+    potential = np.zeros(num_atoms)
+
+    contact_resolved = LDOSDensityModel(
+        density, potential, _spectral_dos(dos, chemical_potentials)
+    )
+    spectral_function = dos.sum(axis=0)
+    fitted = local_quasi_fermi_levels(
+        spectral_function, density, ENERGIES, neutrality_levels, TEMPERATURE
+    )
+    single_component = LDOSDensityModel(
+        density,
+        potential,
+        SpectralDensityOfStates(
+            spectral_dos=spectral_function[np.newaxis],
+            energies=ENERGIES,
+            chemical_potentials=fitted[np.newaxis],
+            temperatures=np.array([TEMPERATURE]),
+        ),
+    )
+    return contact_resolved, single_component, fitted
+
+
+def test_quasi_fermi_model_equilibrium():
+    """Tests that, in equilibrium, the spectral function with fitted
+    quasi-Fermi levels is identical to the contact-resolved model."""
+    contact_resolved, single_component, fitted = _contact_resolved_and_fitted(
+        np.array([0.02, 0.02])
+    )
+    assert np.allclose(fitted, 0.02, atol=1e-6)
+    for value in np.linspace(-0.3, 0.3, 7):
+        potential = np.full(5, value)
+        assert np.allclose(
+            single_component.density(potential),
+            contact_resolved.density(potential),
+            rtol=1e-6,
+            atol=1e-10,
+        )
+        assert np.allclose(
+            single_component.density_derivative(potential),
+            contact_resolved.density_derivative(potential),
+            rtol=1e-5,
+        )
+
+
+def test_quasi_fermi_model_nonequilibrium():
+    """Tests the quasi-Fermi approximation under a bias of ~2 k_B T.
+
+    The density is still exact at the reference potential (so the SCSP
+    fixed point is unaffected), and the derivative stays close to the
+    contact-resolved one (it only affects the convergence rate).
+
+    """
+    contact_resolved, single_component, fitted = _contact_resolved_and_fitted(
+        np.array([0.0, -0.05])
+    )
+    assert np.all((fitted > -0.05) & (fitted < 0.0))
+
+    potential = np.zeros(5)
+    assert np.allclose(
+        single_component.density(potential),
+        contact_resolved.density(potential),
+        rtol=0,
+        atol=1e-14,
+    )
+    for value in (-0.1, 0.0, 0.05):
+        potential = np.full(5, value)
+        assert np.allclose(
+            single_component.density_derivative(potential),
+            contact_resolved.density_derivative(potential),
+            rtol=0.2,
+        )
+
+
+def test_scba_spectral_dos():
+    """Tests the SCBA spectral DOS on a stub in equilibrium.
+
+    The fitted quasi-Fermi levels must recover the chemical potential,
+    and the resulting model must reproduce the SCBA charge density.
+
+    """
+    rng = np.random.default_rng(3)
+    orbitals_per_atom = [2, 3, 1, 2]
+    num_orbitals = sum(orbitals_per_atom)
+    energies = np.linspace(-1.0, 1.0, 801)
+    chemical_potential = 0.05
+    contacts = [_Contact(chemical_potential, 0.0, 0.0), _Contact(0.05, 0.0, 0.0)]
+
+    # Spectral electron and hole densities with shape (E, orbitals).
+    spectral_function = rng.uniform(0, 1, (energies.size, num_orbitals))
+    occupation = fermi_dirac(energies - chemical_potential, TEMPERATURE)[:, None]
+    potential = np.repeat(
+        rng.uniform(-0.1, 0.1, len(orbitals_per_atom)), orbitals_per_atom
+    )
+
+    scba = SimpleNamespace(
+        observables=SimpleNamespace(
+            electron_density=spectral_function * occupation,
+            hole_density=spectral_function * (1 - occupation),
+        ),
+        electron_energies=energies,
+        data=SimpleNamespace(orbitals_per_atom=orbitals_per_atom),
+        device=SimpleNamespace(contacts=contacts, potential=potential),
+    )
+    scba._reference_contact = lambda: SCBA._reference_contact(scba)
+    scba._compute_excess_charge_densities = (
+        lambda: SCBA._compute_excess_charge_densities(scba)
+    )
+    scba.get_charge_density = lambda: SCBA.get_charge_density(scba)
+
+    spectral_dos = SCBA.get_spectral_density_of_states(scba)
+    charge_density = SCBA.get_charge_density(scba)
+
+    assert spectral_dos.spectral_dos.shape == (1, 4, energies.size)
+    assert spectral_dos.chemical_potentials.shape == (1, 4)
+    assert np.allclose(spectral_dos.chemical_potentials, chemical_potential, atol=1e-4)
+
+    atom_potential = potential[np.hstack(([0], np.cumsum(orbitals_per_atom)))[:-1]]
+    model = LDOSDensityModel(charge_density, atom_potential, spectral_dos)
+    assert np.allclose(model.density(atom_potential), charge_density)

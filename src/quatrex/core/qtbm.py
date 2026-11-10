@@ -30,6 +30,7 @@ from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
+from quatrex.core.utils import split_trapezoid
 from quatrex.device import QTBMDevice
 from quatrex.electrostatics.density_response import SpectralDensityOfStates
 from quatrex.grid import get_electron_energies
@@ -1272,14 +1273,14 @@ class QTBM(TransportSolver):
 
         mid_gap_energy = self.device.potential + mid_gap_energy
 
-        mask = self.electron_energies > mid_gap_energy[:, None]
-        electron_density[~mask] = 0
-        hole_density[mask] = 0
-
-        excess_electron_density = xp.trapezoid(
-            electron_density, self.electron_energies, axis=1
+        # Electrons are counted above, holes below the local mid-gap
+        # energy, integrating exactly up to it.
+        __, excess_electron_density = split_trapezoid(
+            electron_density, self.electron_energies, mid_gap_energy
         )
-        excess_hole_density = xp.trapezoid(hole_density, self.electron_energies, axis=1)
+        excess_hole_density, __ = split_trapezoid(
+            hole_density, self.electron_energies, mid_gap_energy
+        )
 
         return (
             excess_electron_density,

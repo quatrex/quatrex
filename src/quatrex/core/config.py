@@ -356,8 +356,9 @@ class ElectrostaticsConfig(BaseModel):
       transport density exactly and its derivative is the actual local
       quantum capacitance, so it needs no material parameters. The
       transport energy window must contain the Fermi windows of the
-      contacts shifted by the potential updates. Currently only
-      available for the wave-function formalism (`formalism = "wf"`).
+      contacts shifted by the potential updates. For NEGF, the local
+      spectral function is used instead, filled up to a local
+      quasi-Fermi level per atom (exact in equilibrium).
 
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding".

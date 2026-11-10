@@ -11,6 +11,7 @@ from scipy.special import expit
 
 from qttools import NDArray
 from quatrex.core.constants import hbar, k_B
+from quatrex.core.utils import split_trapezoid
 from quatrex.electrostatics.fermi_integrals import (
     fermi_integral,
     inverse_fermi_integral,
@@ -545,27 +546,129 @@ class GrapheneDensityModel(DensityModel):
         )
 
 
+def _excess_occupation(
+    spectral_dos: NDArray,
+    energies: NDArray,
+    chemical_potentials: NDArray,
+    neutrality_levels: NDArray,
+    thermal_energy: float,
+) -> NDArray:
+    """Net excess occupation per atom for given chemical potentials.
+
+    States above the neutrality level count as electrons (occupation
+    f), states below it as holes (occupation 1 - f). Evaluating 1 - f
+    directly avoids cancellation against the filled valence states. The
+    integration is split exactly at the neutrality level, consistent
+    with the excess charge of the transport solvers.
+
+    """
+    x = (energies[np.newaxis, :] - chemical_potentials[:, np.newaxis]) / thermal_energy
+    __, electrons = split_trapezoid(
+        spectral_dos * expit(-x), energies, neutrality_levels
+    )
+    holes, __ = split_trapezoid(spectral_dos * expit(x), energies, neutrality_levels)
+    return electrons - holes
+
+
+def local_quasi_fermi_levels(
+    spectral_dos: NDArray,
+    net_density: NDArray,
+    energies: NDArray,
+    neutrality_levels: NDArray,
+    temperature: float,
+    num_bisections: int = 64,
+) -> NDArray:
+    r"""Fits a local quasi-Fermi level to the occupation on each atom.
+
+    Finds $\mu_i$ such that filling the local spectral function
+    $A_i(E)$ with a Fermi-Dirac distribution reproduces the net excess
+    density $n_i$ (electrons above, holes below the local neutrality
+    level $E_{\mathrm{CNL}, i}$):
+
+    $$
+    \int_{E > E_{\mathrm{CNL}, i}} A_i(E) f(E - \mu_i) \mathrm{d}E -
+    \int_{E < E_{\mathrm{CNL}, i}} A_i(E) f(\mu_i - E) \mathrm{d}E =
+    n_i.
+    $$
+
+    The left-hand side is monotonic in $\mu_i$, so the levels are found
+    by (vectorized) bisection. In equilibrium, where the occupation is
+    Fermi-Dirac, this recovers the chemical potential. Atoms whose
+    density cannot be reproduced within the energy window are clamped
+    to the bracket bounds.
+
+    Parameters
+    ----------
+    spectral_dos : NDArray
+        The local spectral function per atom with shape (num_atoms,
+        num_energies), in states per eV.
+    net_density : NDArray
+        The net excess density per atom (electrons positive).
+    energies : NDArray
+        The energy grid in eV.
+    neutrality_levels : NDArray
+        The local charge neutrality (mid-gap) level per atom in eV.
+    temperature : float
+        The temperature in K.
+    num_bisections : int, optional
+        The number of bisection steps.
+
+    Returns
+    -------
+    quasi_fermi_levels : NDArray
+        The local quasi-Fermi level per atom in eV.
+
+    """
+    spectral_dos = np.clip(np.asarray(spectral_dos, dtype=float), 0.0, None)
+    net_density = np.asarray(net_density, dtype=float)
+    energies = np.asarray(energies, dtype=float)
+    neutrality_levels = np.asarray(neutrality_levels, dtype=float)
+    thermal_energy = k_B * temperature
+
+    margin = 40 * thermal_energy
+    lower = np.full(net_density.shape, energies[0] - margin)
+    upper = np.full(net_density.shape, energies[-1] + margin)
+    for __ in range(num_bisections):
+        middle = 0.5 * (lower + upper)
+        too_low = (
+            _excess_occupation(
+                spectral_dos, energies, middle, neutrality_levels, thermal_energy
+            )
+            < net_density
+        )
+        lower = np.where(too_low, middle, lower)
+        upper = np.where(too_low, upper, middle)
+
+    return 0.5 * (lower + upper)
+
+
 @dataclass
 class SpectralDensityOfStates:
     """Atom-resolved local density of states from a transport solver.
 
-    The LDOS is resolved by the contact that injects the states, since
-    each contact fills its states with its own Fermi-Dirac distribution.
+    The LDOS is split into components that are each filled with a
+    Fermi-Dirac distribution. For the wave-function formalism, the
+    components are the states injected by each contact, filled up to
+    the contact's chemical potential. For NEGF, where the occupation
+    also contains scattering-in contributions, there is a single
+    component (the local spectral function) filled up to a local
+    quasi-Fermi level per atom.
 
     Attributes
     ----------
     spectral_dos : NDArray
         The LDOS per atom (summed over orbitals, spin included,
-        averaged over transverse k-points) with shape (num_contacts,
+        averaged over transverse k-points) with shape (num_components,
         num_atoms, num_energies), in states per eV.
     energies : NDArray
         The energy grid in eV, with shape (num_energies,).
     chemical_potentials : NDArray
-        The chemical potential of each contact in eV, with shape
-        (num_contacts,).
+        The chemical potentials in eV, either one per component with
+        shape (num_components,) or one per component and atom with shape
+        (num_components, num_atoms).
     temperatures : NDArray
-        The temperature of each contact in K, with shape
-        (num_contacts,).
+        The temperature of each component in K, with shape
+        (num_components,).
 
     """
 
@@ -578,16 +681,16 @@ class SpectralDensityOfStates:
 class LDOSDensityModel(DensityModel):
     r"""Density response model from the transport LDOS (rigid shift).
 
-    The local density of states $D_{i,c}(E)$ on atom $i$, injected from
-    contact $c$, is taken from the last transport calculation, which
-    was done at the potential $\phi^0$. A change of the local potential
-    $\delta_i = \phi_i - \phi_i^0$ is assumed to shift the local states
-    rigidly, so that
+    The local density of states $D_{i,c}(E)$ on atom $i$ of component
+    $c$ (e.g. the states injected from contact $c$) is taken from the
+    last transport calculation, which was done at the potential
+    $\phi^0$. A change of the local potential $\delta_i = \phi_i -
+    \phi_i^0$ is assumed to shift the local states rigidly, so that
 
     $$
-    n_i(\phi) = n_i^0 + \sum_c \int D_{i,c}(E) \left[f_c(E + \delta_i)
-    - f_c(E)\right] dE, \quad f_c(E) = \frac{1}{1 + e^{(E - \mu_c) /
-    k_B T_c}}.
+    n_i(\phi) = n_i^0 + \sum_c \int D_{i,c}(E) \left[f_{c,i}(E +
+    \delta_i) - f_{c,i}(E)\right] dE, \quad f_{c,i}(E) = \frac{1}{1 +
+    e^{(E - \mu_{c,i}) / k_B T_c}}.
     $$
 
     The states below the charge neutrality level shift along with the
@@ -606,12 +709,11 @@ class LDOSDensityModel(DensityModel):
         The potential per atom at which the transport calculation was
         done.
     spectral_dos : SpectralDensityOfStates
-        The atom- and contact-resolved LDOS of the transport
-        calculation.
+        The atom-resolved LDOS of the transport calculation.
 
     """
 
-    # Number of thermal energies the Fermi window of each contact must
+    # Number of thermal energies the Fermi window of each component must
     # stay away from the energy window boundaries.
     window_margin = 10.0
 
@@ -632,20 +734,17 @@ class LDOSDensityModel(DensityModel):
             np.asarray(spectral_dos.spectral_dos, dtype=float), 0.0, None
         )
         self.energies = np.asarray(spectral_dos.energies, dtype=float)
-        self.chemical_potentials = np.asarray(
-            spectral_dos.chemical_potentials, dtype=float
-        ).reshape(-1)
-        self.thermal_energies = k_B * np.broadcast_to(
-            np.asarray(spectral_dos.temperatures, dtype=float),
-            self.chemical_potentials.shape,
-        )
 
-        num_contacts, num_atoms, num_energies = self.spectral_dos.shape
+        num_components, num_atoms, num_energies = self.spectral_dos.shape
+        chemical_potentials = np.asarray(spectral_dos.chemical_potentials, dtype=float)
+        temperatures = np.asarray(spectral_dos.temperatures, dtype=float)
         if (
             self.reference_density.shape != (num_atoms,)
             or self.reference_potential.shape != (num_atoms,)
             or self.energies.shape != (num_energies,)
-            or self.chemical_potentials.shape != (num_contacts,)
+            or chemical_potentials.shape
+            not in ((num_components,), (num_components, num_atoms))
+            or temperatures.shape not in ((), (num_components,))
         ):
             raise ValueError(
                 "Inconsistent shapes: spectral_dos "
@@ -653,18 +752,28 @@ class LDOSDensityModel(DensityModel):
                 f"{self.reference_density.shape}, potential "
                 f"{self.reference_potential.shape}, energies "
                 f"{self.energies.shape}, chemical_potentials "
-                f"{self.chemical_potentials.shape}."
+                f"{chemical_potentials.shape}, temperatures "
+                f"{temperatures.shape}."
             )
+
+        # Chemical potentials per component and atom.
+        self.chemical_potentials = np.broadcast_to(
+            chemical_potentials.reshape(num_components, -1),
+            (num_components, num_atoms),
+        )
+        self.thermal_energies = k_B * np.broadcast_to(temperatures, (num_components,))
 
         self._warned_window = False
         self.reference_occupation = self._occupation(np.zeros(num_atoms))
 
     def _occupations(self, shift: NDArray) -> list[tuple[NDArray, float]]:
-        """Fermi-Dirac occupations for each contact at the shifted energies."""
+        """Fermi-Dirac occupations for each component at the shifted energies."""
         self._check_window(shift)
         return [
             (
-                expit(-(self.energies[np.newaxis, :] + shift[:, np.newaxis] - mu) / kT),
+                expit(
+                    -(self.energies[np.newaxis, :] + (shift - mu)[:, np.newaxis]) / kT
+                ),
                 kT,
             )
             for mu, kT in zip(self.chemical_potentials, self.thermal_energies)
@@ -681,10 +790,13 @@ class LDOSDensityModel(DensityModel):
         """Warns if a Fermi window is shifted out of the energy window."""
         if self._warned_window or shift.size == 0:
             return
-        margin = self.window_margin * self.thermal_energies
-        lowest = self.chemical_potentials - margin - shift.max()
-        highest = self.chemical_potentials + margin - shift.min()
-        if np.any(lowest < self.energies[0]) or np.any(highest > self.energies[-1]):
+        margin = self.window_margin * self.thermal_energies[:, np.newaxis]
+        # The occupation at energy E + shift is filled up to mu, i.e.
+        # the Fermi window is centered at mu - shift.
+        center = self.chemical_potentials - shift[np.newaxis, :]
+        if np.any(center - margin < self.energies[0]) or np.any(
+            center + margin > self.energies[-1]
+        ):
             self._warned_window = True
             warnings.warn(
                 "The potential update shifts a Fermi window outside of the "

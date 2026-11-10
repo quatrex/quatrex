@@ -230,8 +230,15 @@ evaluated numerically for density models with other dimensionalities.
     the different contact occupations under bias consistently. The
     transport energy window must contain the Fermi windows of all
     contacts shifted by the potential updates, otherwise a warning is
-    issued. It is currently available for the wave-function formalism
-    only.
+    issued.
+
+    In NEGF, the occupation also contains scattering-in contributions
+    and cannot be attributed to the contacts. There, the local spectral
+    function $A_i(E) = n_i(E) + p_i(E)$ is used as a single component,
+    filled up to a local quasi-Fermi level $\mu_i$ that is fitted to
+    reproduce the excess charge on each atom. This is exact in
+    equilibrium; out of equilibrium, only the derivative (i.e. the
+    convergence rate, not the converged solution) is approximate.
 
 !!! info "Fermi-Dirac Integral Evaluation"
     In `quatrex`, Fermi-Dirac integrals of orders $k=0$ and $k=-1$ are

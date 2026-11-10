@@ -207,6 +207,32 @@ evaluated numerically for density models with other dimensionalities.
     $\propto \mathcal{F}_0(\eta) + \mathcal{F}_0(-\eta)$ remains finite
     at the Dirac point.
 
+!!! tip "Density Model from the Transport LDOS"
+    The analytic models only approximate the density of states the
+    transport calculation actually sees, which can differ a lot, e.g.
+    for a coarse transverse k-point sampling, where few subbands
+    dominate. An underestimated quantum capacitance makes the outer
+    Schrödinger-Poisson loop overshoot and oscillate. With
+    [`density_model = "ldos"`](../parameters/electrostatics/#density_model),
+    the local density of states $D_{i,c}(E)$ on atom $i$ of the states
+    injected from contact $c$ is taken from the last transport
+    calculation at the potential $\phi^0$ and shifted rigidly with the
+    local potential:
+
+    $$
+    \rho_i(\phi) = \rho_i^0 + \sum_c \int D_{i,c}(E) \left[
+    f_c(E + \phi_i - \phi_i^0) - f_c(E) \right] \mathrm{d}E.
+    $$
+
+    The model reproduces the transport density at $\phi^0$ exactly and
+    its derivative there is the actual local quantum capacitance. It
+    requires no material parameters and treats electrons, holes and
+    the different contact occupations under bias consistently. The
+    transport energy window must contain the Fermi windows of all
+    contacts shifted by the potential updates, otherwise a warning is
+    issued. It is currently available for the wave-function formalism
+    only.
+
 !!! info "Fermi-Dirac Integral Evaluation"
     In `quatrex`, Fermi-Dirac integrals of orders $k=0$ and $k=-1$ are
     evaluated via their analytic form, while they are computed by

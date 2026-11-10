@@ -335,7 +335,7 @@ class ElectrostaticsConfig(BaseModel):
 
     """
 
-    density_model: Literal["single-band", "omen", "graphene"] = "single-band"
+    density_model: Literal["single-band", "omen", "graphene", "ldos"] = "single-band"
     """The density model to use for the root-finding scheme.
 
     - `"single-band"`: Uses a simple single-band density model where the
@@ -350,6 +350,14 @@ class ElectrostaticsConfig(BaseModel):
       integrals of order 1 for electrons and holes. Configured via
       [`graphene_fermi_velocity`](#graphene_fermi_velocity) and
       [`graphene_area_per_atom`](#graphene_area_per_atom).
+    - `"ldos"`: Uses the local density of states of the last transport
+      calculation, resolved by the injecting contact, and shifts it
+      rigidly with the local potential. The model reproduces the
+      transport density exactly and its derivative is the actual local
+      quantum capacitance, so it needs no material parameters. The
+      transport energy window must contain the Fermi windows of the
+      contacts shifted by the potential updates. Currently only
+      available for the wave-function formalism (`formalism = "wf"`).
 
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding".

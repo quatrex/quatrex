@@ -50,6 +50,16 @@ class SCSP:
 
         self.mixer = self._configure_mixer(config.scsp)
 
+        self.use_spectral_dos = (
+            config.electrostatics.solving_scheme == "root-finding"
+            and config.electrostatics.density_model == "ldos"
+        )
+        if self.use_spectral_dos and config.formalism != "wf":
+            raise ValueError(
+                "The 'ldos' density model is currently only available for "
+                "the wave-function formalism (formalism = 'wf')."
+            )
+
         self.convergence_tol = config.scsp.convergence_tol
 
     @staticmethod
@@ -155,7 +165,15 @@ class SCSP:
             self.transport_solver.run()
             charge_density = self.transport_solver.get_charge_density()
 
-            new_potential = self.electrostatic_solver.solve(charge_density, potential)
+            spectral_dos = (
+                self.transport_solver.get_spectral_density_of_states()
+                if self.use_spectral_dos
+                else None
+            )
+
+            new_potential = self.electrostatic_solver.solve(
+                charge_density, potential, spectral_dos=spectral_dos
+            )
 
             if np.max(np.abs(potential - new_potential)) < self.convergence_tol:
                 if comm.rank == 0:

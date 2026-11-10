@@ -12,7 +12,7 @@ from qttools.comm import comm
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import free_mempool
+from qttools.utils.gpu_utils import free_mempool, get_host
 from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import (
@@ -31,6 +31,7 @@ from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.transport import TransportSolver
 from quatrex.device import QTBMDevice
+from quatrex.electrostatics.density_response import SpectralDensityOfStates
 from quatrex.grid import get_electron_energies
 
 profiler = Profiler()
@@ -1336,6 +1337,51 @@ class QTBM(TransportSolver):
         )
 
         return charge_density
+
+    def get_spectral_density_of_states(self) -> SpectralDensityOfStates:
+        """Gets the atom- and contact-resolved LDOS of the last run.
+
+        The LDOS of the states injected by each contact is averaged over
+        transverse k-points, multiplied by two for spin and summed over
+        the orbitals of each atom, consistent with
+        `get_charge_density`.
+
+        Returns
+        -------
+        spectral_dos : SpectralDensityOfStates
+            The LDOS with shape (num_contacts, num_atoms, num_energies)
+            together with the energies, chemical potentials and
+            temperatures of the contacts (host arrays).
+
+        """
+        if len(self.observables.electron_ldos) == 0:
+            raise ValueError(
+                "Electron local density of states has not been computed. "
+                "Please run the QTBM calculation with electron LDOS output enabled."
+            )
+
+        orbital_offsets = get_host(self.device.orbital_offsets[:-1])
+        contacts = list(self.observables.electron_ldos.keys())
+        spectral_dos = np.stack(
+            [
+                np.add.reduceat(
+                    get_host(self.observables.electron_ldos[contact].mean(axis=0))
+                    * 2,  # Spin
+                    orbital_offsets,
+                    axis=0,
+                )
+                for contact in contacts
+            ]
+        )
+
+        return SpectralDensityOfStates(
+            spectral_dos=spectral_dos,
+            energies=get_host(self.electron_energies),
+            chemical_potentials=np.array(
+                [contact.fermi_level - contact.voltage for contact in contacts]
+            ),
+            temperatures=np.array([contact.temperature for contact in contacts]),
+        )
 
     @profiler.profile(label="QTBM", level="default", comm=comm)
     def run(self) -> None:

@@ -2,9 +2,12 @@
 
 """Density Response Models."""
 
+import warnings
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import numpy as np
+from scipy.special import expit
 
 from qttools import NDArray
 from quatrex.core.constants import hbar, k_B
@@ -540,3 +543,192 @@ class GrapheneDensityModel(DensityModel):
             / self.thermal_energy
             * dirac_net_density_derivative(self._eta(potential))
         )
+
+
+@dataclass
+class SpectralDensityOfStates:
+    """Atom-resolved local density of states from a transport solver.
+
+    The LDOS is resolved by the contact that injects the states, since
+    each contact fills its states with its own Fermi-Dirac distribution.
+
+    Attributes
+    ----------
+    spectral_dos : NDArray
+        The LDOS per atom (summed over orbitals, spin included,
+        averaged over transverse k-points) with shape (num_contacts,
+        num_atoms, num_energies), in states per eV.
+    energies : NDArray
+        The energy grid in eV, with shape (num_energies,).
+    chemical_potentials : NDArray
+        The chemical potential of each contact in eV, with shape
+        (num_contacts,).
+    temperatures : NDArray
+        The temperature of each contact in K, with shape
+        (num_contacts,).
+
+    """
+
+    spectral_dos: NDArray
+    energies: NDArray
+    chemical_potentials: NDArray
+    temperatures: NDArray
+
+
+class LDOSDensityModel(DensityModel):
+    r"""Density response model from the transport LDOS (rigid shift).
+
+    The local density of states $D_{i,c}(E)$ on atom $i$, injected from
+    contact $c$, is taken from the last transport calculation, which
+    was done at the potential $\phi^0$. A change of the local potential
+    $\delta_i = \phi_i - \phi_i^0$ is assumed to shift the local states
+    rigidly, so that
+
+    $$
+    n_i(\phi) = n_i^0 + \sum_c \int D_{i,c}(E) \left[f_c(E + \delta_i)
+    - f_c(E)\right] dE, \quad f_c(E) = \frac{1}{1 + e^{(E - \mu_c) /
+    k_B T_c}}.
+    $$
+
+    The states below the charge neutrality level shift along with the
+    potential, so they do not contribute to the change of the excess
+    charge. The model reproduces the transport density at $\phi^0$
+    exactly, and its derivative there is the local quantum capacitance
+    of the actual (e.g. k-point sampled, non-parabolic) band structure.
+    Electrons and holes are treated on the same footing.
+
+    Parameters
+    ----------
+    density : NDArray
+        The excess charge density per atom from the transport
+        calculation (electrons positive).
+    potential : NDArray
+        The potential per atom at which the transport calculation was
+        done.
+    spectral_dos : SpectralDensityOfStates
+        The atom- and contact-resolved LDOS of the transport
+        calculation.
+
+    """
+
+    # Number of thermal energies the Fermi window of each contact must
+    # stay away from the energy window boundaries.
+    window_margin = 10.0
+
+    def __init__(
+        self,
+        density: NDArray,
+        potential: NDArray,
+        spectral_dos: SpectralDensityOfStates,
+    ):
+        """Initializes the LDOS density model."""
+        self.reference_density = np.asarray(density, dtype=float)
+        self.reference_potential = np.asarray(potential, dtype=float)
+
+        # NOTE: The Mulliken-projected LDOS can be slightly negative.
+        # It is clipped to keep the density monotonic in the potential
+        # (i.e., a negative semi-definite contribution to the Jacobian).
+        self.spectral_dos = np.clip(
+            np.asarray(spectral_dos.spectral_dos, dtype=float), 0.0, None
+        )
+        self.energies = np.asarray(spectral_dos.energies, dtype=float)
+        self.chemical_potentials = np.asarray(
+            spectral_dos.chemical_potentials, dtype=float
+        ).reshape(-1)
+        self.thermal_energies = k_B * np.broadcast_to(
+            np.asarray(spectral_dos.temperatures, dtype=float),
+            self.chemical_potentials.shape,
+        )
+
+        num_contacts, num_atoms, num_energies = self.spectral_dos.shape
+        if (
+            self.reference_density.shape != (num_atoms,)
+            or self.reference_potential.shape != (num_atoms,)
+            or self.energies.shape != (num_energies,)
+            or self.chemical_potentials.shape != (num_contacts,)
+        ):
+            raise ValueError(
+                "Inconsistent shapes: spectral_dos "
+                f"{self.spectral_dos.shape}, density "
+                f"{self.reference_density.shape}, potential "
+                f"{self.reference_potential.shape}, energies "
+                f"{self.energies.shape}, chemical_potentials "
+                f"{self.chemical_potentials.shape}."
+            )
+
+        self._warned_window = False
+        self.reference_occupation = self._occupation(np.zeros(num_atoms))
+
+    def _occupations(self, shift: NDArray) -> list[tuple[NDArray, float]]:
+        """Fermi-Dirac occupations for each contact at the shifted energies."""
+        self._check_window(shift)
+        return [
+            (
+                expit(-(self.energies[np.newaxis, :] + shift[:, np.newaxis] - mu) / kT),
+                kT,
+            )
+            for mu, kT in zip(self.chemical_potentials, self.thermal_energies)
+        ]
+
+    def _occupation(self, shift: NDArray) -> NDArray:
+        """Number of occupied states per atom for the given shift."""
+        occupation = np.zeros(shift.shape)
+        for dos, (f, __) in zip(self.spectral_dos, self._occupations(shift)):
+            occupation += np.trapezoid(dos * f, self.energies, axis=-1)
+        return occupation
+
+    def _check_window(self, shift: NDArray):
+        """Warns if a Fermi window is shifted out of the energy window."""
+        if self._warned_window or shift.size == 0:
+            return
+        margin = self.window_margin * self.thermal_energies
+        lowest = self.chemical_potentials - margin - shift.max()
+        highest = self.chemical_potentials + margin - shift.min()
+        if np.any(lowest < self.energies[0]) or np.any(highest > self.energies[-1]):
+            self._warned_window = True
+            warnings.warn(
+                "The potential update shifts a Fermi window outside of the "
+                "transport energy window. The LDOS density model "
+                "underestimates the density response there. Consider "
+                "widening the energy window.",
+                RuntimeWarning,
+            )
+
+    def density(self, potential: NDArray) -> NDArray:
+        """Computes the density for a given potential.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The potential.
+
+        Returns
+        -------
+        density : NDArray
+            The computed density.
+
+        """
+        shift = np.asarray(potential, dtype=float) - self.reference_potential
+        return (
+            self.reference_density + self._occupation(shift) - self.reference_occupation
+        )
+
+    def density_derivative(self, potential: NDArray) -> NDArray:
+        """Computes the derivative of the density with respect to the potential.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The potential.
+
+        Returns
+        -------
+        density_derivative : NDArray
+            The computed derivative of the density.
+
+        """
+        shift = np.asarray(potential, dtype=float) - self.reference_potential
+        derivative = np.zeros(shift.shape)
+        for dos, (f, kT) in zip(self.spectral_dos, self._occupations(shift)):
+            derivative -= np.trapezoid(dos * f * (1 - f), self.energies, axis=-1) / kT
+        return derivative

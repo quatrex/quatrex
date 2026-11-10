@@ -18,10 +18,60 @@ from quatrex.electrostatics import assembly
 from quatrex.electrostatics.density_response import (
     DensityModel,
     GrapheneDensityModel,
+    LDOSDensityModel,
     OMENDensityModel,
     SingleBandDensityModel,
+    SpectralDensityOfStates,
 )
 from quatrex.electrostatics.meshing import DeviceMesh
+
+
+def solve_linear_system(
+    matrix: sparse.sparray | sparse.spmatrix, rhs: NDArray
+) -> NDArray:
+    """Solves a sparse linear system for the electrostatics.
+
+    The system is first solved with Jacobi-preconditioned BiCGStab. If
+    BiCGStab does not converge (it can stagnate or break down, e.g. for
+    the non-symmetric matrices that result from row-wise enforcement of
+    Dirichlet constraints) the returned iterate is meaningless, so the
+    system is instead solved with a direct sparse solver.
+
+    Parameters
+    ----------
+    matrix : sparse.sparray | sparse.spmatrix
+        The (square) system matrix.
+    rhs : NDArray
+        The right-hand side vector.
+
+    Returns
+    -------
+    solution : NDArray
+        The solution of the linear system.
+
+    """
+    diagonal = matrix.diagonal()
+    preconditioner = sparse.linalg.LinearOperator(
+        matrix.shape, matvec=lambda x: x / diagonal
+    )
+    solution, info = sparse.linalg.bicgstab(
+        matrix,
+        rhs,
+        M=preconditioner,
+        # NOTE: Zero starting guess can lead to parameter breakdown,
+        # this seems more robust.
+        x0=preconditioner @ rhs,
+    )
+    if info == 0:
+        return solution
+
+    if comm.rank == 0:
+        print(
+            f"    BiCGStab did not converge (info={info}), "
+            "falling back to direct sparse solver.",
+            flush=True,
+        )
+    return sparse.linalg.spsolve(sparse.csc_matrix(matrix), rhs)
 
 
 class PoissonSolver(ABC):
@@ -102,8 +152,18 @@ class PoissonSolver(ABC):
         return charge_density
 
     @abstractmethod
-    def solve(self, charge_density: NDArray, potential: NDArray = None) -> NDArray:
-        """Solves the Poisson equation for a given charge density."""
+    def solve(
+        self,
+        charge_density: NDArray,
+        potential: NDArray = None,
+        spectral_dos: SpectralDensityOfStates | None = None,
+    ) -> NDArray:
+        """Solves the Poisson equation for a given charge density.
+
+        The `spectral_dos` from the transport calculation is only used
+        by solvers that need a density response model built from it.
+
+        """
         ...
 
 
@@ -125,28 +185,17 @@ class DirectPoissonSolver(PoissonSolver):
         )
         self.fixed_density = fixed_density
 
-        self.preconditioner = sparse.linalg.LinearOperator(
-            self.stiffness_matrix.shape,
-            matvec=lambda x: x / self.stiffness_matrix.diagonal(),
-        )
-
     def solve(
         self,
         charge_density: NDArray,
         potential: NDArray,
+        spectral_dos: SpectralDensityOfStates | None = None,
     ) -> NDArray:
         """Solves the Poisson equation for a given charge density."""
         charge_density = self._enforce_potential_constraints(
             -(self.fixed_density - charge_density) / epsilon_0
         )
-        potential, info = sparse.linalg.bicgstab(
-            self.stiffness_matrix,
-            charge_density,
-            M=self.preconditioner,
-            x0=self.preconditioner @ charge_density,
-        )
-        if comm.rank == 0:
-            print(f"Direct Poisson solver info: {info}", flush=True)
+        potential = solve_linear_system(self.stiffness_matrix, charge_density)
         return self.mfc_transform.T @ potential
 
 
@@ -188,6 +237,8 @@ class NonlinearPoissonSolver(PoissonSolver):
                 SingleBandDensityModel,
                 dim=electrostatics_config.density_model_dim,
             )
+        if electrostatics_config.density_model == "ldos":
+            return LDOSDensityModel
         if electrostatics_config.density_model == "graphene":
             return functools.partial(
                 GrapheneDensityModel,
@@ -202,6 +253,7 @@ class NonlinearPoissonSolver(PoissonSolver):
         self,
         charge_density: NDArray,
         potential: NDArray,
+        spectral_dos: SpectralDensityOfStates | None = None,
         initial_density_derivative: NDArray | None = None,
     ) -> NDArray:
         """Solves the nonlinear Poisson equation.
@@ -212,6 +264,10 @@ class NonlinearPoissonSolver(PoissonSolver):
             The charge density.
         potential : NDArray
             The initial potential guess.
+        spectral_dos : SpectralDensityOfStates, optional
+            The atom- and contact-resolved LDOS of the transport
+            calculation that produced `charge_density` at `potential`.
+            Required for the "ldos" density model, ignored otherwise.
         initial_density_derivative : NDArray, optional
             An optional initial guess for the density derivative, used
             for the first iteration. This is especially useful for the
@@ -228,8 +284,19 @@ class NonlinearPoissonSolver(PoissonSolver):
 
         """
 
+        density_model_kwargs = {}
+        if self.initialize_density_model is LDOSDensityModel:
+            if spectral_dos is None:
+                raise ValueError(
+                    "The 'ldos' density model requires the spectral density "
+                    "of states from the transport calculation."
+                )
+            density_model_kwargs["spectral_dos"] = spectral_dos
+
         density_model: DensityModel = self.initialize_density_model(
-            charge_density[self.atom_inds], potential[self.atom_inds]
+            charge_density[self.atom_inds],
+            potential[self.atom_inds],
+            **density_model_kwargs,
         )
 
         new_potential = self._enforce_potential_constraints(np.copy(potential))
@@ -288,20 +355,10 @@ class NonlinearPoissonSolver(PoissonSolver):
             for value, indices in self.potential_constraints.values():
                 residual[indices] = 0.0
 
-            preconditioner = sparse.linalg.LinearOperator(
-                jacobian.shape,
-                matvec=lambda x: x / jacobian.diagonal(),
-            )
-
             if comm.rank == 0:
                 print("    Solving linearized problem.", flush=True)
             # Solve the linearized problem for the update.
-            delta_potential, __ = sparse.linalg.bicgstab(
-                jacobian,
-                residual,
-                M=preconditioner,
-                x0=preconditioner @ residual,
-            )
+            delta_potential = solve_linear_system(jacobian, residual)
 
             new_potential -= delta_potential
 

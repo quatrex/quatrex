@@ -342,7 +342,7 @@ def _assemble_kpoint(
         )
         kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-        index = np.argwhere(kpoint_grid > 1)[0]
+        index = np.where(kpoint_grid > 1)[0]
         for stack_index in np.ndindex(kpoints.shape[:-1]):
             kpoint = kpoints[stack_index]
             stack_index = np.array(stack_index)
@@ -578,13 +578,17 @@ def load_matrices(
             f"but found min_coords={min_coords} and max_coords={max_coords}."
         )
 
-    expected_size = np.prod(max_coords - min_coords + 1)
-    actual_size = len(matrix_dict)
-    if expected_size != actual_size:
-        raise ValueError(
-            f"Expected {expected_size} unit cells based on the detected grid shape, "
-            f"but found {actual_size} unit cells in the matrix file."
-        )
+    validated_coords = set((0, 0, 0))
+    for coord in matrix_dict:
+        if coord in validated_coords:
+            continue
+        opposite_coord = tuple(-c for c in coord)
+        if opposite_coord not in matrix_dict:
+            raise ValueError(
+                f"Expected to find the opposite coordinate {opposite_coord} for {coord} in the matrix_dict, "
+                f"but it was not found. Available keys: {list(matrix_dict.keys())}"
+            )
+        validated_coords.update([coord, opposite_coord])
 
     # assert that more than the neighbor cell cutoff is available if the cutoff is requested
     if config.device.neighbor_cell_cutoff is not None and any(

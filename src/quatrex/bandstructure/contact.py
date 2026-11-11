@@ -152,7 +152,9 @@ def contact_fermi_level(
     ----------
     e_k : NDArray
         The sorted eigenvalues in energy and k. This should have shape
-        (num_kpoints, num_bands).
+        (num_kpoints, num_bands) or (num_kpoints, num_kpoints_transverse,
+        num_bands). In the latter case, the occupations are averaged
+        over the (uniformly weighted) transverse k-points.
     kpoints : NDArray
         The corresponding k-points. This should have shape
         (num_kpoints,).
@@ -178,8 +180,12 @@ def contact_fermi_level(
 
     """
 
-    num_valence_bands_k = (e_k < mid_gap_energy).sum(axis=1)
-    if not np.all(num_valence_bands_k == num_valence_bands_k[0]):
+    if e_k.ndim == 2:
+        # Only a single transverse k-point.
+        e_k = e_k[:, xp.newaxis, :]
+
+    num_valence_bands_k = (e_k < mid_gap_energy).sum(axis=-1)
+    if not xp.all(num_valence_bands_k == num_valence_bands_k.flat[0]):
         raise ValueError(
             "The number of valence bands is not the same for all "
             "k-points. You may have to adjust the mid-gap energy guess."
@@ -187,13 +193,16 @@ def contact_fermi_level(
 
     # NOTE: int() does a implicit copy to the host which is needed since
     # the input for split needs to be a int.
-    num_valence_bands = int(num_valence_bands_k[0])
-    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=1)
+    num_valence_bands = int(num_valence_bands_k.flat[0])
+    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=-1)
 
     def objective_function(fermi_level):
         """Charge neutrality objective function."""
-        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=1)
-        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=1)
+        # Sum over bands and average over transverse k-points.
+        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=-1)
+        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=-1)
+        n_k = n_k.mean(axis=1)
+        p_k = p_k.mean(axis=1)
         n = xp.trapezoid(n_k, kpoints)
         p = xp.trapezoid(p_k, kpoints)
 

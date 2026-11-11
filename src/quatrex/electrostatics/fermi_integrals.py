@@ -83,6 +83,10 @@ def fermi_integral(k: float, eta: NDArray, num_quad_points: int = 500) -> float:
         # Analytical solution for k = -1.
         return 1 / (1 + np.exp(-eta))
 
+    if k == 1:
+        # Analytical solution for k = 1.
+        return _fermi_integral_one(eta)
+
     # Make sure eta has the right shape for broadcasting.
     eta = np.atleast_1d(eta)
 
@@ -108,6 +112,30 @@ def fermi_integral(k: float, eta: NDArray, num_quad_points: int = 500) -> float:
     x = np.exp(t - np.exp(-t))
     f = x * (1 + np.exp(-t)) * x**k / (1 + np.exp(x - eta[..., np.newaxis]))
     return np.trapezoid(f, t) / _gamma(k + 1)
+
+
+def _fermi_integral_one_negative(eta: NDArray) -> NDArray:
+    """Fermi integral of order 1 for non-positive arguments.
+
+    Uses F_1(eta) = -Li_2(-exp(eta)) and the identity
+    Li_2(z) = spence(1 - z), with exp(eta) <= 1, so nothing overflows.
+
+    """
+    return -sp.special.spence(1 + np.exp(eta))
+
+
+def _fermi_integral_one(eta: NDArray) -> NDArray:
+    """Analytic Fermi integral of order 1, valid for all real eta.
+
+    For positive arguments the reflection formula
+    F_1(eta) + F_1(-eta) = eta^2 / 2 + pi^2 / 6 is used, so that the
+    dilogarithm is only ever evaluated for non-positive arguments.
+
+    """
+    eta = np.asarray(eta, dtype=float)
+    abs_eta = np.abs(eta)
+    tail = _fermi_integral_one_negative(-abs_eta)
+    return np.where(eta <= 0, tail, abs_eta**2 / 2 + np.pi**2 / 6 - tail)
 
 
 def R_j(t: float, P: NDArray, Q: NDArray) -> float:

@@ -12,14 +12,20 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, xp
 from qttools.comm import comm, distributed_max
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import current_conservation, density
+from quatrex.core.observables import current_conservation, density, scattering_rate
 from quatrex.core.transport import TransportSolver
+from quatrex.core.utils import split_trapezoid
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device import SCBADevice
 from quatrex.device.base import map_potential_to_orbitals
 from quatrex.device.inputs import get_block_sizes
+from quatrex.electrostatics.density_response import (
+    SpectralDensityOfStates,
+    local_quasi_fermi_levels,
+)
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -145,12 +151,12 @@ class Observables:
 
     excess_charge_density: NDArray = None
 
-    electron_electron_scattering_rate: NDArray = None
-    electron_photon_scattering_rate: NDArray = None
-    electron_phonon_scattering_rate: NDArray = None
-
     sigma_lesser_density: NDArray = None
     sigma_greater_density: NDArray = None
+
+    scattering_rate: NDArray = None
+
+    current_conservation: NDArray = None
 
     # --- Coulomb screening --------------------------------------------
     w_lesser_density: NDArray = None
@@ -254,11 +260,12 @@ class SCBA(TransportSolver):
                 if self.device.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
-            self.sigma_fock = SigmaFock(
-                self.config,
-                self.device.coulomb_matrix,
-                self.electron_energies,
-            )
+            if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
+                self.sigma_fock = SigmaFock(
+                    self.config,
+                    self.device.coulomb_matrix,
+                    self.electron_energies,
+                )
             # Have to transpose the coulomb matrix back to the original distribution.
             (
                 self.device.coulomb_matrix.dtranspose()
@@ -390,7 +397,7 @@ class SCBA(TransportSolver):
         )
 
         meir_wingreen_current = self.observables.electron_current.get(
-            "meir-wingreen", [0, 0]
+            "meir-wingreen", xp.array([0, 0])
         )
         i_left = xp.real(meir_wingreen_current[..., 0])
         i_right = xp.real(meir_wingreen_current[..., -1])
@@ -402,12 +409,7 @@ class SCBA(TransportSolver):
         current_diff = xp.abs(left_current - right_current)
         rel_current_diff = current_diff / xp.abs(avg_current)
 
-        current_conservation_abs, current_conservation_rel = current_conservation(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.data.sigma_lesser,
-            self.data.sigma_greater,
-        )
+        current_conservation = self.observables.current_conservation
 
         if comm.rank == 0:
             print(
@@ -428,8 +430,10 @@ class SCBA(TransportSolver):
             print(
                 f"Relative Contact Current Difference: {rel_current_diff}", flush=True
             )
-            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
-            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
+            print(
+                f"Relative Scattering Current Conservation: {current_conservation}",
+                flush=True,
+            )
 
         return False  # TODO: :-)
 
@@ -485,10 +489,11 @@ class SCBA(TransportSolver):
         self.data.p_greater.free_data()
         self.data.p_retarded_hermitian.free_data()
 
-        self.sigma_fock.compute(
-            self.data.g_lesser,
-            out=(self.data.sigma_retarded_hermitian,),
-        )
+        if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
+            self.sigma_fock.compute(
+                self.data.g_lesser,
+                out=(self.data.sigma_retarded_hermitian,),
+            )
 
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
@@ -508,6 +513,21 @@ class SCBA(TransportSolver):
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
+
+        self.observables.current_conservation = current_conservation(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.sigma_lesser,
+            self.data.sigma_greater,
+        )
+        if self.config.outputs.scattering_rate:
+            self.observables.scattering_rate = scattering_rate(
+                self.data.g_lesser,
+                self.data.g_greater,
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+            )
+
         if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
@@ -582,6 +602,11 @@ class SCBA(TransportSolver):
 
         outputs = {}
 
+        if self.config.outputs.scattering_rate:
+            outputs[f"scattering_rate_{iteration}.npy"] = (
+                self.observables.scattering_rate
+            )
+
         if self.config.outputs.electron_ldos:
             outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
         if self.config.outputs.electron_density:
@@ -654,32 +679,32 @@ class SCBA(TransportSolver):
                 "before computing excess charge densities."
             )
 
-        # NOTE: Use the mid-gap-energy of a reference contact.
-        if self.electron_solver.left_voltage == 0.0:
-            mid_gap_energy = self.electron_solver.left_mid_gap_energy
-        elif self.electron_solver.right_voltage == 0.0:
-            mid_gap_energy = self.electron_solver.right_mid_gap_energy
-        else:
-            raise NotImplementedError(
-                "Cannot determine mid-gap energy for excess charge density calculation. "
-                "At least one contact must be grounded (zero voltage)."
-            )
-
-        mid_gap_energy = self.electron_solver.potential + mid_gap_energy
-
-        electron_density = self.observables.electron_density.copy()
-        hole_density = self.observables.hole_density.copy()
-
-        mask = self.electron_energies[:, None] > mid_gap_energy
-        electron_density[~mask] = 0
-        hole_density[mask] = 0
-
-        excess_electron_density = np.trapezoid(
-            electron_density, self.electron_energies, axis=0
+        mid_gap_energy = (
+            self.device.potential + self._reference_contact().mid_gap_energy
         )
-        excess_hole_density = np.trapezoid(hole_density, self.electron_energies, axis=0)
+
+        # Electrons are counted above, holes below the local mid-gap
+        # energy, integrating exactly up to it. The spectral densities
+        # have shape (num_energies, num_orbitals).
+        __, excess_electron_density = split_trapezoid(
+            self.observables.electron_density.T, self.electron_energies, mid_gap_energy
+        )
+        excess_hole_density, __ = split_trapezoid(
+            self.observables.hole_density.T, self.electron_energies, mid_gap_energy
+        )
 
         return excess_electron_density, excess_hole_density
+
+    def _reference_contact(self):
+        """Returns the grounded contact that defines the mid-gap energy."""
+        for contact in self.device.contacts:
+            if contact.voltage == 0.0:
+                return contact
+
+        raise NotImplementedError(
+            "Cannot determine mid-gap energy for excess charge density calculation. "
+            "At least one contact must be grounded (zero voltage)."
+        )
 
     def set_potential(self, potential: NDArray):
         """Sets the potential for the SCBA calculation.
@@ -690,11 +715,16 @@ class SCBA(TransportSolver):
             The new potential values to be set in the system matrix.
 
         """
+        if potential.shape[0] != np.sum(self.data.orbitals_per_atom):
+            potential = xp.repeat(
+                xp.asarray(potential), xp.asarray(self.data.orbitals_per_atom)
+            )
         potential = map_potential_to_orbitals(
             potential, self.device.atomic_species, self.config.device
         )
 
-        self.electron_solver.potential = potential
+        # NOTE: The electron solver reads the potential from the device.
+        self.device.potential = xp.asarray(potential)
 
     def get_charge_density(self) -> NDArray:
         """Gets the charge density.
@@ -715,6 +745,64 @@ class SCBA(TransportSolver):
         charge_density = np.add.reduceat(charge_density, self.data.orbital_offsets[:-1])
 
         return charge_density
+
+    def get_spectral_density_of_states(self) -> SpectralDensityOfStates:
+        """Gets the atom-resolved spectral function and quasi-Fermi levels.
+
+        With scattering, the occupation cannot be attributed to the
+        contacts. Instead, the local spectral function $A = n + p$ (from
+        the spectral electron and hole densities) is filled up to a
+        local quasi-Fermi level per atom, which is fitted to reproduce
+        the excess charge density of `get_charge_density`. In
+        equilibrium, this recovers the contacts' chemical potential.
+
+        Returns
+        -------
+        spectral_dos : SpectralDensityOfStates
+            The spectral function with shape (1, num_atoms,
+            num_energies) together with the energies, the quasi-Fermi
+            levels with shape (1, num_atoms) and the temperature (host
+            arrays).
+
+        """
+        if (
+            self.observables.electron_density is None
+            or self.observables.hole_density is None
+        ):
+            raise ValueError(
+                "Electron and hole densities must be computed "
+                "before computing the spectral density of states."
+            )
+
+        orbital_offsets = np.hstack(([0], np.cumsum(self.data.orbitals_per_atom)))[:-1]
+        energies = get_host(self.electron_energies)
+
+        # Spectral function per atom with shape (num_atoms, num_energies).
+        spectral_function = np.add.reduceat(
+            get_host(self.observables.electron_density + self.observables.hole_density),
+            orbital_offsets,
+            axis=1,
+        ).T
+
+        reference_contact = self._reference_contact()
+        neutrality_levels = (
+            get_host(self.device.potential)[orbital_offsets]
+            + reference_contact.mid_gap_energy
+        )
+        quasi_fermi_levels = local_quasi_fermi_levels(
+            spectral_dos=spectral_function,
+            net_density=get_host(self.get_charge_density()),
+            energies=energies,
+            neutrality_levels=neutrality_levels,
+            temperature=reference_contact.temperature,
+        )
+
+        return SpectralDensityOfStates(
+            spectral_dos=spectral_function[np.newaxis],
+            energies=energies,
+            chemical_potentials=quasi_fermi_levels[np.newaxis],
+            temperatures=np.array([reference_contact.temperature]),
+        )
 
     @profiler.profile(label="SCBA", level="default", comm=comm)
     def run(self) -> None:

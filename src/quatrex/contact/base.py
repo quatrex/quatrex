@@ -248,8 +248,12 @@ class BaseContact(ABC):
             kpoints_transport=kpoints_transport,
         )
 
-        # Average over transverse k-points.
-        e_k = xp.mean(e_k, axis=1)
+        # NOTE: The band structure keeps the transverse k-points, e_k
+        # has shape (num_kpoints_transport, num_kpoints_transverse,
+        # num_bands). Averaging the eigenvalues over transverse
+        # k-points would smear out (or open a fake gap in) dispersive
+        # transverse bands, e.g. the Dirac cone of graphene. Instead,
+        # the occupations are averaged in `contact_fermi_level`.
 
         # Recompute the actual mid-gap energy from the band structure.
         valence_band_edge, conduction_band_edge = contact_band_edges(

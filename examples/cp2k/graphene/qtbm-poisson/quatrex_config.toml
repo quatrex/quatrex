@@ -1,0 +1,112 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "wf"
+
+[scsp]
+mixer = "under-relaxation"
+# NOTE: Fixed, small under-relaxation. With adaptive mixing the factor
+# grows while the residual decreases, which sustains an oscillation of
+# the potential between iterations.
+mixing_factor = 0.3
+adaptive_mixing = false
+
+max_iterations = 10
+
+[electrostatics]
+default_epsilon_r = 1.0
+density_model = "graphene"
+
+[device]
+transport_direction = "a"
+num_orbitals_per_atom = { "C" = 13 }
+# NOTE: The transverse grid must contain Gamma (odd number of points)
+# to sample the Dirac point. See the README for the k-point discussion.
+kpoint_grid = [1, 3, 1]
+
+    [device.geometry]
+    default_mesh_size = 2
+    atoms_mesh_size = 1
+
+        # Local back gate under the channel, 10 Å below the sheet.
+        [[device.geometry.regions]]
+        name = "gate"
+
+        shape.type = "rectangle"
+        shape.center = [23.997, 4.26292, -10.0]
+        shape.normal = [0, 0, 1]
+        shape.tangent = [1, 0, 0]
+        shape.length = 20.0
+        shape.width = 8.52584
+
+        properties.voltage = -0.5
+
+        # Gate dielectric filling the space between gate and sheet.
+        [[device.geometry.regions]]
+        name = "oxide"
+
+        shape.type = "box"
+        shape.bounds = [[-1.0, -1.0, -10.5], [50.0, 9.5, -1.0]]
+
+        properties.epsilon_r = 3.9
+
+        # n-doped graphene leads.
+        [[device.geometry.regions]]
+        name = "left"
+
+        shape.type = "box"
+        shape.bounds = [[-1.0, -1.0, -1.0], [14.0, 9.5, 1.0]]
+
+        # 7.45e19 cm^-3 * 6.709 Å (cell height) = 5e12 cm^-2.
+        properties.donor_concentration = 7.45e19 # cm^-3
+
+        [[device.geometry.regions]]
+        name = "right"
+
+        shape.type = "box"
+        shape.bounds = [[34.0, -1.0, -1.0], [50.0, 9.5, 1.0]]
+
+        properties.donor_concentration = 7.45e19 # cm^-3
+
+
+    [[device.contacts]]
+    name = "left"
+    origin = [-0.001, -0.001, -0.001]
+    lattice_vectors = [[2.461, 0, 0], [0, 4.263, 0], [0, 0, 6.709]]
+    transport_direction = "a"
+
+    # Dirac point (charge neutrality level) of this Hamiltonian. The
+    # Fermi level is computed from the lead doping.
+    mid_gap_energy = 0.631
+    num_kpoints_transport = 300
+
+    voltage = 0.0
+
+    [[device.contacts]]
+    name = "right"
+    origin = [48, -0.001, -0.001]
+    lattice_vectors = [[-2.461, 0, 0], [0, 4.263, 0], [0, 0, 6.709]]
+    transport_direction = "a"
+
+    mid_gap_energy = 0.631
+    num_kpoints_transport = 300
+
+    voltage = -0.05
+
+
+[electron]
+# Dirac point +- 0.6 eV.
+energy_window_min = 0.031
+energy_window_max = 1.231
+energy_window_num = 241
+
+    [electron.obc]
+    algorithm = "spectral"
+    num_ref_iterations = 10
+    nevp_solver = "full"
+    r_o = 1000
+    r_i = 0.9
+    m_0 = 100
+    num_quad_points = 64
+    min_decay = 1e-8
+    max_decay = 10

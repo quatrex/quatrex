@@ -2,8 +2,6 @@
 
 """Includes the SuperLU wave function solver."""
 
-import warnings
-
 from qttools import NDArray, sparse
 from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
@@ -83,14 +81,14 @@ class SuperLU(WFSolver):
             The solution vector.
 
         """
-        if reuse_analysis:
-            warnings.warn(
-                "SuperLU solver does not support an analysis phase, so "
-                "the reuse_analysis flag is ignored."
-            )
+        # NOTE: reuse_analysis is silently ignored. Callers pass it for
+        # solvers that have an analysis phase (e.g. MUMPS), and warning
+        # here would fire once per energy point.
 
         if self._lu is None or not reuse_factorization:
             with profiler.profile_range("SuperLU: factorization", level="default"):
-                self._lu = linalg.splu(a)
+                # splu works on CSC; converting explicitly avoids a
+                # SparseEfficiencyWarning on every call.
+                self._lu = linalg.splu(a.tocsc())
 
         return self._lu.solve(b)

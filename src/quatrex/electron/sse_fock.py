@@ -11,6 +11,7 @@ from qttools.fft import fft_circular_convolve
 from qttools.profiling import Profiler
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.device.scba import SCBADevice
 from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
@@ -23,6 +24,7 @@ class SigmaFock(ScatteringSelfEnergy):
     ----------
     config : QuatrexConfig
         The Quatrex configuration.
+    device: SCBADevice
     electron_energies : NDArray
         The energies for the electron system.
 
@@ -31,19 +33,20 @@ class SigmaFock(ScatteringSelfEnergy):
     def __init__(
         self,
         config: QuatrexConfig,
-        coulomb_matrix: DSDBSparse,
+        device: SCBADevice,
         electron_energies: NDArray,
     ):
         """Initializes the bare Fock self-energy."""
+        self.device = device
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(config.device.kpoint_grid)
+        self.qpoint_volume = np.prod(self.device.qgrid.size)
         self.prefactor = 1j / (2 * xp.pi) * get_equal_spacing(self.energies)
         (
-            coulomb_matrix.dtranspose()
-            if coulomb_matrix.distribution_state != "nnz"
+            device.coulomb_matrix.dtranspose()
+            if device.coulomb_matrix.distribution_state != "nnz"
             else None
         )
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = device.coulomb_matrix.data[0]
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
@@ -72,16 +75,27 @@ class SigmaFock(ScatteringSelfEnergy):
         with profiler.profile_range(
             label="SigmaFock: SSE computation", level="default", comm=comm
         ):
-            if g_lesser.data.shape[-1] != 0:
-                gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-                sigma_retarded_hermitian.data += (
-                    fft_circular_convolve(
-                        gl_density,
-                        self.coulomb_matrix_data,
-                        axes=tuple(range(gl_density.ndim - 1)),
-                    )
-                    / self.kpoint_volume
-                )
+            if g_lesser.data.shape[-1] == 0:
+                return
+
+            gl_density = xp.reshape(
+                self.device.kgrid.expand(
+                    self.prefactor * g_lesser.data.sum(axis=0), axis=0
+                ),
+                (*self.device.kgrid.size, -1),
+            )
+            out = fft_circular_convolve(
+                gl_density,
+                xp.reshape(
+                    self.device.qgrid.expand(self.coulomb_matrix_data, axis=0),
+                    (*self.device.qgrid.size, -1),
+                ),
+                axes=tuple(range(gl_density.ndim - 1)),
+            )
+
+            out = self.device.kgrid.reduce(out.reshape(-1, out.shape[-1]))
+
+            sigma_retarded_hermitian.data += out / self.qpoint_volume
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

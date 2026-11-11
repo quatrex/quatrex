@@ -5,7 +5,7 @@ from typing import Callable
 import numpy as np
 import pytest
 
-from qttools import xp
+from qttools import NDArray, xp
 from quatrex.bandstructure.band_edges import _compute_eigenvalues
 from quatrex.core.config import QuatrexConfig, parse_config, setup_context
 from quatrex.device import BaseDevice, create_device
@@ -15,23 +15,24 @@ from quatrex.grid import get_electron_energies
 TARGET_ENERGY = -0.5
 
 
-def _intialize(config: QuatrexConfig):
-    """Helper function to load the device Hamiltonian
-    and initialize the self-energy for the band edge tests."""
-
+def _initialize(
+    config: QuatrexConfig, device: BaseDevice
+) -> tuple[NDArray, NDArray, NDArray | None, NDArray, NDArray, int, int]:
+    """Helper function to load a device Hamiltonian and initialize the
+    self-energy for the band edge tests."""
     # Load the device Hamiltonian.
     hamiltonian, sparsity_pattern = assemble_matrix(
         config=config,
         matrix_name="hamiltonian",
+        kgrid=device.kgrid,
         sparsity_pattern=None,
-        shift_kpoints=False,
     )
     try:
         overlap, __ = assemble_matrix(
             config=config,
             matrix_name="overlap",
+            kgrid=device.kgrid,
             sparsity_pattern=None,
-            shift_kpoints=False,
         )
     except FileNotFoundError:
         overlap = None
@@ -41,7 +42,6 @@ def _intialize(config: QuatrexConfig):
     grid, __, __, __ = BaseDevice._load_structure(config)
     block_sizes = get_block_sizes(config, grid)
     energies = get_electron_energies(config)
-    kpoint_grid = config.device.kpoint_grid
 
     dsdbsparse_type = config.compute.dsdbsparse_type
 
@@ -49,7 +49,7 @@ def _intialize(config: QuatrexConfig):
     sigma_dummy = dsdbsparse_type.from_sparray(
         sparray=sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
-        global_stack_shape=energies.shape + tuple([k for k in kpoint_grid if k > 1]),
+        global_stack_shape=energies.shape + (device.kgrid.num_points,),
     )
     sigma_dummy.data[:] = 0
 
@@ -97,7 +97,7 @@ def test_subsectioning(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config, device)
     )
 
     for contact in device.contacts:
@@ -179,7 +179,7 @@ def test_left_right(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config, device)
     )
 
     if not np.all(hamiltonian.block_sizes == hamiltonian.block_sizes[0]):
@@ -261,7 +261,7 @@ def test_overlap(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config, device)
     )
 
     if overlap is None:

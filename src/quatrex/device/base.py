@@ -16,7 +16,7 @@ from qttools.utils.mpi_utils import distributed_load
 from quatrex.contact import BaseContact
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
-from quatrex.grid import monkhorst_pack
+from quatrex.grid import KGrid
 
 
 class BaseDevice:
@@ -50,9 +50,11 @@ class BaseDevice:
         None if no potential is provided or a 1D array where the 1D
         index corresponds to the orbital index or the atom index
         depending on the shape of the provided potential.
-    kpoints : NDArray
-        Array of k-points for the device, generated using a Monkhorst-Pack
-        grid based on the configuration.
+    kgrid : KGrid
+        K-point grid for the device, used for Hamiltonian construction.
+    qgrid : KGrid
+        Q-point grid for the device, used for interacting systems (e.g.,
+        phonons, photons, etc.). The q-points are always gamma-centered.
     contacts : list[BaseContact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
@@ -71,6 +73,7 @@ class BaseDevice:
         self.device_config = config.device
 
         (
+            self.structure,
             self.orbital_coordinates,
             self.atom_coordinates,
             self.atomic_species,
@@ -89,10 +92,26 @@ class BaseDevice:
             self.device_config.num_orbitals_per_atom,
         )
 
-        self.kpoints = monkhorst_pack(
-            self.device_config.kpoint_grid, self.device_config.kpoint_shift
+        self.kgrid = KGrid(
+            size=self.device_config.kpoint_grid,
+            shift=self.device_config.kpoint_shift,
+            symmetry_reduction=self.device_config.kpoint_symmetry_reduction,
+            structure=self.structure,
         )
-        self.num_kpoints = len(self.kpoints)
+
+        if comm.rank == 0:
+            if self.device_config.kpoint_symmetry_reduction:
+                print(
+                    f"Using symmetry-reduced k-point grid. "
+                    f"Mapped {self.kgrid.num_full_points} k-points to "
+                    f"{self.kgrid.num_irreducible_points} irreducible k-points.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"Using full k-point grid with {self.kgrid.num_points} k-points.",
+                    flush=True,
+                )
 
         # Child classes will initialize the Hamiltonian and contacts in
         # their own init methods
@@ -188,9 +207,10 @@ class BaseDevice:
         structure_file = config.input_dir / "structure.xyz"
         if not structure_file.exists():
             raise FileNotFoundError(f"Structure file {structure_file} not found.")
-        lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
-            structure_file
-        )
+        structure = distributed_read_xyz(structure_file)
+        lattice_vectors = structure.cell.array
+        atom_coordinates = structure.get_positions()
+        atomic_species = structure.get_chemical_symbols()
 
         orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
@@ -224,7 +244,13 @@ class BaseDevice:
                 * config.device.num_transport_cells
             )
 
-        return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
+        return (
+            structure,
+            orbital_coordinates,
+            atom_coordinates,
+            atomic_species,
+            lattice_vectors,
+        )
 
     def _init_orbitals(self) -> None:
         """Initializes the orbital indexing system for the device.

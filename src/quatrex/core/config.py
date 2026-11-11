@@ -1005,6 +1005,8 @@ class ContactConfig(BaseModel):
     num_kpoints_transport: int = 50
     """Number of k-points to use for contact band structure calculation.
 
+    Even grids will include the Gamma point, while odd grids will not.
+
     This is used when automatically determining the Fermi level of the
     contact from its band structure. The k-point grid along the
     transverse directions are determined from the `kpoint_grid`
@@ -1864,6 +1866,18 @@ class DeviceConfig(BaseModel):
     """
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
     """The kpoint shift to apply to the Monkhorst-Pack grid."""
+    kpoint_symmetry_reduction: bool = True
+    """Whether to try reducing the k-point grid using symmetry
+    operations.
+
+    The symmetry operations are determined from the device structure
+    with `spglib`.
+
+    This can significantly reduce the number of transverse k-points that
+    need to be computed in the Brillouin zone, especially for
+    high-symmetry systems. 
+
+    """
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

@@ -13,6 +13,7 @@ from qttools.utils.gpu_utils import clear_fft_plan_cache, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.device.scba import SCBADevice
 from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
@@ -65,17 +66,23 @@ class PCoulombScreening(ScatteringSelfEnergy):
     ----------
     config : QuatrexConfig
         Quatrex configuration object.
+    device : SCBADevice
+        The device object.
     coulomb_screening_energies : NDArray
         The energies for the Coulomb screening
 
     """
 
     def __init__(
-        self, config: QuatrexConfig, coulomb_screening_energies: NDArray
+        self,
+        config: QuatrexConfig,
+        device: SCBADevice,
+        coulomb_screening_energies: NDArray,
     ) -> None:
         """Initializes the polarization."""
+        self.device = device
         self.energies = coulomb_screening_energies
-        self.kpoint_volume = np.prod(config.device.kpoint_grid)
+        self.kpoint_volume = np.prod(self.device.kgrid.size)
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
@@ -153,9 +160,28 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    p_g_full = self.prefactor * fft_correlate_kpoints(
-                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
+                    # Expand the quantities to the full k-point grid and
+                    # make the shape (num_energies, *kgrid.size, nnz) so
+                    # it is compatible with the FFT correlation.
+                    g_greater_ij = xp.reshape(
+                        self.device.kgrid.expand(g_greater.data[..., batch]),
+                        (self.ne, *self.device.kgrid.size, -1),
                     )
+                    g_lesser_ji = xp.reshape(
+                        self.device.kgrid.expand(-g_lesser.data[..., batch].conj()),
+                        (self.ne, *self.device.kgrid.size, -1),
+                    )
+
+                    p_g_full = self.prefactor * fft_correlate_kpoints(
+                        g_greater_ij, g_lesser_ji
+                    )
+
+                    # Reshape back and reduce to the irreducible part of
+                    # the k-point grid.
+                    p_g_full = self.device.qgrid.reduce(
+                        p_g_full.reshape(p_g_full.shape[0], -1, p_g_full.shape[-1])
+                    )
+
                     p_l_full = -p_g_full[::-1].conj()
                     # Fill the matrices with the data. Take second part
                     # of the energy convolution. # Note that only the

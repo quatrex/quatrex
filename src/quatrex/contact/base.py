@@ -244,12 +244,7 @@ class BaseContact(ABC):
             endpoint=False,
         )
 
-        e_k = self.compute_contact_bandstructure(
-            kpoints_transport=kpoints_transport,
-        )
-
-        # Average over transverse k-points.
-        e_k = xp.mean(e_k, axis=1)
+        e_k = self.compute_contact_bandstructure(kpoints_transport=kpoints_transport)
 
         # Recompute the actual mid-gap energy from the band structure.
         valence_band_edge, conduction_band_edge = contact_band_edges(
@@ -285,6 +280,7 @@ class BaseContact(ABC):
 
         fermi_level = contact_fermi_level(
             e_k=e_k,
+            kgrid=self.device.kgrid,
             kpoints=kpoints_transport,
             mid_gap_energy=self.mid_gap_energy,
             cell_volume=self.cell_volume,

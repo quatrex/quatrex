@@ -60,7 +60,6 @@ class SCBAData:
 
         block_sizes = get_block_sizes(config, grid)
 
-        kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
 
         dsdbsparse_type = config.compute.dsdbsparse_type
@@ -68,16 +67,14 @@ class SCBAData:
         self.g_retarded = dsdbsparse_type.from_sparray(
             sparray=device.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape
-            + tuple([k for k in kpoint_grid if k > 1]),
+            global_stack_shape=electron_energies.shape + (device.kgrid.num_points,),
             allocate=False,
         )
 
         self.g_lesser = dsdbsparse_type.from_sparray(
             sparray=device.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape
-            + tuple([k for k in kpoint_grid if k > 1]),
+            global_stack_shape=electron_energies.shape + (device.kgrid.num_points,),
             symmetry="skew-hermitian" if config.scba.symmetric else None,
             allocate=False,
         )
@@ -99,9 +96,15 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded_hermitian = dsdbsparse_type.empty_like(self.g_lesser)
-            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser)
-            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser)
+            self.p_lesser = dsdbsparse_type.from_sparray(
+                sparray=device.sparsity_pattern.astype(xp.complex128),
+                block_sizes=block_sizes,
+                global_stack_shape=electron_energies.shape + (device.qgrid.num_points,),
+                symmetry="skew-hermitian" if config.scba.symmetric else None,
+                allocate=False,
+            )
+            self.p_greater = dsdbsparse_type.empty_like(self.p_lesser)
+            self.p_retarded_hermitian = dsdbsparse_type.empty_like(self.p_lesser)
 
             if config.scba.symmetric:
                 self.p_retarded_hermitian.symmetry = "hermitian"
@@ -109,8 +112,7 @@ class SCBAData:
             self.w_lesser = dsdbsparse_type.from_sparray(
                 sparray=device.sparsity_pattern.astype(xp.complex128),
                 block_sizes=device.coulomb_block_sizes,
-                global_stack_shape=electron_energies.shape
-                + tuple([k for k in kpoint_grid if k > 1]),
+                global_stack_shape=electron_energies.shape + (device.qgrid.num_points,),
                 symmetry="skew-hermitian" if config.scba.symmetric else None,
                 allocate=False,
             )
@@ -259,7 +261,7 @@ class SCBA(TransportSolver):
             if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
                 self.sigma_fock = SigmaFock(
                     self.config,
-                    self.device.coulomb_matrix,
+                    self.device,
                     self.electron_energies,
                 )
             # Have to transpose the coulomb matrix back to the original distribution.
@@ -272,6 +274,7 @@ class SCBA(TransportSolver):
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
+                self.device,
                 self.coulomb_screening_energies,
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
@@ -281,6 +284,7 @@ class SCBA(TransportSolver):
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
+                self.device,
                 self.electron_energies,
             )
 

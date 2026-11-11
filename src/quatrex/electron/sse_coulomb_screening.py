@@ -13,6 +13,7 @@ from qttools.utils.gpu_utils import clear_fft_plan_cache, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.device.scba import SCBADevice
 from quatrex.grid import get_equal_spacing
 
 profiler = Profiler()
@@ -72,15 +73,19 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
     def __init__(
         self,
+        device: SCBADevice,
         config: QuatrexConfig,
         electron_energies: NDArray,
     ):
         """Initializes the scattering self-energy."""
+        self.device = device
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(config.device.kpoint_grid)
-        # self.num_energies = self.energies.size
+        self.qpoint_volume = np.prod(self.device.qgrid.size)
         self.prefactor = (
-            1j / (2 * xp.pi) * get_equal_spacing(self.energies) / self.kpoint_volume
+            1j
+            / (2 * xp.pi)
+            * xp.abs(get_equal_spacing(self.energies))
+            / self.qpoint_volume
         )
         self.big_block_sizes = None
         self.num_batches = config.compute.convolve.num_batches
@@ -128,16 +133,28 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
         ne = g_lesser.data.shape[0]
-        nk = g_lesser.data.shape[1:-1]
+        # Using kgrid here, since for the fft to work, k-point and
+        # q-point grids must have the same size/spacing anyway.
+        nk = self.device.kgrid.size
 
         g_x_fft = xp.fft.fftn(
-            g_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            xp.reshape(
+                self.device.kgrid.expand(g_lesser.data[..., batch]), (ne, *nk, -1)
+            ),
+            (n,) + nk,
+            axes=tuple(range(len(nk) + 1)),
         )
         w_lesser_fft = xp.fft.fftn(
-            w_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            xp.reshape(
+                self.device.qgrid.expand(w_lesser.data[..., batch]), (ne, *nk, -1)
+            ),
+            (n,) + nk,
+            axes=tuple(range(len(nk) + 1)),
         )
         w_greater_fft = xp.fft.fftn(
-            w_greater.data[..., batch],
+            xp.reshape(
+                self.device.qgrid.expand(w_greater.data[..., batch]), (ne, *nk, -1)
+            ),
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -150,10 +167,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
         )
+
+        lesser = self.device.kgrid.reduce(
+            lesser.reshape(lesser.shape[0], -1, lesser.shape[-1])
+        )
         sigma_lesser.data[..., batch] += lesser
 
         g_x_fft = xp.fft.fftn(
-            g_greater.data[..., batch],
+            xp.reshape(
+                self.device.kgrid.expand(g_greater.data[..., batch]), (ne, *nk, -1)
+            ),
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -162,6 +185,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         greater = (
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
+        )
+        greater = self.device.kgrid.reduce(
+            greater.reshape(greater.shape[0], -1, greater.shape[-1])
         )
         sigma_greater.data[..., batch] += greater
 
@@ -180,7 +206,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_retarded_hermitian.data[..., batch] += (
                 self.prefactor
                 * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
-                * self.kpoint_volume
+                * self.qpoint_volume
             )
 
     def _compute_with_correction(
@@ -216,27 +242,58 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         # Lesser self-energy
         sl = self.prefactor * fft_correlate_kpoints(
-            g_lesser.data[..., batch],
-            -w_greater.data[..., batch].conj(),
+            xp.reshape(
+                self.device.kgrid.expand(g_lesser.data[..., batch]),
+                (ne, *self.device.kgrid.size, -1),
+            ),
+            xp.reshape(
+                self.device.qgrid.expand(-w_greater.data[..., batch].conj()),
+                (ne, *self.device.qgrid.size, -1),
+            ),
         )
         sl[-ne:] += (
             self.prefactor
             * fft_convolve_kpoints(
-                g_lesser.data[..., batch], w_lesser.data[..., batch]
+                xp.reshape(
+                    self.device.kgrid.expand(g_lesser.data[..., batch]),
+                    (ne, *self.device.kgrid.size, -1),
+                ),
+                xp.reshape(
+                    self.device.qgrid.expand(w_lesser.data[..., batch]),
+                    (ne, *self.device.qgrid.size, -1),
+                ),
             )[:ne]
         )
 
+        # Reduce to the irreducible part of the k-point grid.
+        sl = self.device.kgrid.reduce(sl.reshape(sl.shape[0], -1, sl.shape[-1]))
+
         # Greater self-energy
         sg = self.prefactor * fft_convolve_kpoints(
-            g_greater.data[..., batch], w_greater.data[..., batch]
+            xp.reshape(
+                self.device.kgrid.expand(g_greater.data[..., batch]),
+                (ne, *self.device.kgrid.size, -1),
+            ),
+            xp.reshape(
+                self.device.qgrid.expand(w_greater.data[..., batch]),
+                (ne, *self.device.qgrid.size, -1),
+            ),
         )
         sg[:ne] += (
             self.prefactor
             * fft_correlate_kpoints(
-                g_greater.data[..., batch],
-                -w_lesser.data[..., batch].conj(),
+                xp.reshape(
+                    self.device.kgrid.expand(g_greater.data[..., batch]),
+                    (ne, *self.device.kgrid.size, -1),
+                ),
+                xp.reshape(
+                    self.device.qgrid.expand(-w_lesser.data[..., batch].conj()),
+                    (ne, *self.device.qgrid.size, -1),
+                ),
             )[-ne:]
         )
+
+        sg = self.device.kgrid.reduce(sg.reshape(sg.shape[0], -1, sg.shape[-1]))
 
         sigma_lesser.data[..., batch] += sl[-ne:]
         sigma_greater.data[..., batch] += sg[:ne]
@@ -248,7 +305,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_retarded_hermitian.data[..., batch] += (
                 self.prefactor
                 * hilbert_transform(sl, sg, self.energies)
-                * self.kpoint_volume
+                * self.qpoint_volume
             )
 
     @profiler.profile(label="SigmaCoulombScreening", level="default", comm=comm)
@@ -345,12 +402,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         )
                 else:
                     n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
-                    nk = g_lesser.data.shape[1:-1]
 
-                    # Add empty dimensions for each k-point.
-                    energy_differences = (self.energies - self.energies[0]).reshape(
-                        -1, *(len(nk) + 1) * (1,)
-                    )
+                    # Add empty dimensions for k-point.
+                    energy_differences = (self.energies - self.energies[0])[:, None]
                     # Set energy differences to inf at the singularity
                     # to avoid division by zero.
                     energy_differences[0] = np.inf

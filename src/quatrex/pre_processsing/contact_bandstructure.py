@@ -70,7 +70,7 @@ def _generate_plots(config: QuatrexConfig, axes: plt.Axes, device: BaseDevice) -
         if contact_config.voltage is not None:
             e_k += contact_config.voltage
 
-        for m in range(len(device.kpoints)):
+        for m in range(device.kgrid.num_points):
             _plot(
                 ax=axes[m, n],
                 kpoints_transport=kpoints_transport,
@@ -113,9 +113,9 @@ def plot_contact_band_structure(
     plt.rcParams.update({"font.size": 16})
 
     fig, axes = plt.subplots(
-        len(device.kpoints),
+        device.kgrid.num_points,
         len(contacts),
-        figsize=(12, 6),
+        figsize=(12, 6 * device.kgrid.num_points),
         squeeze=False,
         sharex=True,
         sharey=True,
@@ -148,7 +148,7 @@ def plot_contact_band_structure(
     for ax, contact in zip(axes[0], contacts):
         ax.set_title(f"{contact.name.capitalize()} Contact")
 
-    for ax, kpoint in zip(axes[:, 0], device.kpoints):
+    for ax, kpoint in zip(axes[:, 0], device.kgrid.points):
         ax.set_ylabel(f"k-point:\n{kpoint}\nEnergy (eV)")
 
     for ax in axes[-1]:

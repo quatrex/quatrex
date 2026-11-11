@@ -19,7 +19,8 @@ from quatrex.core.observables import current_conservation, density, scattering_r
 from quatrex.core.transport import TransportSolver
 from quatrex.core.utils import split_trapezoid
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device import BaseDevice, SCBADevice
+from quatrex.device import SCBADevice
+from quatrex.device.base import map_potential_to_orbitals
 from quatrex.device.inputs import get_block_sizes
 from quatrex.electrostatics.density_response import (
     SpectralDensityOfStates,
@@ -59,12 +60,9 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        grid, __, atomic_species, __ = BaseDevice._load_structure(config)
-        self.orbitals_per_atom = [
-            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
-        ]
+        self.orbital_offsets = device.orbital_offsets
 
-        block_sizes = get_block_sizes(config, grid)
+        block_sizes = get_block_sizes(config, int(device.orbital_offsets[-1]))
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
@@ -535,19 +533,19 @@ class SCBA(TransportSolver):
                 self.data.g_retarded,
                 self.device.overlap_matrices,
             ) / (2 * xp.pi)
-            self.observables.electron_ldos *= 2  # Spin
+            self.observables.electron_ldos *= self.config.device.spin_degeneracy
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.device.overlap_matrices,
             ) / (2 * xp.pi)
-            self.observables.electron_density *= 2  # Spin
+            self.observables.electron_density *= self.config.device.spin_degeneracy
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.device.overlap_matrices,
             ) / (2 * xp.pi)
-            self.observables.hole_density *= 2  # Spin
+            self.observables.hole_density *= self.config.device.spin_degeneracy
 
         if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = comm.stack.all_gather_v(
@@ -721,6 +719,9 @@ class SCBA(TransportSolver):
             potential = xp.repeat(
                 xp.asarray(potential), xp.asarray(self.data.orbitals_per_atom)
             )
+        potential = map_potential_to_orbitals(
+            potential, self.device.atomic_species, self.config.device
+        )
 
         # NOTE: The electron solver reads the potential from the device.
         self.device.potential = xp.asarray(potential)
@@ -741,8 +742,7 @@ class SCBA(TransportSolver):
         charge_density = electron_density - hole_density
 
         # From orbital to atom resolved charge density.
-        orbital_offsets = np.hstack(([0], np.cumsum(self.data.orbitals_per_atom)))
-        charge_density = np.add.reduceat(charge_density, orbital_offsets[:-1])
+        charge_density = np.add.reduceat(charge_density, self.data.orbital_offsets[:-1])
 
         return charge_density
 

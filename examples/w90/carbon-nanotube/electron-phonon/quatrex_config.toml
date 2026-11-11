@@ -5,21 +5,25 @@ formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = "a"
-block_size = 32
+block_size = 64
 
     [[device.contacts]]
-    name = "source"
-    origin = [0.1551, 0.0, 0.0]
-    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    name = "left"
+    origin = [1.281, 0.0, 0.0]
+    lattice_vectors = [[4.26, 0, 0], [0, 30, 0], [0, 0, 30]]
     transport_direction = "a"
-    fermi_level = -3.6
+    mid_gap_energy = -3.701998808382495 # Set by `quatrex pre-process`
+    fermi_level = -3.692714333268746 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.4028137150164186 # Set by `quatrex pre-process`
 
     [[device.contacts]]
-    name = "drain"
-    origin = [102.694, 0.0, 0.0]
-    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    name = "right"
+    origin = [102.075, 0.0, 0.0]
+    lattice_vectors = [[-4.26, 0, 0], [0, 30, 0], [0, 0, 30]]
     transport_direction = "a"
-    fermi_level = -3.8
+    mid_gap_energy = -3.7019988083824913 # Set by `quatrex pre-process`
+    fermi_level = -3.69271433326992 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.4028137150164195 # Set by `quatrex pre-process`
 
 [scba] # ===============================================================
 max_iterations = 2
@@ -32,8 +36,9 @@ symmetric = true
 [outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
-electron_density = false
-hole_density = false
+meir_wingreen_currents = true
+electron_density = true
+hole_density = true
 
 self_energy_density = true
 
@@ -69,3 +74,6 @@ acoustic_deformation_potential = 1  # eV
 optical_deformation_potential = 1  # eV / Å
 atom_mass_u = 12  # In the unified atomic mass unit
 lattice_constant = 4.26  # Å
+
+[pre_process]
+compute_fermi_level = true

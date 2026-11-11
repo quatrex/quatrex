@@ -5,23 +5,25 @@ formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = "a"
-block_size = 32
+block_size = 64
 
     [[device.contacts]]
     name = "left"
-    origin = [0.1551, 0.0, 0.0]
-    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    origin = [1.281, 0.0, 0.0]
+    lattice_vectors = [[4.26, 0, 0], [0, 30, 0], [0, 0, 30]]
     transport_direction = "a"
-    fermi_level = -3.600012853
-    mid_gap_energy = -3.8
+    mid_gap_energy = -3.701998808382495 # Set by `quatrex pre-process`
+    fermi_level = -3.692714333268746 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.4028137150164186 # Set by `quatrex pre-process`
 
     [[device.contacts]]
     name = "right"
-    origin = [102.694, 0.0, 0.0]
-    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    origin = [102.075, 0.0, 0.0]
+    lattice_vectors = [[-4.26, 0, 0], [0, 30, 0], [0, 0, 30]]
     transport_direction = "a"
-    fermi_level = -3.600012853
-    mid_gap_energy = -3.8
+    mid_gap_energy = -3.7019988083824913 # Set by `quatrex pre-process`
+    fermi_level = -3.69271433326992 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.4028137150164195 # Set by `quatrex pre-process`
 
 [scba] # ===============================================================
 max_iterations = 2
@@ -36,8 +38,8 @@ symmetric = true
 electron_ldos = true
 device_currents = true
 meir_wingreen_currents = true
-electron_density = false
-hole_density = false
+electron_density = true
+hole_density = true
 
 polarization_density = true
 coulomb_screening_density = true
@@ -59,7 +61,7 @@ energy_window_max = 0
 energy_window_num = 100
 
 solver.algorithm = "rgf"
-solver.max_batch_size = 1000
+solver.max_batch_size = 8
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
@@ -81,12 +83,12 @@ obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Å
-epsilon_r = 4.0
+epsilon_r = 4
 
 num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
 
 solver.algorithm = "rgf"
-solver.max_batch_size = 1000
+solver.max_batch_size = 7
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
@@ -107,7 +109,6 @@ obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
-lyapunov.num_ref_iterations = 1
 
 lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
@@ -120,3 +121,7 @@ interaction_cutoff = 5.5     # Å
 model = "pseudo-scattering"
 phonon_energy = 50e-3
 deformation_potential = 5e-3
+
+
+[pre_process]
+compute_fermi_level = true

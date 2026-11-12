@@ -2,10 +2,12 @@
 
 """Includes the base device class for electronic transport calculations."""
 
+import os
 import warnings
 from collections import defaultdict
 from pathlib import Path
 
+import ase.io
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -15,7 +17,7 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.contact import BaseContact
 from quatrex.core.config import QuatrexConfig
-from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
+from quatrex.device.inputs import create_coordinate_grid
 from quatrex.grid import KGrid
 
 
@@ -100,6 +102,15 @@ class BaseDevice:
         )
 
         if comm.rank == 0:
+            if not os.path.exists(config.output_dir):
+                os.mkdir(config.output_dir)
+
+            np.save(config.output_dir / "kpoints.npy", self.kgrid.points)
+            np.save(
+                config.output_dir / "kpoint_multiplicities.npy",
+                self.kgrid._multiplicities,
+            )
+
             if self.device_config.kpoint_symmetry_reduction:
                 print(
                     f"Using symmetry-reduced k-point grid. "
@@ -207,10 +218,11 @@ class BaseDevice:
         structure_file = config.input_dir / "structure.xyz"
         if not structure_file.exists():
             raise FileNotFoundError(f"Structure file {structure_file} not found.")
-        structure = distributed_read_xyz(structure_file)
+        # NOTE: This is a distributed read (parallel=True).
+        structure = ase.io.read(structure_file, format="extxyz", parallel=True)
         lattice_vectors = structure.cell.array
         atom_coordinates = structure.get_positions()
-        atomic_species = structure.get_chemical_symbols()
+        atomic_species = np.array(structure.get_chemical_symbols())
 
         orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species

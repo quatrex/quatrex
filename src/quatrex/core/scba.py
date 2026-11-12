@@ -53,7 +53,7 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        grid, __, atomic_species, __ = BaseDevice._load_structure(config)
+        __, grid, __, atomic_species, __ = BaseDevice._load_structure(config)
         self.orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
         ]
@@ -399,8 +399,8 @@ class SCBA(TransportSolver):
         meir_wingreen_current = self.observables.electron_current.get(
             "meir-wingreen", xp.array([0, 0])
         )
-        i_left = xp.real(meir_wingreen_current[..., 0])
-        i_right = xp.real(meir_wingreen_current[..., -1])
+        i_left = self.device.kgrid.integrate(xp.real(meir_wingreen_current[..., 0]))
+        i_right = self.device.kgrid.integrate(xp.real(meir_wingreen_current[..., -1]))
 
         dE = get_equal_spacing(self.electron_energies)
         left_current = xp.sum(i_left) * dE

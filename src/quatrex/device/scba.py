@@ -2,6 +2,8 @@
 
 """Includes the SCBA device class for electronic transport calculations."""
 
+import os
+
 import numpy as np
 
 from qttools import NDArray, sparse
@@ -69,6 +71,14 @@ class SCBADevice(BaseDevice):
             structure=self.structure,
         )
         if comm.rank == 0:
+            if not os.path.exists(config.output_dir):
+                os.mkdir(config.output_dir)
+
+            np.save(config.output_dir / "qpoints.npy", self.qgrid.points)
+            np.save(
+                config.output_dir / "qpoint_multiplicities.npy",
+                self.qgrid._multiplicities,
+            )
             if self.device_config.kpoint_symmetry_reduction:
                 print(
                     f"Using symmetry-reduced q-point grid. "
@@ -78,7 +88,7 @@ class SCBADevice(BaseDevice):
                 )
             else:
                 print(
-                    f"Using full q-point grid with {self.qgrid.num_points} k-points.",
+                    f"Using full q-point grid with {self.qgrid.num_points} q-points.",
                     flush=True,
                 )
 

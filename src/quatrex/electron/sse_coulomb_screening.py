@@ -73,8 +73,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
     def __init__(
         self,
-        device: SCBADevice,
         config: QuatrexConfig,
+        device: SCBADevice,
         electron_energies: NDArray,
     ):
         """Initializes the scattering self-energy."""

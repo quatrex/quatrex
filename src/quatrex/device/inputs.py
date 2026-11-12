@@ -3,12 +3,9 @@
 """Includes the methods to load and parse the input data."""
 
 import warnings
-from pathlib import Path
 
-import ase.io
 import numpy as np
 import scipy.sparse as sps
-from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -616,30 +613,3 @@ def assemble_matrix(
     )
 
     return matrix, sparsity_pattern
-
-
-def distributed_read_xyz(filename: Path) -> ase.Atoms:
-    """Reads atomic structure data from an XYZ file.
-
-    Parameters
-    ----------
-    filename : Path
-        Path to the XYZ file containing the atomic structure. The file
-        should be in ext-xyz format, with the first line specifying the
-        number of atoms, the second line containing a comment, and the
-        subsequent lines listing the atomic types and their coordinates.
-
-    Returns
-    -------
-    structure : ase.Atoms
-        The atomic structure read from the XYZ file.
-
-    """
-
-    structure = None
-
-    if comm_world.rank == 0:
-        structure = ase.io.read(filename, format="extxyz")
-
-    # Broadcast the data to all the ranks.
-    return comm_world.bcast(structure, root=0)

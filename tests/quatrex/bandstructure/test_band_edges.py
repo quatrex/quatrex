@@ -39,7 +39,7 @@ def _initialize(
 
     potential = xp.zeros(hamiltonian.shape[-1], dtype=hamiltonian.dtype)
 
-    grid, __, __, __ = BaseDevice._load_structure(config)
+    __, grid, __, __, __ = BaseDevice._load_structure(config)
     block_sizes = get_block_sizes(config, grid)
     energies = get_electron_energies(config)
 

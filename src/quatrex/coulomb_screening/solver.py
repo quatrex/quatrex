@@ -102,12 +102,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Allocate memory for the System matrix (1 - V @ P).
-        kpoint_grid = config.device.kpoint_grid
         self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
             sparray=v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape
-            + tuple([k for k in kpoint_grid if k > 1]),
+            global_stack_shape=self.energies.shape + (self.device.qgrid.num_points,),
             allocate=False,
         )
 
@@ -126,8 +124,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser = config.compute.dsdbsparse_type.from_sparray(
             sparray=l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape
-            + tuple([k for k in kpoint_grid if k > 1]),
+            global_stack_shape=self.energies.shape + (self.device.qgrid.num_points,),
             symmetry="skew-hermitian" if config.scba.symmetric else None,
             allocate=False,
         )
@@ -145,8 +142,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.p_retarded = config.compute.dsdbsparse_type.from_sparray(
             sparray=sparsity_pattern.astype(xp.complex128),
             block_sizes=self.small_block_sizes,
-            global_stack_shape=self.energies.shape
-            + tuple([k for k in kpoint_grid if k > 1]),
+            global_stack_shape=self.energies.shape + (self.device.qgrid.num_points,),
             allocate=False,
         )
 

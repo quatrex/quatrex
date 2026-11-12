@@ -128,7 +128,7 @@ class QTBM(TransportSolver):
 
                     # Initialize the observables
                     self.observables.transmissions[contact_in, contact_out] = xp.zeros(
-                        (self.device.num_kpoints, self.local_energies.shape[0]),
+                        (self.device.kgrid.num_points, self.local_energies.shape[0]),
                         dtype=xp.float64,
                     )
 
@@ -136,7 +136,7 @@ class QTBM(TransportSolver):
             for contact in self.device.contacts:
                 self.observables.electron_ldos[contact] = xp.zeros(
                     (
-                        self.device.num_kpoints,
+                        self.device.kgrid.num_points,
                         self.num_orbitals,
                         self.local_energies.shape[0],
                     ),
@@ -836,7 +836,7 @@ class QTBM(TransportSolver):
         injection_slices: dict,
         global_energy_ind: int,
         obc_results: dict[QTBMContact, OBCResult],
-        kpoint: float,
+        kpoint: NDArray,
         kpoint_ind: int,
     ):
         r"""Computes density of states.
@@ -1145,14 +1145,13 @@ class QTBM(TransportSolver):
             )
 
             contact_currents[contact_in, contact_out] = -(
-                xp.sum(
+                self.device.kgrid.integrate(
                     xp.trapezoid(
                         prefactor * transmission,
                         self.electron_energies,
                         axis=1,
                     )
                 )
-                / self.device.num_kpoints
                 * (2 * e / h)
             )
 
@@ -1253,10 +1252,14 @@ class QTBM(TransportSolver):
             occupancy = fermi_dirac(
                 self.electron_energies - mu,
                 contact.temperature,
-            )
+            )[xp.newaxis, :]
 
-            electron_density += occupancy * ldos.mean(axis=0) * 2  # Spin
-            hole_density += (1 - occupancy) * ldos.mean(axis=0) * 2  # Spin
+            electron_density += (
+                self.device.kgrid.integrate(occupancy * ldos, axis=0) * 2  # Spin
+            )
+            hole_density += (
+                self.device.kgrid.integrate((1 - occupancy) * ldos, axis=0) * 2  # Spin
+            )
 
         # Find the reference contact mid-gap energy to separate
         # electrons and holes.
@@ -1345,10 +1348,10 @@ class QTBM(TransportSolver):
 
         comm.barrier()
 
-        for kpoint_ind, kpoint in enumerate(self.device.kpoints):
+        for kpoint_ind, kpoint in enumerate(self.device.kgrid.points):
             if comm.rank == 0:
                 print(
-                    f"Processing k-point {kpoint_ind+1} of {self.device.num_kpoints}",
+                    f"Processing k-point {kpoint_ind+1} of {self.device.kgrid.points}",
                     flush=True,
                 )
 

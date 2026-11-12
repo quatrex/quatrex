@@ -774,7 +774,7 @@ class QTBMContact(BaseContact):
         e_k = xp.zeros(
             (
                 len(kpoints_transport),
-                self.device.kpoints.shape[0],
+                self.device.kgrid.num_points,
                 len(self.unit_cell_orbital_indices[self.origin_key])
                 * self.transport_repetitions
                 * np.prod(self.transverse_repetition_grid),
@@ -782,7 +782,7 @@ class QTBMContact(BaseContact):
             dtype=float,
         )
 
-        for m, kpoint in enumerate(self.device.kpoints):
+        for m, kpoint in enumerate(self.device.kgrid.points):
             h_xx = self._get_contact_blocks(
                 matrices=self.device.hamiltonians,
                 kpoint=kpoint,

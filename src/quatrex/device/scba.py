@@ -2,6 +2,8 @@
 
 """Includes the SCBA device class for electronic transport calculations."""
 
+import os
+
 import numpy as np
 
 from qttools import NDArray, sparse
@@ -14,6 +16,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.device.base import BaseDevice
 from quatrex.device.inputs import assemble_matrix
+from quatrex.grid import KGrid
 
 profiler = Profiler()
 
@@ -55,6 +58,40 @@ class SCBADevice(BaseDevice):
 
     def __init__(self, config: QuatrexConfig) -> None:
         super().__init__(config)
+
+        # NOTE: The k-points are used for the Hamiltonian and the
+        # q-points are used for any interacting systems (e.g., phonons,
+        # photons, etc.). The q-points are always gamma-centered.
+        # Therefore the number of irreducible k-points and q-points may
+        # differ, even if the same grid size is used!
+        self.qgrid = KGrid(
+            size=self.device_config.kpoint_grid,
+            gamma_centered=True,  # Important!
+            symmetry_reduction=self.device_config.kpoint_symmetry_reduction,
+            structure=self.structure,
+        )
+        if comm.rank == 0:
+            if not os.path.exists(config.output_dir):
+                os.mkdir(config.output_dir)
+
+            np.save(config.output_dir / "qpoints.npy", self.qgrid.points)
+            np.save(
+                config.output_dir / "qpoint_multiplicities.npy",
+                self.qgrid._multiplicities,
+            )
+            if self.device_config.kpoint_symmetry_reduction:
+                print(
+                    f"Using symmetry-reduced q-point grid. "
+                    f"Mapped {self.qgrid.num_full_points} q-points to "
+                    f"{self.qgrid.num_irreducible_points} irreducible q-points.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"Using full q-point grid with {self.qgrid.num_points} q-points.",
+                    flush=True,
+                )
+
         self.hamiltonians, self.overlap_matrices, hamiltonian_sparsity_pattern = (
             self._init_hamiltonian()
         )
@@ -116,8 +153,8 @@ class SCBADevice(BaseDevice):
         hamiltonians, hamiltonian_sparsity_pattern = assemble_matrix(
             config=self.config,
             matrix_name="hamiltonian",
+            kgrid=self.kgrid,
             sparsity_pattern=None,
-            shift_kpoints=False,
         )
 
         try:
@@ -125,8 +162,8 @@ class SCBADevice(BaseDevice):
             overlap_matrices, __ = assemble_matrix(
                 config=self.config,
                 matrix_name="overlap",
+                kgrid=self.kgrid,
                 sparsity_pattern=None,
-                shift_kpoints=False,
             )
 
             # Check that the overlap matrix and Hamiltonian matrix match.
@@ -234,8 +271,8 @@ class SCBADevice(BaseDevice):
         coulomb_matrix, __ = assemble_matrix(
             config=self.config,
             matrix_name="coulomb_matrix",
+            kgrid=self.qgrid,
             sparsity_pattern=self.sparsity_pattern,
-            shift_kpoints=True,
         )
 
         # Make sure the Coulomb matrix is hermitian.

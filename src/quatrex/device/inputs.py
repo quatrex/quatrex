@@ -3,11 +3,9 @@
 """Includes the methods to load and parse the input data."""
 
 import warnings
-from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sps
-from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -15,7 +13,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.toeplitz.toeplitz import construct_transport_cell
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
-from quatrex.grid.kpoints import monkhorst_pack
+from quatrex.grid.kpoints import KGrid
 
 
 def get_block_sizes(
@@ -292,9 +290,7 @@ def _sum_operator(
 def _assemble_kpoint(
     out_matrix: DSDBSparse,
     matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
-    kpoint_grid: NDArray,
-    kpoint_shift: NDArray,
-    kshift: int | NDArray,
+    kgrid: KGrid,
 ) -> None:
     """Assembles a DSBSparse from a dictionary of sparse matrices
     corresponding to different periodic repetitions.
@@ -306,17 +302,12 @@ def _assemble_kpoint(
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
         repetitions. It is assumed that only the upper parts are present.
-    kpoint_grid : NDArray
-        The k-point grid.
-    kshift : int | NDArray
-        The k-point shift to apply.
+    kgrid : KGrid
+        The k-point grid for the device.
 
     """
 
-    num_dimensions = len(kpoint_grid)
-
-    if isinstance(kshift, int):
-        kshift = np.array([kshift for _ in range(num_dimensions)])
+    num_dimensions = len(kgrid.size)
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -328,31 +319,21 @@ def _assemble_kpoint(
                 f"Expected {num_dimensions}, got {len(cell)}."
             )
 
-    if all(kpoint_grid == 1):
+    if all(k == 1 for k in kgrid.size):
+        # No need to assemble phases for gamma point only
         out_matrix.data += _sum_operator(matrix_dict, out_matrix.symmetry)[
             out_matrix.spy()
         ]
-    else:
+        return
 
-        kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
-            tuple(kpoint_grid) + (-1,)
-        )
-        kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
-
-        index = np.where(kpoint_grid > 1)[0]
-        for stack_index in np.ndindex(kpoints.shape[:-1]):
-            kpoint = kpoints[stack_index]
-            stack_index = np.array(stack_index)
-            stack_index = tuple(stack_index[index])
-
-            phases = {
-                coord: xp.exp(2j * np.pi * (np.asarray(coord) @ kpoint))
-                for coord in matrix_dict
-            }
-
-            out_matrix.data[(...,) + stack_index + (slice(None),)] += _sum_operator(
-                matrix_dict, out_matrix.symmetry, phases=phases
-            )[out_matrix.spy()]
+    for i, kpoint in enumerate(kgrid.points):
+        phases = {
+            coord: xp.exp(2j * np.pi * (np.asarray(coord) @ kpoint))
+            for coord in matrix_dict
+        }
+        out_matrix.data[..., i, :] += _sum_operator(
+            matrix_dict, out_matrix.symmetry, phases=phases
+        )[out_matrix.spy()]
 
 
 def _create_matrix_from_unit_cells(
@@ -562,8 +543,8 @@ def load_matrices(
 def assemble_matrix(
     config: QuatrexConfig,
     matrix_name: str,
+    kgrid: KGrid,
     sparsity_pattern: sparse.coo_matrix | None = None,
-    shift_kpoints: bool = False,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
     """Loads a Hermitian matrix from file and optionally
     applies a provided sparsity pattern.
@@ -574,12 +555,11 @@ def assemble_matrix(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
+    kgrid : KGrid
+        The k-point grid to assemble the matrix for.
     sparsity_pattern : sparse.coo_matrix | None
         The sparsity pattern to enforce. If None, the sparsity of the
         loaded matrix is used.
-    shift_kpoints : bool
-        Whether to "shift"/"center" the kpoints in the allocated
-        DSDBSparse.
 
     Returns
     -------
@@ -621,72 +601,15 @@ def assemble_matrix(
     matrix = config.compute.dsdbsparse_type.from_sparray(
         sparray=sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
-        global_stack_shape=(comm.stack.size,)
-        + tuple([k for k in config.device.kpoint_grid if k > 1]),
+        global_stack_shape=(comm.stack.size, kgrid.num_points),
         symmetry="hermitian" if config.scba.symmetric else None,
     )
     matrix.data[:] = 0.0  # Initialize to zero.
 
-    # Shift the k-points if requested
-    # Needed for the coulomb matrix
     _assemble_kpoint(
         out_matrix=matrix,
         matrix_dict=matrix_dict,
-        kpoint_grid=np.array(config.device.kpoint_grid),
-        kpoint_shift=np.array(config.device.kpoint_shift),
-        kshift=-(np.array(config.device.kpoint_grid) // 2) if shift_kpoints else 0,
+        kgrid=kgrid,
     )
 
     return matrix, sparsity_pattern
-
-
-def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
-    """Reads atomic structure data from an XYZ file.
-
-    Parameters
-    ----------
-    filename : Path
-        Path to the XYZ file containing the atomic structure. The file
-        should have the standard XYZ format with lattice parameters on
-        the second line.
-
-    Returns
-    -------
-    lattice : NDArray
-        3x3 array containing the lattice vectors (in rows).
-    atom_coordinates : NDArray
-        (N_atoms, 3) array containing atomic coordinates.
-    atom_types : NDArray
-        (N_atoms,) array containing atom symbol for each atom.
-
-    """
-
-    lattice_vectors = None
-    atom_coordinates = None
-    atom_types = None
-
-    if comm_world.rank == 0:
-        # Read only the second line of the file (this contains the
-        # lattice parameters)
-        with open(filename, "r") as f:
-            __ = f.readline()
-            lattice_line = f.readline().strip()
-
-        if not lattice_line.startswith("Lattice="):
-            raise ValueError(
-                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
-            )
-
-        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
-        lattice_vectors = np.fromstring(
-            lattice_vectors, dtype=np.float64, sep=" "
-        ).reshape(3, 3)
-        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
-        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
-
-    # Broadcast the data to all the ranks
-    lattice_vectors = comm_world.bcast(lattice_vectors, root=0)
-    atom_coordinates = comm_world.bcast(atom_coordinates, root=0)
-    atom_types = comm_world.bcast(atom_types, root=0)
-
-    return lattice_vectors, atom_coordinates, atom_types

@@ -10,6 +10,7 @@ from qttools.kernels import linalg
 from quatrex.core.statistics import fermi_dirac
 from quatrex.electrostatics.geometry_config import Region, VolumeProperties
 from quatrex.electrostatics.meshing import inside_shape
+from quatrex.grid import KGrid
 
 
 def _real_to_kspace(
@@ -136,7 +137,7 @@ def contact_doping_density(
 
 def contact_fermi_level(
     e_k: NDArray,
-    kpoints: NDArray,
+    kgrid: KGrid,
     mid_gap_energy: float,
     cell_volume: float,
     doping_density: float,
@@ -151,10 +152,12 @@ def contact_fermi_level(
     ----------
     e_k : NDArray
         The sorted eigenvalues in energy and k. This should have shape
-        (num_kpoints, num_bands).
-    kpoints : NDArray
-        The corresponding k-points. This should have shape
-        (num_kpoints,).
+        (num_kpoints, num_kpoints_transverse, num_bands).
+    kgrid: KGrid
+        The transverse k-grid of the device contact. This is used to
+        compute correct integrals over the transverse k-points. The
+        corresponding k-points in transport direction must be an
+        equidistant sampling of the full Brillouin zone.
     mid_gap_energy : float
         A guess for the mid-gap energy, which is used to determine the
         number of valence bands.
@@ -184,14 +187,15 @@ def contact_fermi_level(
     # NOTE: int() does a implicit copy to the host which is needed since
     # the input for split needs to be a int.
     num_valence_bands = int(num_valence_bands_k[0])
-    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=1)
+    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=-1)
 
     def objective_function(fermi_level):
         """Charge neutrality objective function."""
-        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=1)
-        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=1)
-        n = xp.trapezoid(n_k, kpoints)
-        p = xp.trapezoid(p_k, kpoints)
+        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=-1)
+        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=-1)
+
+        n = xp.average(kgrid.integrate(n_k))
+        p = xp.average(kgrid.integrate(p_k))
 
         rho = (n - p) / (2 * xp.pi * cell_volume)
         rho *= 2  # Spin

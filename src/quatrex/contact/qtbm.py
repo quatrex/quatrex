@@ -236,7 +236,7 @@ class QTBMContact(BaseContact):
         self,
         matrix: DCSX,
         kpoint: tuple[float, float, float],
-    ) -> NDArray:
+    ) -> sparse.csr_matrix:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region

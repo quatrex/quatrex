@@ -194,6 +194,15 @@ class QTBMContact(BaseContact):
         self.local_origin_orbital_indices = origin_orbital_indices[mask] - start
         self.local_origin_positions = xp.flatnonzero(mask)
 
+        first_layer_orbital_indices = self.first_layer_orbital_indices
+        mask = (first_layer_orbital_indices >= start) & (
+            first_layer_orbital_indices < end
+        )
+        self.local_first_layer_orbital_indices = (
+            first_layer_orbital_indices[mask] - start
+        )
+        self.local_first_layer_positions = xp.flatnonzero(mask)
+
         # build a subcommunicator based on local_orbital_indices
         self.comm = None
         color = 1 if len(self.local_orbital_indices) > 0 else MPI.UNDEFINED
@@ -242,8 +251,8 @@ class QTBMContact(BaseContact):
 
         Returns
         -------
-        NDArray
-            Dense matrix representing the coupling between device and
+        sparse.csr_matrix
+            Sparse matrix representing the coupling between device and
             contact. The matrix has the block structure needed for QTBM
             boundary conditions, with dimensions determined by the
             contact's transverse repetitions.
@@ -262,34 +271,52 @@ class QTBMContact(BaseContact):
                 "for coupling matrix extraction."
             )
 
-        m_xx = self._get_contact_blocks(matrix=matrix)
-        grid = (self.transport_repetitions + 1,) + self.transverse_repetition_grid
-
-        m_xx_tmp = {}
-        # TODO: Make natural order default
-        # TODO: Do not densify here.
-        # shuffle keys to to have natural order a,b,c
-        for i, j, k in np.ndindex(*grid):
-            index = [j, k]
-            index.insert(self.transport_direction, i)
-            index = tuple(index)
-            m_xx_tmp[index] = m_xx[i, j, k].toarray()
-        m_xx = m_xx_tmp
-
-        phases = tuple(np.exp(2j * np.pi * k) for k in kpoint)
-        phases = (
-            phases[: self.transport_direction] + phases[self.transport_direction + 1 :]
+        m_origin = matrix.get_tile(
+            row_ind=self.local_first_layer_orbital_indices,
         )
 
-        coupling_matrix = construct_circulant_cell(
-            matrix_dict=m_xx,
-            transport_cell_size=self.transport_repetitions,
-            transport_ind=self.transport_direction,
-            block_index=-1,  # Meaning  M10 is constructed.
-            sections=self.transverse_repetition_grid,
-            phases=phases,
-            key_assumption="half",
+        # NOTE: Possible to cache here the offsets in both nnz and
+        # shape.
+        m_origin = allgather_csx(
+            m_origin,
+            self.comm,
+            axis=0.0,
         )
+
+        # Allgather_csx concatenates rows in rank order. Contact
+        # orbitals can be in a different order than the contact cell
+        # ordering expected by the OBC solver.
+        gathered_positions = self.comm.all_gather_v(
+            self.local_first_layer_orbital_indices,
+            axis=0,
+        )
+        m_origin = m_origin.get_tile(row_ind=xp.argsort(gathered_positions))
+
+        m_xx = []
+        ny, nz = self.transverse_repetition_grid
+        for m in range(1, self.transport_repetitions + 1):
+            # Orbitals for the i_th contact layer in transport direction
+            i_th_layer_orbital_indices = xp.concatenate(
+                [
+                    self.unit_cell_orbital_indices[i, j, k]
+                    for j, k in xp.ndindex(ny, nz)
+                    for i in [m]
+                ]
+            )
+            m_xx.append(
+                m_origin.get_tile(col_ind=i_th_layer_orbital_indices).tocsr().T.conj()
+            )
+
+        n = m_xx[0].shape[0]
+
+        coupling_matrix = []
+        zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
+        # Assemble column by column
+        for shift in range(self.transport_repetitions):
+            layer = m_xx[shift:] + [zero] * shift
+            coupling_matrix.append(sparse.vstack(layer, format="csr"))
+
+        coupling_matrix = sparse.hstack(coupling_matrix[::-1], format="csr")
 
         # TODO: Not reorder here, but where it is used.
         ny, nz = self.transverse_repetition_grid

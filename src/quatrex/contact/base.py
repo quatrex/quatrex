@@ -147,11 +147,7 @@ class BaseContact(ABC):
 
         # Orbitals for the first contact layer in transport direction
         self.first_layer_orbital_indices = xp.concatenate(
-            [
-                self.unit_cell_orbital_indices[i, j, k]
-                for j, k in xp.ndindex(ny, nz)
-                for i in [0]
-            ]
+            [self.unit_cell_orbital_indices[0, j, k] for j, k in xp.ndindex(ny, nz)]
         )
 
         self.fermi_level = contact_config.fermi_level

@@ -297,21 +297,16 @@ class QTBMContact(BaseContact):
         # Get the coupling matrices for each layer in the transport direction
         m_xx = []
         ny, nz = self.transverse_repetition_grid
-        for m in range(1, self.transport_repetitions + 1):
+        for i in range(1, self.transport_repetitions + 1):
             # Orbitals for the i_th contact layer in transport direction
             i_th_layer_orbital_indices = xp.concatenate(
-                [
-                    self.unit_cell_orbital_indices[i, j, k]
-                    for j, k in xp.ndindex(ny, nz)
-                    for i in [m]
-                ]
+                [self.unit_cell_orbital_indices[i, j, k] for j, k in xp.ndindex(ny, nz)]
             )
             m_xx.append(
                 m_origin.get_tile(col_ind=i_th_layer_orbital_indices).tocsr().T.conj()
             )
-
+        # TODO Implement DCX stacking
         n = m_xx[0].shape[0]
-
         coupling_matrix = []
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
         # Assemble column by column

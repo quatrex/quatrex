@@ -287,7 +287,7 @@ class QTBMContact(BaseContact):
         # orbitals can be in a different order than the contact cell
         # ordering expected by the OBC solver.
         gathered_positions = self.comm.all_gather_v(
-            self.local_first_layer_orbital_indices,
+            self.local_first_layer_positions,
             axis=0,
         )
         m_origin = m_origin.get_tile(row_ind=xp.argsort(gathered_positions))

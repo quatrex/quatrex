@@ -266,6 +266,38 @@ class TestAccess:
 
         assert xp.allclose(test_tile, ref_tile)
 
+    def test_get_tile_unsorted_indices(
+        self,
+        size: int,
+        local_stack_shape: tuple,
+    ):
+        """Tests that a tile with shuffled indices stays canonical."""
+        coo, a = _create_coo_csx(
+            size=size,
+            local_stack_shape=local_stack_shape,
+        )
+
+        rng = xp.random.default_rng(seed=42)
+
+        rows = rng.permutation(size)
+        cols = rng.permutation(size)
+
+        tile = a.get_tile(rows, cols)
+
+        ref_tile = coo.tocsr()[rows, :][:, cols].toarray()
+
+        # The entries must be sorted by row, then by column.
+        keys = tile.row_ind.astype(xp.int64) * size + tile.col_ind
+        assert xp.all(xp.diff(keys) > 0)
+
+        assert xp.allclose(
+            tile.toarray(),
+            xp.broadcast_to(ref_tile, local_stack_shape + ref_tile.shape),
+        )
+
+        if local_stack_shape == ():
+            assert xp.allclose(tile.tocsr().toarray(), ref_tile)
+
     def test_get_tile_empty(
         self,
         size: int,

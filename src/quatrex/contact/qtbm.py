@@ -271,6 +271,8 @@ class QTBMContact(BaseContact):
                 "for coupling matrix extraction."
             )
 
+        # Slice the matrix to get the coupling elements for the first layer
+        # of the contact in the transport direction
         m_origin = matrix.get_tile(
             row_ind=self.local_first_layer_orbital_indices,
         )
@@ -292,6 +294,7 @@ class QTBMContact(BaseContact):
         )
         m_origin = m_origin.get_tile(row_ind=xp.argsort(gathered_positions))
 
+        # Get the coupling matrices for each layer in the transport direction
         m_xx = []
         ny, nz = self.transverse_repetition_grid
         for m in range(1, self.transport_repetitions + 1):

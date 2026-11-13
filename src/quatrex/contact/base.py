@@ -46,6 +46,9 @@ class BaseContact(ABC):
         The contact identifier.
     transport_direction : int
         Transport direction index (0, 1, or 2).
+    first_layer_orbital_indices : NDArray
+        Orbital indices for the first layer of the contact
+        in the transport direction.
     unit_cell_orbital_indices : dict
         Dict of orbital indices for each contact cell indexed by (i, j,
         k) tuples.

@@ -669,6 +669,15 @@ class CSX:
         tile_row = new_row[mask]
         tile_col = new_col[mask]
 
+        # The requested indices can be in any order, so the remapped
+        # entries are in general no longer sorted. Restore the canonical
+        # order that the rest of the class relies on (e.g. `tocsr`).
+        tile_row, tile_col, sort_idx = make_canonical_coo(
+            row_ind=tile_row,
+            col_ind=tile_col,
+        )
+        tile_data = tile_data[..., sort_idx]
+
         return tile_data, tile_row, tile_col, tile_shape
 
     def get_tile(

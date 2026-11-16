@@ -279,8 +279,9 @@ class TestAccess:
 
         rng = xp.random.default_rng(seed=42)
 
-        rows = rng.permutation(size)
-        cols = rng.permutation(size)
+        # NOTE: cupy's Generator does not implement `permutation`.
+        rows = xp.argsort(rng.random(size))
+        cols = xp.argsort(rng.random(size))
 
         tile = a.get_tile(rows, cols)
 

@@ -2353,6 +2353,11 @@ class PreProcessConfig(BaseModel):
 
     """
 
+    save_processed_inputs: bool = False
+    """Whether to save the atomic positions after quatrex'
+    pre-processing (e.g. upscaling)
+    """
+
 
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""

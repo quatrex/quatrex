@@ -28,13 +28,6 @@ def pre_process_fermi_level(
 
     """
 
-    if comm.size > 1:
-        raise ValueError(
-            "Pre-processing can be only performed on a single process. "
-            "If you are running a parallel simulation, please ensure that "
-            "the pre-processing steps are completed before starting the parallel run."
-        )
-
     # load config and save the original config
     config_file = config.config_file
     if config_file is None:

@@ -1150,7 +1150,8 @@ class QTBM(TransportSolver):
                         prefactor * transmission,
                         self.electron_energies,
                         axis=1,
-                    )
+                    ),
+                    axis=0,
                 )
                 * (2 * e / h)
             )

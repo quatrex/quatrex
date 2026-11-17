@@ -194,6 +194,8 @@ def contact_fermi_level(
         n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=-1)
         p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=-1)
 
+        # Integrate over the transverse k-points (potentially
+        # irreducible) and average over the transport k-points.
         n = xp.average(kgrid.integrate(n_k))
         p = xp.average(kgrid.integrate(p_k))
 

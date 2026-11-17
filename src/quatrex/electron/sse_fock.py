@@ -93,7 +93,7 @@ class SigmaFock(ScatteringSelfEnergy):
                 axes=tuple(range(gl_density.ndim - 1)),
             )
 
-            out = self.device.kgrid.reduce(out.reshape(-1, out.shape[-1]))
+            out = self.device.kgrid.reduce(out.reshape(-1, out.shape[-1]), axis=0)
 
             sigma_retarded_hermitian.data += out / self.qpoint_volume
 

@@ -602,50 +602,71 @@ class SCBA(TransportSolver):
 
         outputs = {}
 
+        kpoint_shape = tuple(s for s in self.device.kgrid.size if s > 1)
+        newshape = (*self.electron_energies.shape, *kpoint_shape, -1)
+
         if self.config.outputs.scattering_rate:
-            outputs[f"scattering_rate_{iteration}.npy"] = (
+            outputs[f"scattering_rate_{iteration}.npy"] = self.device.kgrid.expand(
                 self.observables.scattering_rate
-            )
+            ).reshape(newshape)
 
         if self.config.outputs.electron_ldos:
-            outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
+            outputs[f"electron_ldos_{iteration}.npy"] = self.device.kgrid.expand(
+                self.observables.electron_ldos
+            ).reshape(newshape)
         if self.config.outputs.electron_density:
-            outputs[f"electron_density_{iteration}.npy"] = (
+            outputs[f"electron_density_{iteration}.npy"] = self.device.kgrid.expand(
                 self.observables.electron_density
-            )
+            ).reshape(newshape)
         if self.config.outputs.hole_density:
-            outputs[f"hole_density_{iteration}.npy"] = self.observables.hole_density
+            outputs[f"hole_density_{iteration}.npy"] = self.device.kgrid.expand(
+                self.observables.hole_density
+            ).reshape(newshape)
 
         if self.config.outputs.device_currents:
-            outputs[f"device_current_{iteration}.npy"] = (
+            outputs[f"device_current_{iteration}.npy"] = self.device.kgrid.expand(
                 self.observables.electron_current["device"]
-            )
+            ).reshape(newshape)
         if self.config.outputs.meir_wingreen_currents:
             outputs[f"meir_wingreen_current_{iteration}.npy"] = (
-                self.observables.electron_current["meir-wingreen"]
+                self.device.kgrid.expand(
+                    self.observables.electron_current["meir-wingreen"]
+                ).reshape(newshape)
             )
 
         if self.config.scba.coulomb_screening:
             if self.config.outputs.polarization_density:
                 outputs.update(
                     {
-                        f"p_lesser_density_{iteration}.npy": self.observables.p_lesser_density,
-                        f"p_greater_density_{iteration}.npy": self.observables.p_greater_density,
+                        f"p_lesser_density_{iteration}.npy": self.device.qgrid.expand(
+                            self.observables.p_lesser_density
+                        ).reshape(newshape),
+                        f"p_greater_density_{iteration}.npy": self.device.qgrid.expand(
+                            self.observables.p_greater_density
+                        ).reshape(newshape),
                     }
                 )
             if self.config.outputs.coulomb_screening_density:
                 outputs.update(
                     {
-                        f"w_lesser_density_{iteration}.npy": self.observables.w_lesser_density,
-                        f"w_greater_density_{iteration}.npy": self.observables.w_greater_density,
+                        f"w_lesser_density_{iteration}.npy": self.device.qgrid.expand(
+                            self.observables.w_lesser_density
+                        ).reshape(newshape),
+                        f"w_greater_density_{iteration}.npy": self.device.qgrid.expand(
+                            self.observables.w_greater_density
+                        ).reshape(newshape),
                     }
                 )
 
         if self.config.outputs.self_energy_density:
             outputs.update(
                 {
-                    f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
-                    f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
+                    f"sigma_lesser_density_{iteration}.npy": self.device.kgrid.expand(
+                        self.observables.sigma_lesser_density
+                    ).reshape(newshape),
+                    f"sigma_greater_density_{iteration}.npy": self.device.kgrid.expand(
+                        self.observables.sigma_greater_density
+                    ).reshape(newshape),
                 }
             )
 

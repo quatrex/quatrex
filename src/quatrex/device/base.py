@@ -105,12 +105,6 @@ class BaseDevice:
             if not os.path.exists(config.output_dir):
                 os.mkdir(config.output_dir)
 
-            np.save(config.output_dir / "kpoints.npy", self.kgrid.points)
-            np.save(
-                config.output_dir / "kpoint_multiplicities.npy",
-                self.kgrid._multiplicities,
-            )
-
             if self.device_config.kpoint_symmetry_reduction:
                 print(
                     f"Using symmetry-reduced k-point grid. "

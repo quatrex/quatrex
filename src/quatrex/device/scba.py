@@ -74,11 +74,6 @@ class SCBADevice(BaseDevice):
             if not os.path.exists(config.output_dir):
                 os.mkdir(config.output_dir)
 
-            np.save(config.output_dir / "qpoints.npy", self.qgrid.points)
-            np.save(
-                config.output_dir / "qpoint_multiplicities.npy",
-                self.qgrid._multiplicities,
-            )
             if self.device_config.kpoint_symmetry_reduction:
                 print(
                     f"Using symmetry-reduced q-point grid. "

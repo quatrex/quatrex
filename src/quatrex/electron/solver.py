@@ -16,7 +16,7 @@ from qttools.toeplitz.toeplitz import homogenize, periodize_layer
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
-from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
+from quatrex.bandstructure.band_edges import find_renormalized_band_edges
 from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
@@ -889,19 +889,13 @@ class ElectronSolver(SubsystemSolver):
                 for contact in self.device.contacts:
                     band_edges = xp.empty(2, dtype=float)
                     if comm.block.rank == contact.owning_rank:
-                        band_edges = find_renormalized_eigenvalues(
-                            hamiltonian=self.device.hamiltonians,
-                            overlap=self.device.overlap_matrices,
-                            potential=self.device.potential,
+                        band_edges = find_renormalized_band_edges(
+                            device=self.device,
                             sigma_retarded_hermitian=sse_retarded_hermitian,
                             energies=self.energies,
+                            contact=contact,
                             conduction_band_guess=contact.fermi_level
                             + self.delta_fermi_level_conduction_band[contact],
-                            mid_gap_energy=contact.mid_gap_energy,
-                            diagonal_inds=contact.diagonal_inds,
-                            upper_inds=contact.upper_inds,
-                            order=contact.order,
-                            block_sections=contact.transport_repetitions,
                             band_edge_config=self.config.compute.band_edge,
                         )
                     comm.block.bcast(band_edges, root=contact.owning_rank)

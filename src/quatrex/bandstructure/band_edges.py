@@ -12,8 +12,9 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
-from quatrex.contact.scba import order_block, order_vector
+from quatrex.contact.scba import SCBAContact, order_block, order_vector
 from quatrex.core.config import BandEdgeConfig
+from quatrex.device import SCBADevice
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -156,22 +157,15 @@ def _slice_sigma(
 def _compute_eigenvalues(
     target_energy: float,
     energies: NDArray,
-    hamiltonian: DSDBSparse,
-    overlap: DSDBSparse | None,
-    potential: NDArray,
+    device: SCBADevice,
     sigma_retarded_hermitian: DSDBSparse,
     ind_lower: tuple[int, ...],
     ind_upper: tuple[int, ...],
     rank_lower: int,
     rank_upper: int,
     section_offsets: NDArray,
-    diagonal_inds: tuple,
-    upper_inds: tuple,
-    order: str | NDArray | None = None,
-    block_sections: int = 1,
-    use_eigvalsh: bool = True,
-    eigvalsh_compute_location: str = "numpy",
-    use_pinned_memory: bool = True,
+    contact: SCBAContact,
+    band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
     r"""Computes the eigenvalues for the left or right contact.
 
@@ -196,13 +190,8 @@ def _compute_eigenvalues(
         guess.
     energies : NDArray
         The full energy grid.
-    hamiltonian : DSDBSparse
-        The Hamiltonian.
-    overlap : DSDBSparse | None
-        The overlap matrix. If None, the basis is assumed to be
-        orthogonal.
-    potential : NDArray
-        The potential.
+    device : SCBADevice
+        The SCBA device.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     ind_lower : tuple[int, ...]
@@ -216,27 +205,11 @@ def _compute_eigenvalues(
     section_offsets : NDArray
         The offsets of the energy sections for each rank.
         This is need to determine the global energy index.
-    diagonal_inds : tuple
-        The indices of the diagonal blocks corresponding to the contact.
-    upper_inds : tuple
-        The indices of the upper off-diagonal blocks corresponding to the contact.
-    order : str | NDArray | None, optional
-        The permutation of the blocks to achieve the same order as the canonical left contact.
-        If None, the left contact order is assumed.
-        Instead of an explicit permutation, the string "reverse" can be passed
-        to reverse the order of the blocks, which is equivalent to the right contact order.
-    block_sections : int, optional
-        The number of block sections to assume in the computation. This is used to
-        reduce the size of the eigenvalue problem by utilizing periodicity.
-    use_eigvalsh : bool, optional
-        Whether to assume the eigenvalue problem is Hermitian. By default, this is True.
-        This is an approximation in the case of scattering since the self-energy is not Hermitian.
-    eigvalsh_compute_location : str, optional
-        The compute module to use in the eigvalsh call.
-        Can be "numpy" or "cupy".
-    use_pinned_memory : bool, optional
-        Whether to use pinned memory in the eigvalsh call.
-        This can speed up the computation when using `cupy`.
+    contact : SCBAContact
+        The contact for which the eigenvalues should be computed.
+    band_edge_config : BandEdgeConfig, optional
+        The configuration for the band edge computation, by default
+        BandEdgeConfig().
 
     Returns
     -------
@@ -245,24 +218,34 @@ def _compute_eigenvalues(
         ascending order.
 
     """
+    # TODO: Even after the second small refactoring due to k-point
+    # symmetries, this function is a mess. Contact class should have
+    # methods to extract blocks and do things like this.
 
-    if not use_eigvalsh:
+    if not band_edge_config.use_eigvalsh:
         raise NotImplementedError("Only use_eigvalsh=True is supported.")
 
     if comm.stack.rank not in [rank_lower, rank_upper]:
         raise ValueError("Rank must be either rank_lower or rank_upper.")
 
-    big_blocksize = sigma_retarded_hermitian.block_sizes[diagonal_inds[0]]
-    small_blocksize = big_blocksize // block_sections
+    big_blocksize = sigma_retarded_hermitian.block_sizes[contact.diagonal_inds[0]]
+    small_blocksize = big_blocksize // contact.transport_repetitions
 
-    ind_k = tuple([s // 2 for s in sigma_retarded_hermitian.shape[1:-2]])
+    # Find k index closest to Gamma point (k=0) for the given kgrid.
+    ind_k = np.argmin(np.linalg.norm(device.kgrid.points, axis=-1))
 
-    h_slice = (np.s_[:],) + tuple(ind_k) + np.s_[:small_blocksize, :]
-    sigma_slice = tuple(ind_k) + np.s_[:small_blocksize, :]
+    h_slice = (np.s_[:], ind_k, *np.s_[:small_blocksize, :])
+    sigma_slice = (ind_k, *np.s_[:small_blocksize, :])
 
     # Sigma is extract at a certain energy and k-point
-    sigma_00 = order_block(sigma_retarded_hermitian.blocks[*diagonal_inds], order)
-    sigma_01 = order_block(sigma_retarded_hermitian.blocks[*upper_inds], order)
+    sigma_00 = order_block(
+        sigma_retarded_hermitian.blocks[*contact.diagonal_inds],
+        contact.order,
+    )
+    sigma_01 = order_block(
+        sigma_retarded_hermitian.blocks[*contact.upper_inds],
+        contact.order,
+    )
 
     sigma_00, sigma_01 = _slice_sigma(
         target_energy,
@@ -279,15 +262,21 @@ def _compute_eigenvalues(
 
     # Hamiltonian is only extracted at a certain k-point
     # as it is not energy dependent.
-    h_00 = order_block(hamiltonian.blocks[*diagonal_inds], order)[h_slice]
-    h_01 = order_block(hamiltonian.blocks[*upper_inds], order)[h_slice]
+    h_00 = order_block(
+        device.hamiltonians.blocks[*contact.diagonal_inds],
+        contact.order,
+    )[h_slice]
+    h_01 = order_block(
+        device.hamiltonians.blocks[*contact.upper_inds],
+        contact.order,
+    )[h_slice]
 
     # Extract the blocks corresponding to the first block layer
-    h_00 = _block_view(h_00, axis=-1, num_blocks=block_sections)
-    h_01 = _block_view(h_01, axis=-1, num_blocks=block_sections)
+    h_00 = _block_view(h_00, axis=-1, num_blocks=contact.transport_repetitions)
+    h_01 = _block_view(h_01, axis=-1, num_blocks=contact.transport_repetitions)
 
-    sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=block_sections)
-    sigma_01 = _block_view(sigma_01, axis=-1, num_blocks=block_sections)
+    sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=contact.transport_repetitions)
+    sigma_01 = _block_view(sigma_01, axis=-1, num_blocks=contact.transport_repetitions)
 
     h_0 = xp.zeros(h_00.shape[1:], dtype=h_00.dtype)
     h_0 += xp.sum(h_00[1:], axis=0)
@@ -295,27 +284,41 @@ def _compute_eigenvalues(
     h_0 += xp.sum(sigma_00[1:], axis=0)
     h_0 += xp.sum(sigma_01, axis=0)
 
-    potential = order_vector(potential, order)
-    if overlap is not None:
+    potential = order_vector(device.potential, contact.order)
+    if device.overlap_matrices is not None:
         potential_0 = potential[:big_blocksize]
         potential_1 = potential[big_blocksize : 2 * big_blocksize]
 
         # match the shape of the hamiltonian blocks
         # this is done for the multiplication with the overlap blocks later on.
         potential_0 = potential_0.reshape(
-            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
+            (
+                contact.transport_repetitions,
+                *((1,) * (len(h_00.shape) - 3)),
+                small_blocksize,
+            )
         )
         potential_1 = potential_1.reshape(
-            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
+            (
+                contact.transport_repetitions,
+                *((1,) * (len(h_00.shape) - 3)),
+                small_blocksize,
+            )
         )
 
         # The overlap is only extracted at a certain k-point
         # as it is not energy dependent.
-        s_00 = order_block(overlap.blocks[*diagonal_inds], order)[h_slice]
-        s_01 = order_block(overlap.blocks[*upper_inds], order)[h_slice]
+        s_00 = order_block(
+            device.overlap_matrices.blocks[*contact.diagonal_inds],
+            contact.order,
+        )[h_slice]
+        s_01 = order_block(
+            device.overlap_matrices.blocks[*contact.upper_inds],
+            contact.order,
+        )[h_slice]
 
-        s_00 = _block_view(s_00, axis=-1, num_blocks=block_sections)
-        s_01 = _block_view(s_01, axis=-1, num_blocks=block_sections)
+        s_00 = _block_view(s_00, axis=-1, num_blocks=contact.transport_repetitions)
+        s_01 = _block_view(s_01, axis=-1, num_blocks=contact.transport_repetitions)
 
         s_0 = xp.zeros(s_00.shape[1:], dtype=s_00.dtype)
         s_0 += xp.sum(s_00[1:], axis=0)
@@ -338,7 +341,7 @@ def _compute_eigenvalues(
     h_0 += h_00[0]
     h_0 += sigma_00[0]
 
-    if overlap is None:
+    if device.overlap_matrices is None:
         s_0 = None
         h_0 += xp.diag(potential[:small_blocksize])
     else:
@@ -352,30 +355,24 @@ def _compute_eigenvalues(
     w = eigvalsh(
         h_0,
         s_0,
-        compute_module=eigvalsh_compute_location,
-        use_pinned_memory=use_pinned_memory,
+        compute_module=band_edge_config.eigvalsh_compute_location,
+        use_pinned_memory=band_edge_config.use_pinned_memory,
     )
     return xp.sort(w.real)
 
 
-def find_renormalized_eigenvalues(
-    hamiltonian: DSDBSparse,
-    overlap: DSDBSparse | None,
-    potential: NDArray,
+def find_renormalized_band_edges(
+    device: SCBADevice,
     sigma_retarded_hermitian: DSDBSparse,
     energies: NDArray,
+    contact: SCBAContact,
     conduction_band_guess: float,
-    mid_gap_energy: float,
-    diagonal_inds: tuple[int, int],
-    upper_inds: tuple[int, int],
-    order: str | None = None,
-    block_sections: int = 1,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ) -> NDArray:
     """Computes renormalized eigenvalues for a specific contact.
-    The contact is defined by the diagonal and upper block indices. The
-    eigenvalues are computed at the Gamma point (k=0) and are used to
-    determine the band edges.
+
+    The eigenvalues are computed at the Gamma point (k=0) and are used
+    to determine the band edges.
 
     Note
     ----
@@ -384,35 +381,16 @@ def find_renormalized_eigenvalues(
 
     Parameters
     ----------
-    hamiltonian : DSDBSparse
-        The Hamiltonian.
-    overlap : DSDBSparse | None
-        The overlap matrix. If None, the basis is assumed to be
-        orthogonal.
-    potential : NDArray
-        The potential.
+    device : SCBADevice
+        The SCBA device.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     energies : NDArray
         The energies.
+    contact : SCBAContact
+        The contact for which the band edges should be computed.
     conduction_band_guess : float
-        A guess for the conduction band edge.
-    mid_gap_energy : float
-        An energy in the band gap. This is used to separate conduction
-        from valence bands.
-    diagonal_inds : tuple[int, int]
-        The indices of the diagonal blocks corresponding to the contact.
-    upper_inds : tuple[int, int]
-        The indices of the upper off-diagonal blocks corresponding to
-        the contact.
-    order : str | None, optional
-        The permutation of the blocks to achieve the same order as the
-        canonical left contact. If None, the left contact order is
-        assumed. Instead of an explicit permutation, the string
-        "reverse" can be passed to reverse the order of the blocks,
-        which is equivalent to the right contact order.
-    block_sections : int, optional
-        The number of block sections to assume in the computation.
+        An initial guess for the conduction band edge.
     band_edge_config : BandEdgeConfig, optional
         The configuration for the band edge computation, by default
         BandEdgeConfig().
@@ -431,6 +409,7 @@ def find_renormalized_eigenvalues(
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
     band_edges = xp.empty(2, dtype=float)
+    mid_gap_energy = contact.mid_gap_energy
 
     for __ in range(band_edge_config.num_ref_iterations):
         ind = xp.argmin(xp.abs(energies - conduction_band_guess))
@@ -470,22 +449,15 @@ def find_renormalized_eigenvalues(
             e_0 = _compute_eigenvalues(
                 target_energy=conduction_band_guess,
                 energies=energies,
-                hamiltonian=hamiltonian,
-                overlap=overlap,
-                potential=potential,
+                device=device,
                 sigma_retarded_hermitian=sigma_retarded_hermitian,
                 ind_lower=ind_lower,
                 ind_upper=ind_upper,
                 rank_lower=rank_lower,
                 rank_upper=rank_upper,
                 section_offsets=section_offsets,
-                diagonal_inds=diagonal_inds,
-                upper_inds=upper_inds,
-                order=order,
-                block_sections=block_sections,
-                use_eigvalsh=band_edge_config.use_eigvalsh,
-                eigvalsh_compute_location=band_edge_config.eigvalsh_compute_location,
-                use_pinned_memory=band_edge_config.use_pinned_memory,
+                contact=contact,
+                band_edge_config=band_edge_config,
             )
 
             # NOTE: Only the lower rank broadcasts and overwrites the guess of

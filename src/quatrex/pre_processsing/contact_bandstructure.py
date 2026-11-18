@@ -115,7 +115,7 @@ def plot_contact_band_structure(
     fig, axes = plt.subplots(
         len(device.kpoints),
         len(contacts),
-        figsize=(12, 6),
+        figsize=(12, 6 * len(device.kpoints)),
         squeeze=False,
         sharex=True,
         sharey=True,

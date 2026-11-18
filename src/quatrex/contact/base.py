@@ -244,12 +244,11 @@ class BaseContact(ABC):
             endpoint=False,
         )
 
+        # The e_k returned by compute_contact_bandstructure is of shape
+        # (num_kpoints_transport, num_kpoints_transverse, num_bands)
         e_k = self.compute_contact_bandstructure(
             kpoints_transport=kpoints_transport,
         )
-
-        # Average over transverse k-points.
-        e_k = xp.mean(e_k, axis=1)
 
         # Recompute the actual mid-gap energy from the band structure.
         valence_band_edge, conduction_band_edge = contact_band_edges(

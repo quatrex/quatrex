@@ -65,7 +65,7 @@ def contact_band_edges(e_k: NDArray, mid_gap_energy: float) -> tuple[float, floa
     ----------
     e_k : NDArray
         The sorted eigenvalues in energy and k. This should have shape
-        (num_kpoints, num_bands).
+        (num_kpoints, num_kpoints_transverse, num_bands).
     mid_gap_energy : float
         A guess for the mid-gap energy, which is used to determine the
         number of valence bands.
@@ -136,7 +136,6 @@ def contact_doping_density(
 
 def contact_fermi_level(
     e_k: NDArray,
-    kpoints: NDArray,
     mid_gap_energy: float,
     cell_volume: float,
     doping_density: float,
@@ -151,10 +150,7 @@ def contact_fermi_level(
     ----------
     e_k : NDArray
         The sorted eigenvalues in energy and k. This should have shape
-        (num_kpoints, num_bands).
-    kpoints : NDArray
-        The corresponding k-points. This should have shape
-        (num_kpoints,).
+        (num_kpoints, num_kpoints_transverse, num_bands).
     mid_gap_energy : float
         A guess for the mid-gap energy, which is used to determine the
         number of valence bands.
@@ -184,14 +180,16 @@ def contact_fermi_level(
     # NOTE: int() does a implicit copy to the host which is needed since
     # the input for split needs to be a int.
     num_valence_bands = int(num_valence_bands_k[0])
-    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=1)
+    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=-1)
 
     def objective_function(fermi_level):
         """Charge neutrality objective function."""
-        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=1)
-        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=1)
-        n = xp.trapezoid(n_k, kpoints)
-        p = xp.trapezoid(p_k, kpoints)
+        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=-1)
+        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=-1)
+
+        # Integrate over transverse and transport k-points.
+        n = xp.average(n_k)
+        p = xp.average(p_k)
 
         rho = (n - p) / (2 * xp.pi * cell_volume)
         rho *= 2  # Spin

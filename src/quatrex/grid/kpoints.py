@@ -2,11 +2,423 @@
 
 """Includes function to construct a Monkhorst-Pack grid of k-points."""
 
+from dataclasses import dataclass
+
 import ase
 import numpy as np
 import spglib
 
 from qttools import NDArray, xp
+
+# Real orbitals as functions of unit vectors, shape (num_points, 3) -> (num_points,).
+# The normalization is common within a shell, so that the rotation is orthogonal.
+ORBITAL_FUNCTIONS = {
+    "s": lambda p: np.ones(len(p)),
+    "s*": lambda p: np.ones(len(p)),
+    "px": lambda p: np.sqrt(3.0) * p[:, 0],
+    "py": lambda p: np.sqrt(3.0) * p[:, 1],
+    "pz": lambda p: np.sqrt(3.0) * p[:, 2],
+    "dxy": lambda p: np.sqrt(15.0) * p[:, 0] * p[:, 1],
+    "dyz": lambda p: np.sqrt(15.0) * p[:, 1] * p[:, 2],
+    "dzx": lambda p: np.sqrt(15.0) * p[:, 2] * p[:, 0],
+    "dx2y2": lambda p: 0.5 * np.sqrt(15.0) * (p[:, 0] ** 2 - p[:, 1] ** 2),
+    "dz2": lambda p: 0.5 * np.sqrt(5.0) * (3.0 * p[:, 2] ** 2 - 1.0),
+}
+
+# Orbitals that mix under rotations belong to the same shell.
+ORBITAL_SHELL = {
+    "s": "s",
+    "s*": "s*",
+    "px": "p",
+    "py": "p",
+    "pz": "p",
+    "dxy": "d",
+    "dyz": "d",
+    "dzx": "d",
+    "dx2y2": "d",
+    "dz2": "d",
+}
+
+
+def _random_unit_vectors(num_points: int = 64, seed: int = 0) -> NDArray:
+    """Draws random points on the unit sphere used to fit rotation matrices."""
+    rng = np.random.default_rng(seed)
+    vectors = rng.normal(size=(num_points, 3))
+    return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+
+
+SAMPLE_DIRECTIONS = _random_unit_vectors()
+
+
+@dataclass(frozen=True)
+class SymmetryOperation:
+    """A space-group operation, optionally combined with time reversal.
+
+    Attributes
+    ----------
+    rotation : NDArray
+        Rotation W in fractional coordinates (spglib), shape (3, 3).
+    translation : NDArray
+        Translation t in fractional coordinates, shape (3,).
+    is_time_reversed : bool
+        If True, the operation is combined with time reversal, so that
+        k -> -W^-T k and matrices are transposed.
+    """
+
+    rotation: NDArray
+    translation: NDArray
+    is_time_reversed: bool
+
+    @property
+    def is_identity(self) -> bool:
+        """Whether this is the plain identity operation."""
+        return (
+            not self.is_time_reversed
+            and np.array_equal(self.rotation, np.eye(3, dtype=int))
+            and np.allclose(self.translation, 0.0)
+        )
+
+    def map_kpoints(self, kpoints: NDArray) -> NDArray:
+        """Maps k-points (rows, reduced coordinates) to k' = +-W^-T k."""
+        mapped_kpoints = kpoints @ np.linalg.inv(self.rotation)
+        return -mapped_kpoints if self.is_time_reversed else mapped_kpoints
+
+
+def collect_symmetry_operations(
+    structure: ase.Atoms,
+    transport_axis: int = 0,
+    time_reversal: bool = True,
+    symprec: float = 1e-5,
+) -> list[SymmetryOperation]:
+    """Collects the symmetry operations that are valid for the device.
+
+    Only operations that leave the transport axis untouched are kept.
+    The identity comes first, then the other proper operations, then the
+    time-reversed ones. This ordering makes the identity the preferred
+    operation for the irreducible points themselves.
+
+    Parameters
+    ----------
+    structure : ase.Atoms
+        Structure given to spglib. Its cell and scaled positions must be
+        the ones used for `fractional_positions` and `lattice_vectors`
+        in `DeviceSymmetry`.
+    transport_axis : int, optional
+        Index of the transport axis. Default is 0.
+    time_reversal : bool, optional
+        Whether to add time-reversed versions of all operations.
+        Default is True.
+    symprec : float, optional
+        Symmetry tolerance passed to spglib.
+
+    Returns
+    -------
+    operations : list[SymmetryOperation]
+        The filtered and ordered operations.
+    """
+    cell = (
+        structure.cell.array,
+        structure.get_scaled_positions(),
+        structure.get_atomic_numbers(),
+    )
+    dataset = spglib.get_symmetry_dataset(cell, symprec=symprec)
+    transport_unit_vector = np.eye(3, dtype=int)[transport_axis]
+
+    operations: list[SymmetryOperation] = []
+    for rotation, translation in zip(dataset.rotations, dataset.translations):
+        translation_along_transport = translation[transport_axis]
+        leaves_transport_axis_alone = (
+            np.array_equal(rotation[transport_axis], transport_unit_vector)
+            and np.array_equal(rotation[:, transport_axis], transport_unit_vector)
+            and abs(translation_along_transport - np.round(translation_along_transport))
+            < 1e-8
+        )
+        if not leaves_transport_axis_alone:
+            continue
+        operations.append(SymmetryOperation(rotation, translation, False))
+        if time_reversal:
+            operations.append(SymmetryOperation(rotation, translation, True))
+
+    operations.sort(key=lambda op: (op.is_time_reversed, not op.is_identity))
+    return operations
+
+
+def compute_orbital_rotation(
+    orbital_labels: list[str],
+    rotation_cartesian: NDArray,
+) -> NDArray:
+    """Computes the rotation matrix of the orbitals on a single atom.
+
+    The matrix ``d`` is defined by
+
+        phi_alpha(R^-1 r) = sum_beta phi_beta(r) d[beta, alpha],
+
+    and is obtained by a least-squares fit of the real orbital functions
+    sampled on random directions. This works for improper rotations as
+    well.
+
+    Parameters
+    ----------
+    orbital_labels : list[str]
+        Orbital labels on the atom, in the order used by the
+        Hamiltonian, e.g. ``["s", "px", "py", "pz", ...]``.
+    rotation_cartesian : NDArray
+        Cartesian rotation matrix R, shape (3, 3), acting on column
+        vectors.
+
+    Returns
+    -------
+    orbital_rotation : NDArray
+        Real orthogonal matrix of shape (num_orbitals, num_orbitals).
+
+    """
+    num_orbitals = len(orbital_labels)
+    orbital_rotation = np.zeros((num_orbitals, num_orbitals))
+    # Row-vector convention: p @ R equals (R^-1 p) for orthogonal R.
+    rotated_directions = SAMPLE_DIRECTIONS @ rotation_cartesian
+
+    shells = dict.fromkeys(ORBITAL_SHELL[label] for label in orbital_labels)
+    for shell in shells:
+        shell_indices = [
+            i for i, label in enumerate(orbital_labels) if ORBITAL_SHELL[label] == shell
+        ]
+        original_values = np.stack(
+            [
+                ORBITAL_FUNCTIONS[orbital_labels[i]](SAMPLE_DIRECTIONS)
+                for i in shell_indices
+            ],
+            axis=1,
+        )
+        rotated_values = np.stack(
+            [
+                ORBITAL_FUNCTIONS[orbital_labels[i]](rotated_directions)
+                for i in shell_indices
+            ],
+            axis=1,
+        )
+        shell_rotation, *__ = np.linalg.lstsq(
+            original_values, rotated_values, rcond=None
+        )
+        identity = np.eye(len(shell_indices))
+        if not np.allclose(shell_rotation.T @ shell_rotation, identity, atol=1e-10):
+            raise ValueError(f"Rotation of shell '{shell}' is not orthogonal.")
+        orbital_rotation[np.ix_(shell_indices, shell_indices)] = shell_rotation
+
+    return orbital_rotation
+
+
+def find_atom_permutation(
+    fractional_positions: NDArray,
+    lattice_vectors: NDArray,
+    rotation_fractional: NDArray,
+    translation_fractional: NDArray,
+    periodic_axes: tuple[int, ...] = (1, 2),
+    tolerance: float = 1e-6,
+) -> NDArray:
+    """Finds the atom permutation induced by a symmetry operation.
+
+    Parameters
+    ----------
+    fractional_positions : NDArray
+        Fractional positions of all device atoms, shape (num_atoms, 3).
+    lattice_vectors : NDArray
+        Lattice vectors as rows, shape (3, 3).
+    rotation_fractional : NDArray
+        Rotation W in fractional coordinates (as returned by spglib).
+    translation_fractional : NDArray
+        Translation t in fractional coordinates.
+    periodic_axes : tuple[int, ...], optional
+        Axes along which positions are identified modulo a lattice
+        vector. The transport axis must not be included. Default is
+        (1, 2).
+    tolerance : float, optional
+        Maximum Cartesian distance for two atoms to count as identical.
+
+    Returns
+    -------
+    permutation : NDArray
+        Integer array of shape (num_atoms,). Atom ``a`` is mapped onto
+        atom ``permutation[a]``.
+
+    """
+    num_atoms = len(fractional_positions)
+    mapped_positions = (
+        fractional_positions @ rotation_fractional.T + translation_fractional
+    )
+    permutation = np.empty(num_atoms, dtype=int)
+    axes = list(periodic_axes)
+
+    for atom_ind in range(num_atoms):
+        difference = fractional_positions - mapped_positions[atom_ind]
+        difference[:, axes] -= np.round(difference[:, axes])
+        distances = np.linalg.norm(difference @ lattice_vectors, axis=1)
+        matches = np.where(distances < tolerance)[0]
+        if len(matches) != 1:
+            raise ValueError("Operation is not a symmetry of this structure.")
+        permutation[atom_ind] = matches[0]
+
+    return permutation
+
+
+def compute_gauge_phases(
+    kpoint_fractional: NDArray,
+    fractional_positions: NDArray,
+    num_orbitals: int,
+) -> NDArray:
+    """Computes the diagonal cell-gauge to atom-gauge phase factors.
+
+    Parameters
+    ----------
+    kpoint_fractional : NDArray
+        k-point in reduced reciprocal coordinates, shape (3,). The
+        transport component must be zero.
+    fractional_positions : NDArray
+        Fractional atom positions exactly as used when assembling H(k).
+        They must not be wrapped into the unit cell.
+    num_orbitals : int
+        Number of orbitals per atom.
+
+    Returns
+    -------
+    phases : NDArray
+        Complex vector of shape (num_atoms * num_orbitals,).
+
+    """
+    atom_phases = np.exp(2j * np.pi * (fractional_positions @ kpoint_fractional))
+    return np.repeat(atom_phases, num_orbitals)
+
+
+class DeviceSymmetry:
+    """Applies symmetry operations to device matrices in cell gauge.
+
+    Parameters
+    ----------
+    fractional_positions : NDArray
+        Unwrapped fractional positions of all device atoms, shape
+        (num_atoms, 3), exactly as used to assemble H(k).
+    lattice_vectors : NDArray
+        Lattice vectors as rows, shape (3, 3).
+    orbital_labels : list[str]
+        Orbital labels per atom, in Hamiltonian order.
+    periodic_axes : tuple[int, ...], optional
+        Periodic (transverse) axes. Default is (1, 2).
+    """
+
+    def __init__(
+        self,
+        fractional_positions: NDArray,
+        lattice_vectors: NDArray,
+        orbital_labels: list[str],
+        periodic_axes: tuple[int, ...] = (1, 2),
+    ) -> None:
+        self.fractional_positions = fractional_positions
+        self.lattice_vectors = lattice_vectors
+        self.orbital_labels = orbital_labels
+        self.periodic_axes = periodic_axes
+        self.num_atoms = len(fractional_positions)
+        self.num_orbitals = len(orbital_labels)
+        self._cache: dict[tuple[bytes, bytes], tuple[NDArray, NDArray]] = {}
+
+    def _atom_permutation_and_orbital_rotation(
+        self, operation: SymmetryOperation
+    ) -> tuple[NDArray, NDArray]:
+        """Returns the cached atom permutation and orbital rotation."""
+        key = (
+            operation.rotation.tobytes(),
+            (np.round(operation.translation, 8) + 0.0).tobytes(),
+        )
+        if key not in self._cache:
+            rotation_cartesian = (
+                self.lattice_vectors.T
+                @ operation.rotation
+                @ np.linalg.inv(self.lattice_vectors.T)
+            )
+            permutation = find_atom_permutation(
+                self.fractional_positions,
+                self.lattice_vectors,
+                operation.rotation,
+                operation.translation,
+                self.periodic_axes,
+            )
+            orbital_rotation = compute_orbital_rotation(
+                self.orbital_labels, rotation_cartesian
+            )
+            self._cache[key] = (permutation, orbital_rotation)
+        return self._cache[key]
+
+    def transform(
+        self,
+        matrices: NDArray,
+        operation: SymmetryOperation,
+        kpoint: NDArray,
+    ) -> NDArray:
+        """Maps device matrices from ``kpoint`` to the equivalent k-point.
+
+        Implements M(k') = D M(k) D^dagger with D = Phi(k') D0 Phi(k)^dagger,
+        and for time-reversed operations M(-k') = D^* M(k)^T D^T.
+
+        Parameters
+        ----------
+        matrices : NDArray
+            Matrices at ``kpoint``, shape (..., n, n) with
+            n = num_atoms * num_orbitals. Works for H, S, G^R, G^<,
+            G^>, and the self-energies, in cell gauge.
+        operation : SymmetryOperation
+            Operation mapping ``kpoint`` onto the target k-point.
+        kpoint : NDArray
+            Source k-point in reduced coordinates, shape (3,). Use the
+            same (unwrapped) value that was used to build the matrices.
+
+        Returns
+        -------
+        transformed_matrices : NDArray
+            Matrices at the target k-point, shape (..., n, n).
+        """
+        permutation, orbital_rotation = self._atom_permutation_and_orbital_rotation(
+            operation
+        )
+        # k' = W^-T k, deliberately NOT wrapped into the grid.
+        rotated_kpoint = np.linalg.inv(operation.rotation).T @ kpoint
+        source_phases = compute_gauge_phases(
+            kpoint, self.fractional_positions, self.num_orbitals
+        )
+        target_phases = compute_gauge_phases(
+            rotated_kpoint, self.fractional_positions, self.num_orbitals
+        )
+
+        if operation.is_time_reversed:
+            # M(-k') = conj(Phi') D0 [Phi M^T Phi^*] D0^T Phi'
+            matrices = np.swapaxes(matrices, -1, -2)
+            source_phases = source_phases.conj()
+            target_phases = target_phases.conj()
+
+        scaled = source_phases.conj()[:, None] * matrices * source_phases[None, :]
+
+        # Rotate the orbitals on each atom: d @ block @ d^T.
+        batch_shape = scaled.shape[:-2]
+        blocks = scaled.reshape(
+            *batch_shape,
+            self.num_atoms,
+            self.num_orbitals,
+            self.num_atoms,
+            self.num_orbitals,
+        )
+        rotated = np.einsum(
+            "pi,...aibj,qj->...apbq",
+            orbital_rotation,
+            blocks,
+            orbital_rotation,
+            optimize=True,
+        )
+
+        # Atom a moves to permutation[a]: new[permutation[a]] = old[a].
+        inverse_permutation = np.argsort(permutation)
+        permuted = rotated[..., inverse_permutation, :, :, :][
+            ..., inverse_permutation, :
+        ]
+
+        permuted = permuted.reshape(*batch_shape, *scaled.shape[-2:])
+        return target_phases[:, None] * permuted * target_phases.conj()[None, :]
 
 
 def _monkhorst_pack(
@@ -85,49 +497,45 @@ def _monkhorst_pack(
     if structure is None:
         raise ValueError("A `structure` is required when `irreducible` is set to True.")
 
-    cell = (
-        structure.cell.array,
-        structure.get_scaled_positions(),
-        structure.get_atomic_numbers(),
-    )
+    operations = collect_symmetry_operations(structure, 0, time_reversal)
 
-    # NOTE: Instead of using spglib.get_ir_reciprocal_mesh, kinda do
-    # irreducible k-point search by hand. This is because we want to
-    # support arbitrary shifts and gamma-centered grids, which are not
-    # directly exposed through spglib. The code here is a bit clanked
-    # together and iterated on. I did my best to make it a bit clearer
-    # what actually happens.
-    symmetry_dataset = spglib.get_symmetry_dataset(cell)
-    # spglib pairs rotation operations with their corresponding
-    # translations. We only need the rotations here.
-    rotations = np.unique(symmetry_dataset.rotations, axis=0)
-    if time_reversal:
-        rotations = np.unique(np.concatenate([rotations, -rotations]), axis=0)
+    # image_maps[o, i] is the flat grid index of operation o applied to k-point i.
+    grid_operations: list[SymmetryOperation] = []
+    image_maps: list[NDArray] = []
+    for operation in operations:
+        mapped_kpoints = operation.map_kpoints(kpoints)
+        grid_indices = (mapped_kpoints - shift) * size - offset
+        rounded_indices = np.round(grid_indices)
+        if not np.allclose(grid_indices, rounded_indices):
+            continue  # This operation does not preserve the grid.
+        image_maps.append(
+            np.ravel_multi_index(tuple((rounded_indices.astype(int) % size).T), size)
+        )
+        grid_operations.append(operation)
 
-    mapping = np.arange(len(kpoints))
-    for rotation in rotations:
-        # Rotate and map back from k-points to the grid indices.
-        m = (kpoints @ rotation - shift) * size - offset
-        m_rounded = np.round(m)
-        if not np.allclose(m, m_rounded):
-            # This symmetry operation does not preserve the grid, so we
-            # skip it.
-            continue
-
-        # Since we construct the grid using np.indices before, we can
-        # use np.ravel_multi_index to map the rounded indices back to
-        # the flattened grid. Using modulo to ensure that the indices
-        # are in bounds.
-        flat = np.ravel_multi_index(tuple((m_rounded.astype(int) % size).T), size)
-        # Map each k-point to the minimum index of its
-        # symmetry-equivalent k-points.
-        mapping = np.minimum(mapping, flat)
+    image_maps = np.stack(image_maps)
+    mapping = np.min(image_maps, axis=0)  # Identity is included, so mapping <= arange.
 
     reduce_mapping, expand_mapping, multiplicities = np.unique(
         mapping, return_inverse=True, return_counts=True
     )
 
-    return kpoints, reduce_mapping, expand_mapping, multiplicities
+    # For every full point, the first operation that maps its representative onto it.
+    operation_indices = np.array(
+        [
+            np.flatnonzero(image_maps[:, mapping[full_ind]] == full_ind)[0]
+            for full_ind in range(len(kpoints))
+        ]
+    )
+
+    return (
+        kpoints,
+        reduce_mapping,
+        expand_mapping,
+        multiplicities,
+        grid_operations,
+        operation_indices,
+    )
 
 
 class KGrid:
@@ -177,15 +585,20 @@ class KGrid:
     ) -> None:
         """Initializes the k-points."""
         if symmetry_reduction:
-            full_points, reduce_mapping, expand_mapping, multiplicities = (
-                _monkhorst_pack(
-                    size=size,
-                    shift=shift,
-                    gamma_centered=gamma_centered,
-                    symmetry_reduction=True,
-                    structure=structure,
-                    time_reversal=time_reversal,
-                )
+            (
+                full_points,
+                reduce_mapping,
+                expand_mapping,
+                multiplicities,
+                operations,
+                operation_indices,
+            ) = _monkhorst_pack(
+                size=size,
+                shift=shift,
+                gamma_centered=gamma_centered,
+                symmetry_reduction=True,
+                structure=structure,
+                time_reversal=time_reversal,
             )
             irreducible_points = full_points[reduce_mapping]
         else:
@@ -197,7 +610,9 @@ class KGrid:
                 structure=structure,
                 time_reversal=time_reversal,
             )
-            reduce_mapping = expand_mapping = irreducible_points = None
+            reduce_mapping = expand_mapping = irreducible_points = operations = (
+                operation_indices
+            ) = None
             multiplicities = np.ones(len(full_points), dtype=int)
 
         self.full_points = full_points
@@ -205,6 +620,8 @@ class KGrid:
         self._reduce_mapping = reduce_mapping
         self._expand_mapping = expand_mapping
         self._multiplicities = multiplicities
+        self._operations = operations
+        self._operation_indices = operation_indices
 
         self.num_full_points = len(full_points)
         self.num_irreducible_points = (
@@ -339,3 +756,53 @@ class KGrid:
             return xp.average(values, axis=axis)
 
         return xp.average(values, axis=axis, weights=self._multiplicities)
+
+    def expand_matrices(
+        self,
+        matrices: NDArray,
+        symmetry: DeviceSymmetry,
+        axis: int = 1,
+    ) -> NDArray:
+        """Expands device matrices from the irreducible points to the full grid.
+
+        Unlike `expand`, this applies the orbital rotation, atom
+        permutation, gauge phases, and transposition for time-reversed
+        operations. Use it for G^R, G^<, G^>, Sigma, P, W, etc. Use
+        `expand` only for scalars such as traced quantities.
+
+        Parameters
+        ----------
+        matrices : NDArray
+            Matrices on the irreducible k-points. The last two axes are
+            the device matrix, ``axis`` is the k-point axis (not one of
+            the last two).
+        symmetry : DeviceSymmetry
+            Provides the atom/orbital structure of the device.
+        axis : int, optional
+            The k-point axis. Default is 1.
+
+        Returns
+        -------
+        expanded_matrices : NDArray
+            Matrices on the full grid, in the same ordering as
+            `full_points` (fftn-compatible).
+        """
+        if not self.symmetry_reduction:
+            return matrices
+
+        expanded_slices = []
+        for full_ind in range(self.num_full_points):
+            irreducible_ind = self._expand_mapping[full_ind]
+            operation = self._operations[self._operation_indices[full_ind]]
+            source_matrices = np.take(matrices, irreducible_ind, axis=axis)
+            if operation.is_identity:
+                expanded_slices.append(source_matrices)
+                continue
+            expanded_slices.append(
+                symmetry.transform(
+                    source_matrices,
+                    operation,
+                    self.irreducible_points[irreducible_ind],
+                )
+            )
+        return np.stack(expanded_slices, axis=axis)

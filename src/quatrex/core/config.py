@@ -1110,6 +1110,10 @@ class ElectronConfig(BaseModel):
     conduction band edge, the Fermi level is always set to be 0.5 eV
     above the conduction band edge during all SCBA iterations.
 
+    Band edge tracking is turned off in self-consistent
+    Schrödinger-Poisson runs, since the tracked band edges include the
+    electrostatic potential, which would then be counted twice.
+
     """
 
     energy_window_min: float | None = None
@@ -2591,6 +2595,26 @@ class QuatrexConfig(BaseModel):
                     "reference contact (i.e. the contact with `voltage=0`) to "
                     "compute excess charge carrier densities."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def disable_band_edge_tracking_with_scsp(self) -> Self:
+        """Turns off band edge tracking in SCSP runs.
+
+        The tracked band edges include the electrostatic potential in
+        the contact, which would then be counted twice: in the contact
+        Fermi levels (shifting the applied bias) and in the charge
+        neutrality level used for the excess charge.
+
+        """
+        if self.scsp is not None and self.electron.band_edge_tracking:
+            warnings.warn(
+                "Band edge tracking is not supported in self-consistent "
+                "Schrödinger-Poisson runs and is turned off.",
+                UserWarning,
+            )
+            self.electron.band_edge_tracking = False
 
         return self
 

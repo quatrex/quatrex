@@ -116,6 +116,7 @@ class SCBADevice(BaseDevice):
         hamiltonians, hamiltonian_sparsity_pattern = assemble_matrix(
             config=self.config,
             matrix_name="hamiltonian",
+            cell_offsets=self.cell_offsets,
             sparsity_pattern=None,
             shift_kpoints=False,
         )
@@ -125,6 +126,7 @@ class SCBADevice(BaseDevice):
             overlap_matrices, __ = assemble_matrix(
                 config=self.config,
                 matrix_name="overlap",
+                cell_offsets=self.cell_offsets,
                 sparsity_pattern=None,
                 shift_kpoints=False,
             )
@@ -234,6 +236,7 @@ class SCBADevice(BaseDevice):
         coulomb_matrix, __ = assemble_matrix(
             config=self.config,
             matrix_name="coulomb_matrix",
+            cell_offsets=self.cell_offsets,
             sparsity_pattern=self.sparsity_pattern,
             shift_kpoints=True,
         )

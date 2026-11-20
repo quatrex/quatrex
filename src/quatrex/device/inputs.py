@@ -2,6 +2,7 @@
 
 """Includes the methods to load and parse the input data."""
 
+import copy
 import warnings
 from pathlib import Path
 
@@ -412,9 +413,84 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
+def _wrap_matrix_dict(
+    matrix_dict: dict,
+    cell_offsets: NDArray,
+    max_coords: np.ndarray,
+    transport_ind: int,
+):
+    """Modifies matrix_dict and cell_offsets"""
+
+    max_cell_offset = xp.max(xp.abs(cell_offsets))
+    max_transport_coord = max_coords[transport_ind]
+    if max_cell_offset > max_transport_coord:
+        raise ValueError(
+            "The unit cell matrix values could not be wrapped: Not enough cell-cell interactions have been provided to reconstruct them, not even in the home cell"
+        )
+
+    for wrapped_atom_index, cell_offset in enumerate(cell_offsets):
+        if cell_offset == 0:
+            continue
+
+        s = xp.sign(cell_offset)
+
+        # Wrap columns
+        for cell_coord in range(
+            s * max_transport_coord, -s * (max_transport_coord + 1), -s
+        ):
+            # Save the on-site term to restore it later
+            wrapped_site_term = matrix_dict[(cell_coord, 0, 0)][
+                wrapped_atom_index, wrapped_atom_index
+            ]
+
+            origin_cell_coord = cell_coord - cell_offset
+            if abs(origin_cell_coord) > max_transport_coord:
+                matrix_dict[(cell_coord, 0, 0)][:, wrapped_atom_index] = xp.nan
+            else:
+                matrix_dict[(cell_coord, 0, 0)][:, wrapped_atom_index] = matrix_dict[
+                    (origin_cell_coord, 0, 0)
+                ][:, wrapped_atom_index]
+
+            # Restore on-site term
+            matrix_dict[(cell_coord, 0, 0)][
+                wrapped_atom_index, wrapped_atom_index
+            ] = wrapped_site_term
+
+        # Wrap rows
+        for cell_coord in range(
+            -s * max_transport_coord, s * (max_transport_coord + 1), s
+        ):
+            # Save the on-site term to restore it later
+            wrapped_site_term = matrix_dict[(cell_coord, 0, 0)][
+                wrapped_atom_index, wrapped_atom_index
+            ]
+
+            origin_cell_coord = cell_coord + cell_offset
+            if abs(origin_cell_coord) > max_transport_coord:
+                matrix_dict[(cell_coord, 0, 0)][wrapped_atom_index, :] = xp.nan
+            else:
+                matrix_dict[(cell_coord, 0, 0)][wrapped_atom_index, :] = matrix_dict[
+                    (origin_cell_coord, 0, 0)
+                ][wrapped_atom_index, :]
+
+            # Restore on-site term
+            matrix_dict[(cell_coord, 0, 0)][
+                wrapped_atom_index, wrapped_atom_index
+            ] = wrapped_site_term
+
+    # Drop matrices where some values are unknown after wrapping
+    for key in copy.copy(list(matrix_dict.keys())):
+        if abs(key[transport_ind]) > max_transport_coord - max_cell_offset:
+            matrix_dict.pop(key)
+    warnings.warn(
+        f"Dropped {max_cell_offset * 2} unit cell interaction matrices after wrapping"
+    )
+
+
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
+    cell_offsets: NDArray | None,
     force_complex: bool = True,
 ):
     """Loads a Hermitian matrix from file
@@ -425,6 +501,9 @@ def load_matrices(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
+    cell_offsets: NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from.
     force_complex : bool
         Whether to force the loaded matrices to be complex. If `True`,
         the loaded matrices will be cast to `xp.complex128`.
@@ -449,12 +528,11 @@ def load_matrices(
     # assert that the keys form a complete grid,
     keys = np.array(list(matrix_dict.keys()))
     max_coords = keys.max(axis=0)
-    min_coords = keys.min(axis=0)
 
-    if not np.all(np.abs(min_coords) == max_coords):
+    if not np.all(keys.min(axis=0) == -max_coords):
         raise ValueError(
             f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
-            f"but found min_coords={min_coords} and max_coords={max_coords}."
+            f"but found min_coords={keys.min(axis=0)} and max_coords={max_coords}."
         )
 
     validated_coords = set((0, 0, 0))
@@ -468,6 +546,12 @@ def load_matrices(
                 f"but it was not found. Available keys: {list(matrix_dict.keys())}"
             )
         validated_coords.update([coord, opposite_coord])
+
+    # NOTE: for closed systems, `transport_direction` will be None
+    transport_ind = "abc".index(config.device.transport_direction)
+
+    if cell_offsets is not None:
+        _wrap_matrix_dict(matrix_dict, cell_offsets, max_coords, transport_ind)
 
     # assert that more than the neighbor cell cutoff is available if the cutoff is requested
     if config.device.neighbor_cell_cutoff is not None and any(
@@ -531,10 +615,6 @@ def load_matrices(
     if config.device.construct_from_unit_cell:
         matrix_dict = _create_matrix_from_unit_cells(config, matrix_dict)
 
-    # NOTE: for closed systems,
-    # transport direction will be None
-    transport_ind = "abc".index(config.device.transport_direction)
-
     # drop keys which are bigger than zero in the transport direction
     matrix_dict = {
         coord: matrix
@@ -562,6 +642,7 @@ def load_matrices(
 def assemble_matrix(
     config: QuatrexConfig,
     matrix_name: str,
+    cell_offsets: NDArray | None,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
@@ -574,6 +655,9 @@ def assemble_matrix(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
+    cell_offsets: NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from.
     sparsity_pattern : sparse.coo_matrix | None
         The sparsity pattern to enforce. If None, the sparsity of the
         loaded matrix is used.
@@ -590,7 +674,7 @@ def assemble_matrix(
 
     """
 
-    matrix_dict = load_matrices(config, matrix_name)
+    matrix_dict = load_matrices(config, matrix_name, cell_offsets=cell_offsets)
 
     # load or construct the block sizes for the DSDBSparse
     if config.device.construct_from_unit_cell:

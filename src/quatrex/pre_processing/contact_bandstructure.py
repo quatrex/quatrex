@@ -9,7 +9,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from qttools import NDArray, xp
-from qttools.comm import comm
 from qttools.utils.gpu_utils import get_host
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import BaseDevice
@@ -92,13 +91,6 @@ def plot_contact_band_structure(
         The device object.
 
     """
-
-    if comm.size > 1:
-        raise ValueError(
-            "Pre-processing can be only performed on a single process. "
-            "If you are running a parallel simulation, please ensure that "
-            "the pre-processing steps are completed before starting the parallel run."
-        )
 
     if not os.path.exists(config.output_dir):
         os.mkdir(config.output_dir)

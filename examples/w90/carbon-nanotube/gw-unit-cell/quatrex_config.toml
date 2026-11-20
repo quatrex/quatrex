@@ -121,5 +121,4 @@ deformation_potential = 5e-3
 
 
 [pre_process]
-compute_fermi_level = true
 save_processed_inputs = true

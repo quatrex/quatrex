@@ -216,6 +216,12 @@ class SCBA(TransportSolver):
         )  # dummy data
         self.mixing_factor = self.config.scba.mixing_factor
 
+        # The total number of SCBA iterations, also across several calls
+        # to `run` (e.g. in Schrödinger-Poisson runs).
+        self.iteration = 0
+        # The maximum absolute self-energy update of the last iteration.
+        self.sigma_update = np.inf
+
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
 
@@ -396,6 +402,14 @@ class SCBA(TransportSolver):
                 - self.data.sigma_retarded_hermitian_prev.data
             ),
             comm.global_,
+        )
+        self.sigma_update = max(
+            diff.item()
+            for diff in (
+                max_diff_sigma_lesser,
+                max_diff_sigma_greater,
+                max_diff_sigma_retarded_hermitian,
+            )
         )
 
         meir_wingreen_current = self.observables.electron_current.get(
@@ -805,11 +819,26 @@ class SCBA(TransportSolver):
         )
 
     @profiler.profile(label="SCBA", level="default", comm=comm)
-    def run(self) -> None:
-        """Runs the SCBA to convergence."""
+    def run(self, max_iterations: int | None = None) -> None:
+        """Runs the SCBA to convergence.
+
+        Parameters
+        ----------
+        max_iterations : int, optional
+            The maximum number of iterations to perform. Defaults to
+            `config.scba.max_iterations`. Repeated calls continue from
+            the current self-energies, which is used to interleave the
+            SCBA with the Schrödinger-Poisson loop.
+
+        """
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
-        for i in range(self.config.scba.max_iterations):
+        if max_iterations is None:
+            max_iterations = self.config.scba.max_iterations
+
+        for __ in range(max_iterations):
+            i = self.iteration
+            self.iteration += 1
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(
@@ -876,7 +905,7 @@ class SCBA(TransportSolver):
 
             if self._has_converged():
                 if comm.rank == 0:
-                    print(f"SCBA converged after {i} iterations.", flush=True)
+                    print(f"SCBA converged after {i + 1} iterations.", flush=True)
                 break
 
             # Update self-energy for next iteration with mixing factor.
@@ -906,4 +935,4 @@ class SCBA(TransportSolver):
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:
-                print(f"SCBA did not converge after {i} iterations.")
+                print(f"SCBA did not converge after {max_iterations} iterations.")

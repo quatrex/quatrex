@@ -59,6 +59,9 @@ class CrossCheckCase:
         Replacements applied to the config for both formalisms.
     negf : list[tuple[str, str]]
         Additional replacements for the NEGF config.
+    scba_iterations_per_step : int, optional
+        If set, checks that the NEGF run performed this many SCBA
+        iterations per Schrödinger-Poisson iteration.
 
     """
 
@@ -66,6 +69,7 @@ class CrossCheckCase:
     num_iterations: int
     common: list[tuple[str, str]] = field(default_factory=list)
     negf: list[tuple[str, str]] = field(default_factory=list)
+    scba_iterations_per_step: int | None = None
 
 
 CNT_NEGF = [
@@ -73,6 +77,14 @@ CNT_NEGF = [
     ("[device]\n", "[device]\nblock_size = 32\n"),
     ('solver.direct_solver = "superlu"', 'solver.algorithm = "rgf"'),
     ("[scsp]", BALLISTIC_SCBA),
+]
+
+# Interleaved loops: one SCBA iteration per Schrödinger-Poisson
+# iteration, even though a full SCBA run would take three.
+CNT_NEGF_INTERLEAVED = [
+    *CNT_NEGF,
+    ("max_iterations = 1\nphonon = true", "max_iterations = 3\nphonon = true"),
+    ("[scsp]\n", "[scsp]\nscba_iterations_per_step = 1\n"),
 ]
 
 CASES = [
@@ -83,6 +95,15 @@ CASES = [
             negf=CNT_NEGF,
         ),
         id="cnt-bias",
+    ),
+    pytest.param(
+        CrossCheckCase(
+            example="w90/carbon-nanotube/qtbm-poisson",
+            num_iterations=3,
+            negf=CNT_NEGF_INTERLEAVED,
+            scba_iterations_per_step=1,
+        ),
+        id="cnt-bias-interleaved",
     ),
     pytest.param(
         CrossCheckCase(
@@ -197,3 +218,10 @@ def test_ballistic_scsp_qtbm_negf(
                 f"{name}_{iteration}: max deviation "
                 f"{np.abs(negf - wf).max():.3e}, max value {np.abs(wf).max():.3e}"
             )
+
+    if case.scba_iterations_per_step is not None:
+        # The SCBA outputs are numbered across Schrödinger-Poisson
+        # iterations.
+        num_scsp = len(list(outputs["negf"].glob("real_space_potential_*.npy")))
+        num_scba = len(list(outputs["negf"].glob("electron_density_*.npy")))
+        assert num_scba == num_scsp * case.scba_iterations_per_step

@@ -67,6 +67,24 @@ class SCSPConfig(BaseModel):
 
     """
 
+    scba_iterations_per_step: PositiveInt | None = None
+    """The number of SCBA iterations per Schrödinger-Poisson iteration.
+
+    Only used if [`formalism`](quatrex#formalism) is set to "negf".
+
+    - `None` (the default): The SCBA is run for
+      [`max_iterations`](scba#max_iterations) at every potential
+      (nested loops).
+    - A number $N$: The SCBA and Schrödinger-Poisson loops are
+      interleaved. Every Schrödinger-Poisson iteration runs $N$ SCBA
+      iterations, starting from the self-energies of the previous one.
+      The loop has converged once both the potential and the
+      self-energies (see [`convergence_tol`](scba#convergence_tol))
+      have converged. This avoids converging the self-energies at
+      potentials that are still far from self-consistency.
+
+    """
+
     # Parameters for potential mixing.
     mixer: Literal["under-relaxation", "diis"] = "under-relaxation"
     """The mixing scheme to use for the self-consistent solution of the
@@ -211,8 +229,15 @@ class SCBAConfig(BaseModel):
     convergence_tol: PositiveFloat = 1e-5
     """The convergence tolerance for the SCBA iterations.
 
+    This is the maximum absolute change of the lesser, greater, and
+    Hermitian retarded self-energies within one iteration.
+
     !!! warning
-        This parameter currently has no effect.
+        This parameter currently only has an effect in Schrödinger-Poisson
+        runs with interleaved loops (see
+        [`scba_iterations_per_step`](scsp#scba_iterations_per_step)).
+        Standalone SCBA runs always perform
+        [`max_iterations`](#max_iterations) iterations.
 
     """
 

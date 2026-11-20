@@ -6,20 +6,20 @@ formalism = "negf" # "negf" or "wf"
 [device]
 transport_direction = "a"
 construct_from_unit_cell = true
-num_transport_cells = 12
-neighbor_cell_cutoff = [2, 0, 0]
+num_transport_cells = 6
+neighbor_cell_cutoff = [4, 0, 0]
 
     [[device.contacts]]
     name = "left"
-    mid_gap_energy = -3.701998808382495 # Set by `quatrex pre-process`
-    fermi_level = -3.692714333268746 # Set by `quatrex pre-process`
-    conduction_band_edge = -3.4028137150164186 # Set by `quatrex pre-process`
+    mid_gap_energy = -4.15594846910669 # Set by `quatrex pre-process`
+    fermi_level = -4.145304424670308 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.8743991881076005 # Set by `quatrex pre-process`
 
     [[device.contacts]]
     name = "right"
-    mid_gap_energy = -3.7019988083824913 # Set by `quatrex pre-process`
-    fermi_level = -3.69271433326992 # Set by `quatrex pre-process`
-    conduction_band_edge = -3.4028137150164195 # Set by `quatrex pre-process`
+    mid_gap_energy = -4.155948469106691 # Set by `quatrex pre-process`
+    fermi_level = -4.1453044246702895 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.8743991881075996 # Set by `quatrex pre-process`
 
 
 [scba] # ===============================================================
@@ -122,3 +122,4 @@ deformation_potential = 5e-3
 
 [pre_process]
 compute_fermi_level = true
+save_processed_inputs = true

@@ -75,6 +75,7 @@ class BaseDevice:
             self.atom_coordinates,
             self.atomic_species,
             self.lattice_vectors,
+            self.cell_offsets,
         ) = self._load_structure(config)
 
         # TODO Device/Contact currently assumes that these quantities are on the host
@@ -163,9 +164,11 @@ class BaseDevice:
     @staticmethod
     def _load_structure(
         config: QuatrexConfig,
-    ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+    ) -> tuple[NDArray, NDArray, NDArray, NDArray, NDArray]:
         """Loads the orbital coordinates, atom coordinates, atomic
-        species, and lattice vectors for the device.
+        species, lattice vectors, and cell offsets for the device.
+        The latter specify in which unit cell each atom coordinate
+        resided before wrapping.
 
         Note
         ----
@@ -179,9 +182,9 @@ class BaseDevice:
 
         Returns
         -------
-        tuple[NDArray, NDArray, NDArray, NDArray]
+        tuple[NDArray, NDArray, NDArray, NDArray, NDArray]
             The orbital coordinates, atom coordinates, atomic species,
-            and lattice vectors.
+            lattice vectors, and cell offsets.
 
         """
 
@@ -192,14 +195,22 @@ class BaseDevice:
             structure_file
         )
 
+        lattice_vectors = xp.asarray(lattice_vectors)
+        atom_coordinates = xp.asarray(atom_coordinates)
+
+        if config.device.construct_from_unit_cell:
+            atom_coordinates, cell_offsets = BaseDevice._wrap_structure_to_unit_cell(
+                atom_coordinates, lattice_vectors
+            )
+        else:
+            cell_offsets = xp.zeros_like(atom_coordinates, dtype=xp.int64)
+
         orbitals_per_atom = [
             config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
         ]
-        atom_coordinates = xp.asarray(atom_coordinates)
         orbital_coordinates = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
 
         if config.device.construct_from_unit_cell:
-
             transport_ind = "abc".index(config.device.transport_direction)
 
             orbital_coordinates = create_coordinate_grid(
@@ -224,7 +235,59 @@ class BaseDevice:
                 * config.device.num_transport_cells
             )
 
-        return orbital_coordinates, atom_coordinates, atomic_species, lattice_vectors
+        return (
+            orbital_coordinates,
+            atom_coordinates,
+            atomic_species,
+            lattice_vectors,
+            cell_offsets,
+        )
+
+    @staticmethod
+    def _wrap_structure_to_unit_cell(
+        atom_coordinates: NDArray, lattice_vectors: NDArray
+    ) -> tuple[NDArray, NDArray]:
+        """Returns the `atom_coordinates` wrapped to the unit cell.
+
+        Additionally returns which repetition of the unit cell each
+        atom has been wrapped from in `cell_offsets`.
+
+        Parameters
+        ----------
+        atom_coordinates : NDArray
+            Unwrapped coordinates of the atoms.
+        lattice_vectors : NDArray
+            Lattice vectors defining the unit cell.
+
+        Returns
+        -------
+        tuple[NDArray, NDArray]
+            The wrapped coordinates and cell offsets.
+
+        """
+
+        fractional_coordinates = (xp.linalg.inv(lattice_vectors) @ atom_coordinates.T).T
+        cell_offsets, wrapped_fractional_coordinates = xp.divmod(
+            fractional_coordinates, 1
+        )
+        wrapped_coordinates = (lattice_vectors @ wrapped_fractional_coordinates.T).T
+        if not xp.all(xp.isfinite(cell_offsets)):
+            raise ValueError("Some `cell_offsets` aren't finite")
+        cell_offsets = cell_offsets.astype(xp.int64)
+
+        if xp.any(cell_offsets) != 0:
+            warnings.warn(
+                "Some of the provided atoms in `structure.xyz` are not\n"
+                "located within the unit cell. In order to make the\n"
+                "cutoffs as physical as possible, quatrex will now\n"
+                "wrap all coordinates into the unit cell, which affects\n"
+                "the hamiltonians and overlap matrices as well.\n"
+                "Use `quatrex pre-process` with the configuration\n"
+                "setting `save_processed_inputs` to view the structure\n"
+                "after wrapping and upscaling.",
+            )
+
+        return wrapped_coordinates, cell_offsets
 
     def _init_orbitals(self) -> None:
         """Initializes the orbital indexing system for the device.

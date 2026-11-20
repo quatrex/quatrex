@@ -200,7 +200,7 @@ class BaseDevice:
 
         transport_ind = "abc".index(config.device.transport_direction)
 
-        if config.device.construct_from_unit_cell and False:
+        if config.device.construct_from_unit_cell:
             atom_coordinates, cell_offsets = BaseDevice._wrap_structure_to_unit_cell(
                 atom_coordinates, lattice_vectors, transport_ind
             )

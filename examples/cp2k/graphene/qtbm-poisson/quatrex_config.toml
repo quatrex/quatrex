@@ -11,7 +11,7 @@ mixer = "under-relaxation"
 mixing_factor = 0.3
 adaptive_mixing = false
 
-max_iterations = 10
+max_iterations = 20
 
 [electrostatics]
 default_epsilon_r = 1.0

@@ -41,6 +41,26 @@ from quatrex.photon import PhotonSolver, PiPhoton
 profiler = Profiler()
 
 
+def _average_kpoints(spectral_density: NDArray) -> NDArray:
+    """Averages a spectral density over the transverse k-points.
+
+    Parameters
+    ----------
+    spectral_density : NDArray
+        The spectral density with shape (num_energies, ...,
+        num_orbitals), where the axes in between are the transverse
+        k-points (if any).
+
+    Returns
+    -------
+    NDArray
+        The averaged density with shape (num_energies,
+        num_orbitals).
+
+    """
+    return spectral_density.mean(axis=tuple(range(1, spectral_density.ndim - 1)))
+
+
 class SCBAData:
     """Data container class for the SCBA.
 
@@ -725,13 +745,16 @@ class SCBA(TransportSolver):
         )
 
         # Electrons are counted above, holes below the local mid-gap
-        # energy, integrating exactly up to it. The spectral densities
-        # have shape (num_energies, num_orbitals).
+        # energy, integrating exactly up to it. The k-averaged spectral
+        # densities have shape (num_energies, num_orbitals).
+        electron_density = _average_kpoints(self.observables.electron_density)
+        hole_density = _average_kpoints(self.observables.hole_density)
+
         __, excess_electron_density = split_trapezoid(
-            self.observables.electron_density.T, self.electron_energies, mid_gap_energy
+            electron_density.T, self.electron_energies, mid_gap_energy
         )
         excess_hole_density, __ = split_trapezoid(
-            self.observables.hole_density.T, self.electron_energies, mid_gap_energy
+            hole_density.T, self.electron_energies, mid_gap_energy
         )
 
         return excess_electron_density, excess_hole_density
@@ -816,7 +839,11 @@ class SCBA(TransportSolver):
 
         # Spectral function per atom with shape (num_atoms, num_energies).
         spectral_function = np.add.reduceat(
-            get_host(self.observables.electron_density + self.observables.hole_density),
+            get_host(
+                _average_kpoints(
+                    self.observables.electron_density + self.observables.hole_density
+                )
+            ),
             orbital_offsets,
             axis=1,
         ).T

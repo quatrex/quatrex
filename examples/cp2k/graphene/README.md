@@ -74,3 +74,90 @@ charge neutral ($E_F - E_D \approx 55$ meV instead of 257 meV for 2D
 graphene at $5 \times 10^{12}$ cm$^{-2}$), but the quantum capacitance
 of the channel is larger than in real graphene. Increase the number of
 $k_y$ points for quantitative results.
+
+### Density model comparison
+
+The density model only enters the inner Newton iterations of the
+Poisson solver; the charge itself always comes from the transport
+calculation. It therefore affects how fast the SCSP loop converges, not
+the converged result. Running this example with the default
+`density_model = "single-band"` (`density_model_dim = 2`) instead of
+`"graphene"` gives (8 MPI ranks, about 2.3 min per SCSP iteration):
+
+| | `"graphene"` | `"single-band"` |
+|---|---|---|
+| SCSP iterations to converge | 8 | 14 |
+| Potential at the channel centre | 0.1480 V | 0.1469 V |
+| Potential range at the atoms | 0.040 – 0.152 V | 0.039 – 0.152 V |
+| Total excess charge | −0.0719 e | −0.0704 e |
+
+The converged potentials differ by at most 1.3 mV at the atoms, of the
+order of the SCSP tolerance (`convergence_tol = 1e-3` V on the unmixed
+Poisson update), and the total charge by 2 %. The
+single-band model converges more slowly (the mixed potential update
+decreases by about ×0.75 per iteration instead of ×0.55), because its
+density derivative does not match the quantum capacitance of the
+Dirac cone. `max_iterations = 20` leaves room for either model.
+
+## `negf-poisson`: The same device with NEGF
+
+Ballistic version of `qtbm-poisson` with `formalism = "negf"`, for
+cross-checking the two formalisms and as a starting point for SCSP runs
+with scattering. The device, the doping, the gate, the bias, the k-point
+grid and the energy grid are the same. Run the example with
+
+```bash
+mpirun -n 30 quatrex run quatrex_config.toml
+```
+
+It needs the mesh `../inputs/device.msh`, see above. With 30 ranks and
+two threads each, it takes about 4 min per SCSP iteration (35 min in
+total) and up to about 100 GB of memory, most of it while the contact
+Fermi levels are computed. Every SCSP iteration also writes the spectral
+electron and hole densities (about 24 MB).
+
+### NEGF-specific settings
+
+- **Ballistic SCBA.** The SCBA requires at least one interaction. A
+  pseudo-phonon with vanishing coupling makes all self-energies zero, so
+  that one SCBA iteration is sufficient.
+- **Blocks.** `block_size = 416` corresponds to four slices of 8 atoms
+  with 13 orbitals each. The contact cell is therefore four times longer
+  than in `qtbm-poisson`, and 75 instead of 300 `num_kpoints_transport`
+  give the same sampling density.
+- **Right contact.** It has to be the exact mirror of the last block of
+  the device. In each slice, the orbitals of the lower half (in $y$)
+  come first, so the transverse lattice vector is reversed. It is the
+  same lead as in `qtbm-poisson`.
+- **Lead potential.** `lead_potential = "unit-cell"` repeats the
+  potential of the outermost contact unit cell in the lead.
+
+### Lead potential
+
+The potential varies by almost 20 mV between the atoms at the left end
+of the device ($x = 0$), also between atoms that are equivalent in the
+lead. In the lead, this opens a gap of about 3 – 4 meV at the Dirac
+point, which is of the order of the spacing of the energy grid (5 meV).
+If the edge of the gap crosses a point of the grid from one SCSP
+iteration to the next, the occupation at that energy jumps and the SCSP
+loop oscillates between two states.
+
+| `lead_potential` | `"device"` | `"unit-cell"` | `"average"` | QTBM |
+|---|---|---|---|---|
+| Last SCSP iteration | 19 (not converged) | 8 | 8 | 8 |
+| Final potential update | 2.94 mV | 0.68 mV | 0.65 mV | 0.66 mV |
+| Total excess charge | −0.070 / −0.074 e | −0.0719 e | −0.0724 e | −0.0719 e |
+| Mean deviation from QTBM at the atoms | −0.5 / −0.1 mV | −0.04 mV | −0.9 mV | – |
+| Largest deviation from QTBM at an atom | 1.6 / 1.2 mV | 0.4 mV | 2.1 mV | – |
+
+- `"device"` (the default) is not strictly periodic, and the edge of the
+  gap crosses the grid point at 0.681 eV, where the current alternates
+  between zero and a finite value.
+- `"unit-cell"` agrees best with QTBM. It does not remove the gap, but
+  0.681 eV stays inside of it, so the loop converges. This can be
+  different for other biases, gate voltages or energy grids.
+- `"average"` removes the gap, but shifts the potential by about 1 mV.
+
+The iteration count is the index of the last SCSP iteration, starting
+from 0. The two values for `"device"` are those of the last two
+iterations, i.e. of the two states that the loop alternates between.

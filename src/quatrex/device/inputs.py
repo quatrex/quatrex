@@ -729,10 +729,13 @@ def assemble_matrix(
     block_sizes = get_block_sizes(config, matrix_dict[(0, 0, 0)].shape[0])
 
     if sparsity_pattern is None:
-        # TODO: This could lead to cancelations
-        # and then the sparsity pattern is not the true union
-        matrix_sparray = _sum_operator(matrix_dict, config.scba.symmetric)
-        sparsity_pattern = matrix_sparray.copy()
+        # NOTE: The pattern is the union over all periodic images. The
+        # absolute values are summed, since elements of different images
+        # can cancel each other at Gamma, but not at other k-points.
+        sparsity_pattern = _sum_operator(
+            {coord: abs(matrix) for coord, matrix in matrix_dict.items()},
+            config.scba.symmetric,
+        ).astype(xp.complex128)
         sparsity_pattern.data[:] = 1
         sparsity_pattern = sparsity_pattern + sparsity_pattern.T
 

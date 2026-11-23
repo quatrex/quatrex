@@ -18,7 +18,12 @@ from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
-from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
+from quatrex.contact.scba import (
+    SCBAContact,
+    get_inverse_order,
+    order_block,
+    order_vector,
+)
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
@@ -262,6 +267,74 @@ def overlap_density(
     return callback
 
 
+def get_lead_potential(
+    potential: NDArray,
+    contact: SCBAContact,
+    block_offsets: NDArray,
+    global_offset: int,
+    mode: str,
+) -> NDArray:
+    """Gets the potential that enters the OBCs of a contact.
+
+    Parameters
+    ----------
+    potential : NDArray
+        The potential for each local orbital of the device.
+    contact : SCBAContact
+        The contact for which to get the potential.
+    block_offsets : NDArray
+        The local block offsets of the device.
+    global_offset : int
+        The global index of the first local orbital.
+    mode : str
+        How the potential is continued into the lead. Either "device",
+        "unit-cell" or "average" (see `ElectronConfig.lead_potential`).
+
+    Returns
+    -------
+    NDArray
+        The potential, where the device blocks that enter the OBCs (the
+        diagonal and the first off-diagonal block) are set to the
+        potential of the lead. For "device", this is the unchanged
+        input, otherwise it is a copy.
+
+    """
+    if mode == "device":
+        return potential
+
+    i, j = contact.diagonal_inds[0], contact.upper_inds[1]
+    start = int(block_offsets[min(i, j)])
+    stop = int(block_offsets[max(i, j) + 1])
+    block_size = int(block_offsets[i + 1] - block_offsets[i])
+
+    lead_potential = potential.copy()
+
+    if mode == "average":
+        # The outermost layer is the first one in the contact's order.
+        layer_size = block_size // contact.transport_repetitions
+        layer = order_vector(potential[start:stop], contact.order)[:layer_size]
+        lead_potential[start:stop] = layer.mean()
+        return lead_potential
+
+    if mode == "unit-cell":
+        # NOTE: Equivalent orbitals have the same position in the index
+        # arrays of the different unit cells.
+        cells = contact.unit_cell_orbital_indices
+        cell_potential = potential[cells[0, 0, 0] - global_offset]
+
+        num_layers = contact.transport_repetitions
+        ny, nz = contact.transverse_repetition_grid
+        # Direction from the outermost block into the device.
+        inward_shift = block_size if j > i else -block_size
+        for layer, k, l in np.ndindex(num_layers, ny, nz):
+            inds = cells[layer, k, l] - global_offset
+            lead_potential[inds] = cell_potential
+            lead_potential[inds + inward_shift] = cell_potential
+        return lead_potential
+
+    raise ValueError(f"Unknown lead potential: {mode}.")
+
+
 class SystemMatrix(_StackView):
     """Class representing the system matrix for the electron solver.
 
@@ -346,6 +419,32 @@ class SystemMatrix(_StackView):
                 else None
             ),
             self._potential,
+        )
+
+    def with_potential(self, potential: NDArray) -> "SystemMatrix":
+        """Returns the same system matrix with a different potential.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The potential of the new system matrix.
+
+        Returns
+        -------
+        SystemMatrix
+            The new system matrix. The original one is not changed.
+
+        """
+        return SystemMatrix(
+            self._stack_shape,
+            self._stack_index,
+            self._energies,
+            self._hamiltonian,
+            self._overlap,
+            self._sse_lesser,
+            self._sse_greater,
+            self._sse_retarded_hermitian,
+            potential,
         )
 
     def __getattr__(self, name: str):
@@ -695,6 +794,8 @@ class ElectronSolver(SubsystemSolver):
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
+        self.lead_potential = config.electron.lead_potential
+
         self.compute_meir_wingreen_current = config.outputs.meir_wingreen_currents
         self.compute_device_current = config.outputs.device_currents
 
@@ -819,11 +920,24 @@ class ElectronSolver(SubsystemSolver):
         upper_inds = contact.upper_inds
         inverse_order = get_inverse_order(order)
 
+        system_matrix = self.system_matrix
+        if self.lead_potential != "device":
+            hamiltonians = self.device.hamiltonians
+            system_matrix = system_matrix.with_potential(
+                get_lead_potential(
+                    system_matrix._potential,
+                    contact,
+                    block_offsets=hamiltonians.local_block_offsets,
+                    global_offset=hamiltonians.global_block_offset,
+                    mode=self.lead_potential,
+                )
+            )
+
         m_10, m_00, m_01 = periodize_layer(
             (
-                order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
-                order_block(self.system_matrix.blocks[*diagonal_inds], order),
-                order_block(self.system_matrix.blocks[*upper_inds], order),
+                order_block(system_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(system_matrix.blocks[*diagonal_inds], order),
+                order_block(system_matrix.blocks[*upper_inds], order),
             ),
             block_sections=block_sections,
         )

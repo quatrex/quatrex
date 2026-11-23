@@ -1182,6 +1182,38 @@ class ElectronConfig(BaseModel):
 
     """
 
+    lead_potential: Literal["device", "unit-cell", "average"] = "device"
+    """The electrostatic potential in the leads, i.e., in the computation
+    of the open boundary conditions.
+
+    - `"device"` (the default): The matrix elements of the outermost
+      layer of the device are repeated. The coupling to the next layers
+      includes the potential of these layers, such that the potential
+      in the lead is not strictly periodic.
+    - `"unit-cell"`: The potential of the first (left contact) or last
+      (right contact) unit cell of the contact is repeated. This keeps
+      the variation of the potential within the unit cell.
+    - `"average"`: The average of the potential over the orbitals of the
+      outermost layer. This removes any variation of the potential in
+      the lead, also physical ones (e.g. over the cross-section of a
+      nanowire).
+
+    A variation of the potential between nominally equivalent atoms can
+    open a small gap in the leads (e.g. in graphene). In self-consistent
+    Schrödinger-Poisson runs, the edge of such a gap can cross a point
+    of the energy grid from one iteration to the next, such that the
+    loop does not converge. `"average"` removes the gap, while
+    `"unit-cell"` does not.
+
+    The potential in the device is not changed, so `"unit-cell"` and
+    `"average"` can leave a small potential step between the device and
+    the leads.
+
+    This is only used if [`formalism`](quatrex#formalism) is set to
+    "negf".
+
+    """
+
     dos_peak_limit: PositiveFloat = 100.0
     """The maximum derivative of the density of states (DOS) with
     respect to energy.

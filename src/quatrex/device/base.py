@@ -3,7 +3,6 @@
 """Includes the base device class for electronic transport calculations."""
 
 import warnings
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -14,9 +13,55 @@ from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.contact import BaseContact
-from quatrex.core.config import QuatrexConfig
+from quatrex.core.config import DeviceConfig, QuatrexConfig
 from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
 from quatrex.grid import monkhorst_pack
+
+
+def map_potential_to_orbitals(
+    potential: NDArray,
+    atomic_species: NDArray,
+    device_config: DeviceConfig,
+) -> NDArray:
+    """Maps a potential to the (spin-)orbital basis of the device.
+
+    The potential can be given per atom, per spatial orbital (only
+    distinguished from per (spin-)orbital if spin is treated
+    explicitly), or per (spin-)orbital.
+
+    Parameters
+    ----------
+    potential : NDArray
+        The potential.
+    atomic_species : NDArray
+        Array of atom symbols for each atom.
+    device_config : DeviceConfig
+        The device configuration.
+
+    Returns
+    -------
+    NDArray
+        The potential for each (spin-)orbital.
+
+    """
+    potential = xp.asarray(potential)
+    orbitals_per_atom = [device_config.orbitals_per_atom(s) for s in atomic_species]
+    num_orbitals = sum(orbitals_per_atom)
+    num_spin_channels = device_config.num_spin_channels
+
+    # NOTE: If atom species is only 'X', then we still repeat.
+    if potential.shape[0] == len(atomic_species):
+        return xp.repeat(potential, orbitals_per_atom, axis=0)
+    if potential.shape[0] == num_orbitals:
+        return potential
+    if num_spin_channels > 1 and potential.shape[0] * num_spin_channels == num_orbitals:
+        return xp.repeat(potential, num_spin_channels, axis=0)
+
+    raise ValueError(
+        f"Potential shape {potential.shape} does not match the number of "
+        f"atoms ({len(atomic_species)}) or orbitals "
+        f"({num_orbitals // num_spin_channels} spatial, {num_orbitals} total)."
+    )
 
 
 class BaseDevice:
@@ -81,12 +126,12 @@ class BaseDevice:
         self.atom_coordinates = get_host(self.atom_coordinates)
 
         self._init_orbitals()
+        self.num_spatial_orbitals = self._count_input_spatial_orbitals()
 
         self.potential = self._load_potential(
             self.config.input_dir,
-            self.atom_coordinates,
             self.atomic_species,
-            self.device_config.num_orbitals_per_atom,
+            self.device_config,
         )
 
         self.kpoints = monkhorst_pack(
@@ -105,60 +150,42 @@ class BaseDevice:
     @staticmethod
     def _load_potential(
         input_dir: Path,
-        atom_coordinates: NDArray,
         atomic_species: NDArray,
-        num_orbitals_per_atom: dict[str, int],
+        device_config: DeviceConfig,
     ) -> NDArray:
         """Loads electrostatic potential data from input files.
 
         Attempts to load the electrostatic potential from potential.npy
         in the input directory. The potential can be provided either at
-        the atomic level or at the orbital level.
+        the atomic level or at the orbital level (see
+        `map_potential_to_orbitals`).
 
         Parameters
         ----------
         input_dir : Path
             Directory containing the `potential.npy` file.
-        atom_coordinates : NDArray
-            Array of atomic coordinates.
         atomic_species : NDArray
             Array of atom symbols for each atom. NOTE: This array is
             always on the host since CuPy does not support string
             arrays.
-        num_orbitals_per_atom : dict[str, int]
-            Dictionary mapping atomic species to the number of orbitals
-            per atom.
+        device_config : DeviceConfig
+            The device configuration.
 
         Returns
         -------
         NDArray
             The electrostatic potential array. If no potential file is
             found, returns an array of zeros with length equal to the
-            total number of orbitals.
-
+            total number of (spin-)orbitals.
 
         """
-        orbitals_per_atom = [
-            num_orbitals_per_atom.get(species, 1) for species in atomic_species
-        ]
-        num_orbitals = np.sum(np.array(orbitals_per_atom))
-
         try:
             potential = distributed_load(input_dir / "potential.npy")
-
-            # NOTE: If atom species is only 'X', then we still repeat.
-            if potential.shape[0] == atom_coordinates.shape[0]:
-                # Upscale the potential to the number of orbitals
-                potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-            elif potential.shape[0] != num_orbitals:
-                raise ValueError(
-                    "Potential shape does not match number of atoms or orbitals."
-                )
-
         except FileNotFoundError:
-            potential = xp.zeros(num_orbitals)
+            num_orbitals = sum(map(device_config.orbitals_per_atom, atomic_species))
+            return xp.zeros(num_orbitals)
 
-        return potential
+        return map_potential_to_orbitals(potential, atomic_species, device_config)
 
     @staticmethod
     def _load_structure(
@@ -192,9 +219,7 @@ class BaseDevice:
             structure_file
         )
 
-        orbitals_per_atom = [
-            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
-        ]
+        orbitals_per_atom = [config.device.orbitals_per_atom(s) for s in atomic_species]
         atom_coordinates = xp.asarray(atom_coordinates)
         orbital_coordinates = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
 
@@ -239,14 +264,35 @@ class BaseDevice:
 
         """
         orbitals_per_atom = np.fromiter(
-            map(
-                defaultdict(lambda: 1, self.device_config.num_orbitals_per_atom).get,
-                self.atomic_species,
-            ),
+            map(self.device_config.orbitals_per_atom, self.atomic_species),
             dtype=np.int32,
         )
         # Create a vector with the starting orbital for each atom
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
+
+    def _count_input_spatial_orbitals(self) -> int:
+        """Counts the spatial orbitals that the input matrices refer to.
+
+        This is the number of orbitals (without spin) in the structure
+        file, i.e., in the unit cell if the device is constructed from
+        it.
+
+        Returns
+        -------
+        int
+            The number of spatial orbitals in the input structure.
+
+        """
+        num_spatial_orbitals = (
+            self.orbital_offsets[-1] // self.device_config.num_spin_channels
+        )
+        if self.device_config.construct_from_unit_cell:
+            transport_ind = "abc".index(self.device_config.transport_direction)
+            num_spatial_orbitals //= (
+                self.device_config.num_transport_cells
+                * self.device_config.neighbor_cell_cutoff[transport_ind]
+            )
+        return int(num_spatial_orbitals)
 
     def _validate_contacts(self):
         """Validates that all required contact parameters are set.

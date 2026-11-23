@@ -77,9 +77,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.energies = coulomb_screening_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.ne = len(self.energies)
+        # NOTE: Without explicit spin, the polarization includes the
+        # spin sum, i.e. a factor of 2 (-2j / (2 pi) = -1j / pi). With
+        # explicit spin, the spin sum is part of the Coulomb matrix
+        # (V ⊗ ones((2, 2))).
         self.prefactor = (
             -1j
-            / (xp.pi)
+            * config.device.spin_degeneracy
+            / (2 * xp.pi)
             * xp.abs(get_equal_spacing(self.energies))
             / self.kpoint_volume
         )

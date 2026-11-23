@@ -160,6 +160,7 @@ def test_qtbm_spectral_dos_consistent_with_charge_density():
     potential = rng.uniform(-0.1, 0.1, num_orbitals)
 
     qtbm = SimpleNamespace(
+        config=SimpleNamespace(device=SimpleNamespace(spin_degeneracy=2)),
         observables=SimpleNamespace(electron_ldos=ldos),
         electron_energies=energies,
         num_orbitals=num_orbitals,
@@ -335,7 +336,9 @@ def test_scba_spectral_dos():
             hole_density=spectral_function * (1 - occupation),
         ),
         electron_energies=energies,
-        data=SimpleNamespace(orbitals_per_atom=orbitals_per_atom),
+        data=SimpleNamespace(
+            orbital_offsets=np.hstack(([0], np.cumsum(orbitals_per_atom)))
+        ),
         device=SimpleNamespace(contacts=contacts, potential=potential),
     )
     scba._reference_contact = lambda: SCBA._reference_contact(scba)

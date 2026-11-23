@@ -428,6 +428,7 @@ def _monkhorst_pack(
     symmetry_reduction: bool = False,
     structure: ase.Atoms | None = None,
     time_reversal: bool = True,
+    operations: list[SymmetryOperation] | None = None,
 ) -> NDArray:
     """Constructs a Monkhorst-Pack grid of k-points.
 
@@ -454,6 +455,10 @@ def _monkhorst_pack(
     time_reversal : bool, optional
         If True, time-reversal symmetry is considered when determining
         the irreducible k-points. Default is True.
+    operations : list[SymmetryOperation], optional
+        The symmetry operations to use instead of the ones determined
+        from the structure. The identity must be the first one. Default
+        is None.
 
     Returns
     -------
@@ -494,10 +499,12 @@ def _monkhorst_pack(
     if not symmetry_reduction:
         return kpoints
 
-    if structure is None:
-        raise ValueError("A `structure` is required when `irreducible` is set to True.")
-
-    operations = collect_symmetry_operations(structure, 0, time_reversal)
+    if operations is None:
+        if structure is None:
+            raise ValueError(
+                "A `structure` is required when `irreducible` is set to True."
+            )
+        operations = collect_symmetry_operations(structure, 0, time_reversal)
 
     # image_maps[o, i] is the flat grid index of operation o applied to k-point i.
     grid_operations: list[SymmetryOperation] = []
@@ -571,6 +578,10 @@ class KGrid:
     time_reversal : bool, optional
         If True, time-reversal symmetry is considered when determining
         the irreducible k-points. Default is True.
+    operations : list[SymmetryOperation], optional
+        The symmetry operations to use instead of the ones determined
+        from the structure, e.g. if only some of them are supported. The
+        identity must be the first one. Default is None.
 
     """
 
@@ -582,6 +593,7 @@ class KGrid:
         symmetry_reduction: bool = False,
         structure: ase.Atoms | None = None,
         time_reversal: bool = True,
+        operations: list[SymmetryOperation] | None = None,
     ) -> None:
         """Initializes the k-points."""
         if symmetry_reduction:
@@ -590,7 +602,7 @@ class KGrid:
                 reduce_mapping,
                 expand_mapping,
                 multiplicities,
-                operations,
+                grid_operations,
                 operation_indices,
             ) = _monkhorst_pack(
                 size=size,
@@ -599,6 +611,7 @@ class KGrid:
                 symmetry_reduction=True,
                 structure=structure,
                 time_reversal=time_reversal,
+                operations=operations,
             )
             irreducible_points = full_points[reduce_mapping]
         else:
@@ -610,7 +623,7 @@ class KGrid:
                 structure=structure,
                 time_reversal=time_reversal,
             )
-            reduce_mapping = expand_mapping = irreducible_points = operations = (
+            reduce_mapping = expand_mapping = irreducible_points = grid_operations = (
                 operation_indices
             ) = None
             multiplicities = np.ones(len(full_points), dtype=int)
@@ -620,7 +633,7 @@ class KGrid:
         self._reduce_mapping = reduce_mapping
         self._expand_mapping = expand_mapping
         self._multiplicities = multiplicities
-        self._operations = operations
+        self._operations = grid_operations
         self._operation_indices = operation_indices
 
         self.num_full_points = len(full_points)
@@ -635,6 +648,15 @@ class KGrid:
         self.gamma_centered = gamma_centered
         self.symmetry_reduction = symmetry_reduction
         self.time_reversal = time_reversal
+
+    @property
+    def operations(self) -> list[SymmetryOperation] | None:
+        """Returns the symmetry operations that preserve the grid.
+
+        This is None if symmetry reduction is disabled.
+
+        """
+        return self._operations
 
     @property
     def points(self) -> NDArray:

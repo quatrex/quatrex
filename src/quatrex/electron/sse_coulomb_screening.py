@@ -404,7 +404,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
 
                     # Add empty dimensions for k-point.
-                    energy_differences = (self.energies - self.energies[0])[:, None]
+                    energy_differences = (self.energies - self.energies[0])[:, None, None]
                     # Set energy differences to inf at the singularity
                     # to avoid division by zero.
                     energy_differences[0] = np.inf

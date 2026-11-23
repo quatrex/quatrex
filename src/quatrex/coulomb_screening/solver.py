@@ -23,6 +23,7 @@ from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.device import SCBADevice
+from quatrex.grid.orbit_packing import OrbitPacking
 
 profiler = Profiler()
 
@@ -608,7 +609,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                     contact=contact,
                 )
 
-    def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
+    def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> NDArray:
         """Filters out peaks in the Green's functions.
 
         Parameters
@@ -616,6 +617,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         out : tuple[DSDBSparse, ...]
             The Green's function tuple. In the order (lesser, greater,
             retarded).
+
+        Returns
+        -------
+        local_mask : NDArray
+            The local energies and q-points that were filtered.
 
         """
 
@@ -660,6 +666,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         w_lesser.data[local_mask] = 0.0
         w_greater.data[local_mask] = 0.0
 
+        return local_mask
+
     @profiler.profile(label="CoulombScreeningSolver", level="default", comm=comm)
     def solve(
         self,
@@ -667,6 +675,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         p_greater: DSDBSparse,
         p_retarded_hermitian: DSDBSparse,
         out: tuple[DSDBSparse, ...],
+        packing: OrbitPacking | None = None,
+        packed_out: tuple[NDArray, NDArray] | None = None,
     ) -> None:
         """Solves for the screened Coulomb interaction.
 
@@ -682,6 +692,13 @@ class CoulombScreeningSolver(SubsystemSolver):
         out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
             retarded).
+        packing : OrbitPacking, optional
+            If provided, the lesser and greater screened interactions
+            are also packed during the backward sweep.
+        packed_out : tuple[NDArray, NDArray], optional
+            The packed lesser and greater interactions, shape
+            (num_local_energies, num_representatives). Required if
+            `packing` is provided.
 
         """
 
@@ -789,6 +806,18 @@ class CoulombScreeningSolver(SubsystemSolver):
                     out_g.stack[batch_slice],
                 )
 
+                callbacks = None
+                if packing is not None:
+                    for packed in packed_out:
+                        packed[batch_slice] = 0.0
+                    callbacks = [
+                        packing.callback(
+                            *(packed[batch_slice] for packed in packed_out),
+                            block_offsets=out_l.block_offsets,
+                            signed=False,
+                        )
+                    ]
+
                 # Solve the system
                 if comm.block.size > 1:
                     self.solver_dist.selected_solve(
@@ -798,6 +827,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                         obc_blocks=self.obc_blocks,
                         out=out_slice,
                         return_retarded=False,
+                        callbacks=callbacks,
                     )
 
                 else:
@@ -808,6 +838,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                         obc_blocks=self.obc_blocks,
                         out=out_slice,
                         return_retarded=False,
+                        callbacks=callbacks,
                     )
 
         with profiler.profile_range(
@@ -815,7 +846,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         ):
             # Only filter the peaks for the first few iterations.
             if self.solve_call_count < self.filtering_iteration_limit:
-                self._filter_peaks(out)
+                mask = self._filter_peaks(out)
+                if packing is not None:
+                    # The filter acts on single q-points.
+                    mask = mask.any(axis=tuple(range(1, mask.ndim)))
+                    for packed, matrix in zip(packed_out, out):
+                        packing.accumulate_matrix(packed, matrix, False, mask)
 
             self.system_matrix.free_data()
             self.l_lesser.free_data()
@@ -825,5 +861,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             if comm.stack.rank == 0:
                 w_greater.data[0, :] = 0.0
                 w_lesser.data[0, :] = 0.0
+                if packing is not None:
+                    for packed in packed_out:
+                        packed[0] = 0.0
 
         self.solve_call_count += 1

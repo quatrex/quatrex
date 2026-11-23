@@ -22,6 +22,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.device import SCBADevice
+from quatrex.grid.orbit_packing import OrbitPacking
 
 profiler = Profiler()
 
@@ -808,7 +809,7 @@ class ElectronSolver(SubsystemSolver):
             ],
         )
 
-    def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
+    def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> NDArray:
         """Filters out peaks in the Green's functions.
 
         Parameters
@@ -816,6 +817,11 @@ class ElectronSolver(SubsystemSolver):
         out : tuple[DSDBSparse, ...]
             The Green's function tuple. In the order (lesser, greater,
             retarded).
+
+        Returns
+        -------
+        local_mask : NDArray
+            The local energies and k-points that were filtered.
 
         """
         g_lesser, g_greater, g_retarded = out
@@ -850,6 +856,8 @@ class ElectronSolver(SubsystemSolver):
         g_greater.data[local_mask] = 0.0
         g_retarded.data[local_mask] = 0.0
 
+        return local_mask
+
     @profiler.profile(label="ElectronSolver", level="default", comm=comm)
     def solve(
         self,
@@ -857,6 +865,8 @@ class ElectronSolver(SubsystemSolver):
         sse_greater: DSDBSparse,
         sse_retarded_hermitian: DSDBSparse,
         out: tuple[DSDBSparse, ...],
+        packing: OrbitPacking | None = None,
+        packed_out: tuple[NDArray, NDArray] | None = None,
     ):
         """Solves for the electron Green's function.
 
@@ -871,6 +881,13 @@ class ElectronSolver(SubsystemSolver):
         out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
             retarded).
+        packing : OrbitPacking, optional
+            If provided, the lesser and greater Green's functions are
+            also packed during the backward sweep.
+        packed_out : tuple[NDArray, NDArray], optional
+            The packed lesser and greater Green's function, shape
+            (num_local_energies, num_representatives). Required if
+            `packing` is provided.
 
         """
 
@@ -959,6 +976,17 @@ class ElectronSolver(SubsystemSolver):
                         )
                     )
 
+                if packing is not None:
+                    for packed in packed_out:
+                        packed[batch_slice] = 0.0
+                    callback_list.append(
+                        packing.callback(
+                            *(packed[batch_slice] for packed in packed_out),
+                            block_offsets=out_l.block_offsets,
+                            signed=True,
+                        )
+                    )
+
                 solver.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_batch,
@@ -994,6 +1022,11 @@ class ElectronSolver(SubsystemSolver):
             label="ElectronSolver: Filter", level="default", comm=comm
         ):
             if self.call_count < self.filtering_iteration_limit:
-                self._filter_peaks(out)
+                mask = self._filter_peaks(out)
+                if packing is not None:
+                    # The filter acts on single k-points.
+                    mask = mask.any(axis=tuple(range(1, mask.ndim)))
+                    for packed, matrix in zip(packed_out, out):
+                        packing.accumulate_matrix(packed, matrix, True, mask)
 
         self.call_count += 1

@@ -416,16 +416,17 @@ def _create_matrix_from_unit_cells(
 def _wrap_matrix_dict(
     matrix_dict: dict,
     cell_offsets: NDArray,
-    max_coords: np.ndarray,
     transport_ind: int,
 ):
     """Modifies matrix_dict and cell_offsets"""
 
     max_cell_offset = xp.max(xp.abs(cell_offsets))
+    keys = np.array(list(matrix_dict.keys()))
+    max_coords = keys.max(axis=0)
     max_transport_coord = max_coords[transport_ind]
     if max_cell_offset > max_transport_coord:
         raise ValueError(
-            "The unit cell matrix values could not be wrapped: Not enough cell-cell interactions have been provided to reconstruct them, not even in the home cell"
+            "The unit cell matrix values cannot be wrapped: Not enough cell-cell interactions have been provided to reconstruct them, not even in the home cell"
         )
 
     for wrapped_atom_index, cell_offset in enumerate(cell_offsets):
@@ -487,6 +488,56 @@ def _wrap_matrix_dict(
     )
 
 
+def _check_matrix_dict(matrix_dict: dict, *, neighbor_cell_cutoff) -> None:
+    if (0, 0, 0) not in matrix_dict:
+        raise ValueError(
+            f"Expected to find a key [0,0,0] in the `matrix_dict`, but it was not found. "
+            f"Available keys: {list(matrix_dict.keys())}"
+        )
+
+    # assert that the keys form a complete grid
+    keys = np.array(list(matrix_dict.keys()))
+    max_coords = keys.max(axis=0)
+
+    if not np.all(keys.min(axis=0) == -max_coords):
+        raise ValueError(
+            f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
+            f"but found min_coords={keys.min(axis=0)} and max_coords={max_coords}."
+        )
+
+    for coord in matrix_dict:
+        opposite_coord = tuple(-c for c in coord)
+        if opposite_coord not in matrix_dict:
+            raise ValueError(
+                f"Expected to find the opposite coordinate {opposite_coord} for {coord} in the matrix_dict, "
+                f"but it was not found. Available keys: {list(matrix_dict.keys())}"
+            )
+
+    # assert that more than the neighbor cell cutoff is available if the cutoff is requested
+    if neighbor_cell_cutoff is not None and any(
+        max_coords[i] < neighbor_cell_cutoff[i] for i in range(3)
+    ):
+        raise ValueError(
+            "Matrix contains fewer neighbor cells than requested."
+            f"({max_coords=}, {neighbor_cell_cutoff=})"
+        )
+
+    # assert that the matrix_dict have the same shape
+    matrix_shape = matrix_dict[(0, 0, 0)].shape
+    matrix_type = type(matrix_dict[(0, 0, 0)])
+    for coord, matrix in matrix_dict.items():
+        if matrix.shape != matrix_shape:
+            raise ValueError(
+                f"Matrix at coordinate {coord} has shape {matrix.shape}, "
+                f"but expected shape is {matrix_shape}."
+            )
+        if not isinstance(matrix, matrix_type):
+            raise TypeError(
+                f"Matrix at coordinate {coord} has type {type(matrix)}, "
+                f"but expected type is {matrix_type}."
+            )
+
+
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
@@ -517,50 +568,22 @@ def load_matrices(
     """
 
     # load the matrices
+    if config.input_dir is None:
+        raise ValueError("Input directory not specified")
     matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
-
-    if (0, 0, 0) not in matrix_dict:
-        raise ValueError(
-            f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
-            f"Available keys: {list(matrix_dict.keys())}"
+    if not isinstance(matrix_dict, dict):
+        raise TypeError(
+            f"Expected the loaded matrix to be a Dictionary, got {type(matrix_dict)}."
         )
-
-    # assert that the keys form a complete grid,
-    keys = np.array(list(matrix_dict.keys()))
-    max_coords = keys.max(axis=0)
-
-    if not np.all(keys.min(axis=0) == -max_coords):
-        raise ValueError(
-            f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
-            f"but found min_coords={keys.min(axis=0)} and max_coords={max_coords}."
-        )
-
-    validated_coords = set((0, 0, 0))
-    for coord in matrix_dict:
-        if coord in validated_coords:
-            continue
-        opposite_coord = tuple(-c for c in coord)
-        if opposite_coord not in matrix_dict:
-            raise ValueError(
-                f"Expected to find the opposite coordinate {opposite_coord} for {coord} in the matrix_dict, "
-                f"but it was not found. Available keys: {list(matrix_dict.keys())}"
-            )
-        validated_coords.update([coord, opposite_coord])
+    _check_matrix_dict(
+        matrix_dict, neighbor_cell_cutoff=config.device.neighbor_cell_cutoff
+    )
 
     # NOTE: for closed systems, `transport_direction` will be None
     transport_ind = "abc".index(config.device.transport_direction)
 
     if cell_offsets is not None:
-        _wrap_matrix_dict(matrix_dict, cell_offsets, max_coords, transport_ind)
-
-    # assert that more than the neighbor cell cutoff is available if the cutoff is requested
-    if config.device.neighbor_cell_cutoff is not None and any(
-        max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)
-    ):
-        raise ValueError(
-            "Matrix contains fewer neighbor cells than requested."
-            f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
-        )
+        _wrap_matrix_dict(matrix_dict, cell_offsets, transport_ind)
 
     # drop half the matrices
     # NOTE: this is done on the CPU
@@ -568,21 +591,6 @@ def load_matrices(
         coord: np.triu(matrix) if isinstance(matrix, np.ndarray) else sps.triu(matrix)
         for coord, matrix in matrix_dict.items()
     }
-
-    # assert that the matrix_dict have the same shape
-    matrix_shape = matrix_dict[(0, 0, 0)].shape
-    matrix_type = type(matrix_dict[(0, 0, 0)])
-    for coord, matrix in matrix_dict.items():
-        if matrix.shape != matrix_shape:
-            raise ValueError(
-                f"Matrix at coordinate {coord} has shape {matrix.shape}, "
-                f"but expected shape is {matrix_shape}."
-            )
-        if not isinstance(matrix, matrix_type):
-            raise TypeError(
-                f"Matrix at coordinate {coord} has type {type(matrix)}, "
-                f"but expected type is {matrix_type}."
-            )
 
     # drop keys outside the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:
@@ -594,6 +602,10 @@ def load_matrices(
                 for i, c in enumerate(coord)
             )
         }
+
+    _check_matrix_dict(
+        matrix_dict, neighbor_cell_cutoff=config.device.neighbor_cell_cutoff
+    )
 
     # transfer the matrix_dict to the GPU
     if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):

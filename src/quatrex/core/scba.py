@@ -11,6 +11,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.comm import comm, distributed_max
+from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
@@ -526,6 +527,34 @@ class SCBA(TransportSolver):
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
+    def _electron_density(
+        self, x: DSDBSparse, overlap_density: NDArray | None
+    ) -> NDArray:
+        """Computes the spectral density of a Green's function.
+
+        Parameters
+        ----------
+        x : DSDBSparse
+            The (lesser or greater) Green's function.
+        overlap_density : NDArray | None
+            The local density in a non-orthogonal basis, if the electron
+            solver computed it.
+
+        Returns
+        -------
+        NDArray
+            The density on all energies.
+
+        """
+        if overlap_density is None:
+            return density(x, self.device.overlap_matrices)
+
+        # NOTE: Preferred, since the stored Green's functions are
+        # truncated to the interaction cutoff, but the overlap is not.
+        return comm.stack.all_gather_v(
+            overlap_density, axis=0, mask=x._stack_padding_mask
+        )
+
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
@@ -551,15 +580,13 @@ class SCBA(TransportSolver):
             ) / (2 * xp.pi)
             self.observables.electron_ldos *= 2  # Spin
         if self.config.outputs.electron_density:
-            self.observables.electron_density = density(
-                self.data.g_lesser,
-                self.device.overlap_matrices,
+            self.observables.electron_density = self._electron_density(
+                self.data.g_lesser, self.electron_solver.lesser_density
             ) / (2 * xp.pi)
             self.observables.electron_density *= 2  # Spin
         if self.config.outputs.hole_density:
-            self.observables.hole_density = -density(
-                self.data.g_greater,
-                self.device.overlap_matrices,
+            self.observables.hole_density = -self._electron_density(
+                self.data.g_greater, self.electron_solver.greater_density
             ) / (2 * xp.pi)
             self.observables.hole_density *= 2  # Spin
 

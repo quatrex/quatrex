@@ -12,6 +12,7 @@ for NEGF. The equilibrium cases therefore also cross-check these.
 """
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +63,12 @@ class CrossCheckCase:
     scba_iterations_per_step : int, optional
         If set, checks that the NEGF run performed this many SCBA
         iterations per Schrödinger-Poisson iteration.
+    rtol : list[float], optional
+        The tolerances for each iteration, relative to the maximum
+        value.
+    max_iterations : int, optional
+        If set, overrides the number of Schrödinger-Poisson iterations
+        of the example.
 
     """
 
@@ -70,6 +77,8 @@ class CrossCheckCase:
     common: list[tuple[str, str]] = field(default_factory=list)
     negf: list[tuple[str, str]] = field(default_factory=list)
     scba_iterations_per_step: int | None = None
+    rtol: list[float] | None = None
+    max_iterations: int | None = None
 
 
 CNT_NEGF = [
@@ -124,7 +133,6 @@ CASES = [
             common=[
                 # Reduced settings to keep the test affordable.
                 ("kpoint_grid = [1, 3, 1]", "kpoint_grid = [1, 1, 1]"),
-                ("max_iterations = 10", "max_iterations = 2"),
                 ("energy_window_num = 241", "energy_window_num = 61"),
                 ('density_model = "graphene"', 'density_model = "ldos"'),
                 ("voltage = -0.05", "voltage = 0.0"),
@@ -152,22 +160,17 @@ CASES = [
                 ),
                 ("[scsp]", BALLISTIC_SCBA),
             ],
+            max_iterations=2,
+            # NOTE: From the second iteration on, the potential is not
+            # exactly periodic in the leads, where the formalisms then
+            # differ in how they construct the periodic lead. The
+            # resulting difference is concentrated at the Dirac point.
+            rtol=[1e-5, 5e-3],
         ),
         id="graphene-equilibrium-ldos",
         marks=[
             pytest.mark.skipif(
                 not RUN_SLOW, reason="Slow (~20 min), set QUATREX_RUN_SLOW_TESTS=1."
-            ),
-            # NOTE: For this non-orthogonal basis with transverse
-            # periodic images, the NEGF spectral function integrates to
-            # ~6% more states than the QTBM LDOS (which matches the band
-            # structure), uniformly in the device. The overlap used in
-            # the NEGF density seems to be inconsistent with the one in
-            # its system matrix. Remove the xfail once fixed.
-            pytest.mark.xfail(
-                strict=True,
-                reason="NEGF overlap-weighted density overcounts states "
-                "for non-orthogonal bases with transverse periodicity.",
             ),
         ],
     ),
@@ -204,17 +207,26 @@ def test_ballistic_scsp_qtbm_negf(
         config_path = tmp_path / formalism / "quatrex_config.toml"
         config_path.parent.mkdir()
         adjust_config_paths(example_config, config_path)
-        config_path.write_text(_apply(config_path.read_text(), replacements))
+        config_text = config_path.read_text()
+        if case.max_iterations is not None:
+            config_text, num_replaced = re.subn(
+                r"(?m)^max_iterations = \d+$",
+                f"max_iterations = {case.max_iterations}",
+                config_text,
+            )
+            assert num_replaced == 1
+        config_path.write_text(_apply(config_text, replacements))
         outputs[formalism] = _run(config_path)
 
-    for iteration in range(1, case.num_iterations + 1):
+    rtols = case.rtol or [1e-5] * case.num_iterations
+    for iteration, rtol in enumerate(rtols, start=1):
         for name in ("real_space_charge_density", "real_space_potential"):
             wf = np.load(outputs["wf"] / f"{name}_{iteration}.npy")
             negf = np.load(outputs["negf"] / f"{name}_{iteration}.npy")
 
             # Guard against a trivially passing comparison.
             assert np.abs(wf).max() > 1e-4, f"{name}_{iteration} is ~zero."
-            assert np.allclose(negf, wf, rtol=0, atol=1e-5 * np.abs(wf).max()), (
+            assert np.allclose(negf, wf, rtol=0, atol=rtol * np.abs(wf).max()), (
                 f"{name}_{iteration}: max deviation "
                 f"{np.abs(negf - wf).max():.3e}, max value {np.abs(wf).max():.3e}"
             )

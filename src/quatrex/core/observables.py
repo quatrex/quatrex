@@ -139,6 +139,7 @@ def current_conservation(
     x_greater: DSDBSparse,
     sse_lesser: DSDBSparse,
     sse_greater: DSDBSparse,
+    kpoint_weights: NDArray | None = None,
 ) -> tuple[NDArray, NDArray]:
     r"""Checks current conservation.
 
@@ -172,6 +173,9 @@ def current_conservation(
         The lesser interaction self-energy.
     sse_greater : DSDBSparse
         The greater interaction self-energy.
+    kpoint_weights : NDArray, optional
+        The weights of the k-points, i.e. their multiplicities if only
+        the irreducible k-points are included.
 
     Returns
     -------
@@ -183,8 +187,11 @@ def current_conservation(
     # only store the upper triangular part of the Green's functions and
     # self-energies. If symmetry is off and we sum the whole tensor, the
     # imaginary part of this sum is around machine epsilon as expected.
-    in_scattering = xp.sum(xp.real(sse_lesser.data * -x_greater.data.conj()))
-    out_scattering = xp.sum(xp.real(sse_greater.data * -x_lesser.data.conj()))
+    weights = 1.0
+    if kpoint_weights is not None:
+        weights = xp.asarray(kpoint_weights)[:, None]
+    in_scattering = xp.sum(weights * xp.real(sse_lesser.data * -x_greater.data.conj()))
+    out_scattering = xp.sum(weights * xp.real(sse_greater.data * -x_lesser.data.conj()))
 
     sendbuf = xp.array([in_scattering, out_scattering], dtype=xp.float64)
     recvbuf_block = xp.empty_like(sendbuf)

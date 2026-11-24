@@ -1853,6 +1853,43 @@ class DeviceConfig(BaseModel):
 
     """
 
+    orbital_labels: (
+        dict[
+            str,
+            list[
+                Literal[
+                    "s",
+                    "s*",
+                    "px",
+                    "py",
+                    "pz",
+                    "dxy",
+                    "dyz",
+                    "dzx",
+                    "dx2y2",
+                    "dz2",
+                ]
+            ],
+        ]
+        | None
+    ) = None
+    """The real orbitals of each atom type, in Hamiltonian order.
+
+    For example, `{ "Si" = ["s", "px", "py", "pz", "s*"] }`. The atom
+    types and the number of orbitals must match
+    [`num_orbitals_per_atom`](#num_orbitals_per_atom).
+
+    This determines how the orbitals transform under the symmetry
+    operations of the device. In NEGF calculations with
+    [`kpoint_symmetry_reduction`](#kpoint_symmetry_reduction) the
+    interactions are then computed from the symmetry-unique elements
+    only. Operations that mix orbitals are not used.
+
+    If this is not given, the matrices at symmetry-equivalent k-points
+    are assumed to be identical, which is not true in general.
+
+    """
+
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     """The kpoint grid on which to compute transport quantities.
 
@@ -1878,6 +1915,26 @@ class DeviceConfig(BaseModel):
     high-symmetry systems. 
 
     """
+    kpoint_symmetry_tolerance: PositiveFloat = 1e-3
+    """The tolerance (in eV) for the symmetry of the input matrices.
+
+    The Hamiltonian, the Coulomb matrix, and the potential need to be
+    invariant under the symmetry operations of the structure. This is
+    only checked if [`orbital_labels`](#orbital_labels) are given.
+
+    """
+
+    @model_validator(mode="after")
+    def check_orbital_labels(self) -> Self:
+        """Checks that the orbital labels match the orbitals per atom."""
+        for species, labels in (self.orbital_labels or {}).items():
+            num_orbitals = self.num_orbitals_per_atom.get(species, 1)
+            if len(labels) != num_orbitals:
+                raise ValueError(
+                    f"Got {len(labels)} orbital labels for '{species}', "
+                    f"which has {num_orbitals} orbitals per atom."
+                )
+        return self
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

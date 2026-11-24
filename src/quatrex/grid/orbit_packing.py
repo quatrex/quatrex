@@ -18,6 +18,7 @@ information, so that only one representative per orbit is needed.
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import ase
 import numpy as np
 
 from qttools import NDArray, xp
@@ -26,7 +27,14 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import BackSubstitutionContext
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import get_section_sizes
-from quatrex.grid.kpoints import DeviceSymmetry, KGrid, SymmetryOperation
+from quatrex.grid.kpoints import (
+    DeviceSymmetry,
+    KGrid,
+    SymmetryOperation,
+    collect_symmetry_operations,
+    compute_orbital_rotation,
+    find_atom_permutation,
+)
 
 # The factor eta in M_ji(-R) = eta * conj(M_ij(R)).
 HERMITICITY_FACTORS = {"hermitian": 1, "skew-hermitian": -1}
@@ -112,6 +120,25 @@ def create_orbital_operation(
     permutation, orbital_rotation = symmetry._atom_permutation_and_orbital_rotation(
         operation
     )
+    local_targets, local_signs = _get_signed_permutation(orbital_rotation, tolerance)
+    num_orbitals = symmetry.num_orbitals
+
+    positions = symmetry.fractional_positions
+    atom_shifts = _get_atom_shifts(positions, operation, permutation)
+
+    return OrbitalOperation(
+        rotation=np.asarray(operation.rotation, dtype=int),
+        translation=np.asarray(operation.translation, dtype=float),
+        targets=(permutation[:, None] * num_orbitals + local_targets).ravel(),
+        signs=np.tile(local_signs, symmetry.num_atoms).astype(int),
+        shifts=np.repeat(atom_shifts, num_orbitals, axis=0),
+    )
+
+
+def _get_signed_permutation(
+    orbital_rotation: NDArray, tolerance: float
+) -> tuple[NDArray, NDArray]:
+    """Gets the targets and signs of the orbitals on a single atom."""
     is_unit = np.abs(np.abs(orbital_rotation) - 1.0) < tolerance
     is_zero = np.abs(orbital_rotation) < tolerance
     if not (
@@ -121,24 +148,211 @@ def create_orbital_operation(
     ):
         raise ValueError("Operation mixes orbitals, it is not a signed permutation.")
 
-    num_orbitals = symmetry.num_orbitals
     local_targets = np.argmax(is_unit, axis=0)
-    local_signs = np.sign(orbital_rotation[local_targets, np.arange(num_orbitals)])
+    local_signs = np.sign(orbital_rotation[local_targets, np.arange(len(is_unit))])
+    return local_targets, local_signs.astype(int)
 
-    positions = symmetry.fractional_positions
-    atom_shifts = np.round(
+
+def _get_atom_shifts(
+    positions: NDArray, operation: SymmetryOperation, permutation: NDArray
+) -> NDArray:
+    """Gets the cells in which the images of the atoms are."""
+    return np.round(
         positions @ np.asarray(operation.rotation).T
         + operation.translation
         - positions[permutation]
     ).astype(int)
 
+
+def find_orbital_operations(
+    structure: ase.Atoms,
+    orbital_labels: dict[str, list[str]],
+    transport_axis: int,
+    tolerance: float = 1e-4,
+) -> tuple[list[SymmetryOperation], list[OrbitalOperation]]:
+    """Finds the signed permutations of the orbitals in a structure.
+
+    These are the symmetry operations that leave the transport axis
+    untouched, without time reversal, and that do not mix orbitals.
+
+    Parameters
+    ----------
+    structure : ase.Atoms
+        The structure.
+    orbital_labels : dict[str, list[str]]
+        The orbitals of each species.
+    transport_axis : int
+        Index of the transport axis.
+    tolerance : float, optional
+        Maximum Cartesian distance for two atoms to count as identical.
+
+    Returns
+    -------
+    symmetry_operations : list[SymmetryOperation]
+        The symmetry operations. The identity is the first one.
+    orbital_operations : list[OrbitalOperation]
+        The corresponding signed permutations of the orbitals.
+
+    """
+    species = structure.get_chemical_symbols()
+    missing = sorted(set(species) - set(orbital_labels))
+    if missing:
+        raise ValueError(f"The orbital labels of {missing} are missing.")
+
+    labels = [tuple(orbital_labels[s]) for s in species]
+    num_orbitals = np.array([len(label) for label in labels])
+    offsets = np.hstack(([0], np.cumsum(num_orbitals)))[:-1]
+
+    # NOTE: These must not be wrapped, the matrices are in cell gauge.
+    positions = structure.get_scaled_positions(wrap=False)
+    lattice_vectors = structure.cell.array
+    periodic_axes = tuple(axis for axis in range(3) if axis != transport_axis)
+
+    symmetry_operations, orbital_operations = [], []
+    for operation in collect_symmetry_operations(
+        structure, transport_axis, time_reversal=False
+    ):
+        rotation = (
+            lattice_vectors.T @ operation.rotation @ np.linalg.inv(lattice_vectors.T)
+        )
+        try:
+            permutation = find_atom_permutation(
+                positions,
+                lattice_vectors,
+                operation.rotation,
+                operation.translation,
+                periodic_axes,
+                tolerance,
+            )
+            local = {
+                label: _get_signed_permutation(
+                    compute_orbital_rotation(list(label), rotation), 1e-8
+                )
+                for label in set(labels)
+            }
+        except ValueError:
+            continue
+
+        if any(labels[a] != labels[b] for a, b in enumerate(permutation)):
+            continue
+
+        symmetry_operations.append(operation)
+        orbital_operations.append(
+            OrbitalOperation(
+                rotation=np.asarray(operation.rotation, dtype=int),
+                translation=np.asarray(operation.translation, dtype=float),
+                targets=np.concatenate(
+                    [
+                        offsets[b] + local[labels[a]][0]
+                        for a, b in enumerate(permutation)
+                    ]
+                ),
+                signs=np.concatenate([local[label][1] for label in labels]),
+                shifts=np.repeat(
+                    _get_atom_shifts(positions, operation, permutation),
+                    num_orbitals,
+                    axis=0,
+                ),
+            )
+        )
+
+    return symmetry_operations, orbital_operations
+
+
+def repeat_orbital_operation(
+    operation: OrbitalOperation, num_repetitions: int
+) -> OrbitalOperation:
+    """Repeats the operation of a unit cell along transport direction.
+
+    Parameters
+    ----------
+    operation : OrbitalOperation
+        The operation, which has to leave the transport axis untouched.
+    num_repetitions : int
+        The number of unit cells.
+
+    Returns
+    -------
+    repeated_operation : OrbitalOperation
+        The operation of the device.
+
+    """
+    num_orbitals = len(operation.targets)
+    offsets = np.repeat(np.arange(num_repetitions) * num_orbitals, num_orbitals)
     return OrbitalOperation(
-        rotation=np.asarray(operation.rotation, dtype=int),
-        translation=np.asarray(operation.translation, dtype=float),
-        targets=(permutation[:, None] * num_orbitals + local_targets).ravel(),
-        signs=np.tile(local_signs, symmetry.num_atoms).astype(int),
-        shifts=np.repeat(atom_shifts, num_orbitals, axis=0),
+        rotation=operation.rotation,
+        translation=operation.translation,
+        targets=np.tile(operation.targets, num_repetitions) + offsets,
+        signs=np.tile(operation.signs, num_repetitions),
+        shifts=np.tile(operation.shifts, (num_repetitions, 1)),
     )
+
+
+def measure_symmetry_breaking(
+    data: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    kpoints: NDArray,
+    operations: list[OrbitalOperation],
+    signed: bool,
+) -> float:
+    """Measures how much a Hermitian matrix breaks the symmetry.
+
+    Parameters
+    ----------
+    data : NDArray
+        The elements at the image of a single k-point under each of the
+        operations, shape (num_operations, nnz).
+    rows : NDArray
+        The row indices of the elements. Only the elements on and above
+        the diagonal are needed.
+    cols : NDArray
+        The column indices of the elements.
+    kpoints : NDArray
+        The images of the k-point, shape (num_operations, 3). The first
+        one has to be the k-point itself.
+    operations : list[OrbitalOperation]
+        The operations. The identity has to be the first one.
+    signed : bool
+        Whether the matrix transforms with the signs of the orbitals.
+
+    Returns
+    -------
+    deviation : float
+        The largest absolute deviation.
+
+    """
+    data, rows, cols = get_host(data), get_host(rows), get_host(cols)
+    rows, cols = rows.astype(np.int64), cols.astype(np.int64)
+    num_orbitals = len(operations[0].targets)
+
+    upper = rows <= cols
+    keys = rows[upper] * num_orbitals + cols[upper]
+    order = np.argsort(keys)
+    keys, data = keys[order], data[:, upper][:, order]
+    rows, cols = np.divmod(keys, num_orbitals)
+
+    deviation = 0.0
+    for values, kpoint, operation in zip(data, kpoints, operations):
+        image_rows, image_cols = operation.targets[rows], operation.targets[cols]
+        shifts = operation.shifts[cols] - operation.shifts[rows]
+        expected = data[0] * np.exp(2j * np.pi * (shifts @ kpoint))
+        if signed:
+            expected = expected * operation.signs[rows] * operation.signs[cols]
+
+        # The images in the lower triangle are the conjugates.
+        flipped = image_rows > image_cols
+        image_keys = np.where(
+            flipped,
+            image_cols * num_orbitals + image_rows,
+            image_rows * num_orbitals + image_cols,
+        )
+        inds = np.minimum(np.searchsorted(keys, image_keys), len(keys) - 1)
+        images = np.where(keys[inds] == image_keys, values[inds], 0.0)
+        images = np.where(flipped, images.conj(), images)
+        deviation = max(deviation, float(np.abs(images - expected).max(initial=0.0)))
+
+    return deviation
 
 
 def filter_packable_operations(
@@ -711,6 +925,36 @@ class OrbitPacking:
             data += phases[:, cell_ind, None] * values[..., None, :]
 
         return data
+
+    def expand_orbitals(self, values: NDArray, grid: KGrid) -> NDArray:
+        """Expands orbital-resolved values to the full grid.
+
+        This is for values that do not depend on the phase of the
+        orbitals, e.g. the diagonal elements of a matrix.
+
+        Parameters
+        ----------
+        values : NDArray
+            The values, shape (..., num_irreducible_points,
+            num_orbitals).
+        grid : KGrid
+            The grid of the values.
+
+        Returns
+        -------
+        expanded_values : NDArray
+            The values, shape (..., num_full_points, num_orbitals).
+
+        """
+        return xp.stack(
+            [
+                values[..., irreducible_ind, :][
+                    ..., xp.asarray(self.operations[operation_ind].inverse_targets)
+                ]
+                for __, irreducible_ind, operation_ind in self._iterate_star(grid)
+            ],
+            axis=-2,
+        )
 
     def callback(
         self,

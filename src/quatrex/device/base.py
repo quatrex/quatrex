@@ -94,12 +94,7 @@ class BaseDevice:
             self.device_config.num_orbitals_per_atom,
         )
 
-        self.kgrid = KGrid(
-            size=self.device_config.kpoint_grid,
-            shift=self.device_config.kpoint_shift,
-            symmetry_reduction=self.device_config.kpoint_symmetry_reduction,
-            structure=self.structure,
-        )
+        self.kgrid = self._create_kgrid()
 
         if comm.rank == 0:
             if not os.path.exists(config.output_dir):
@@ -125,6 +120,15 @@ class BaseDevice:
         # TODO: Should be `None` for QTBM if the basis is orthogonal.
         # No identity matrix should be allocated.
         self.overlap_matrices: dict | DSDBSparse | None = None
+
+    def _create_kgrid(self) -> KGrid:
+        """Creates the k-point grid."""
+        return KGrid(
+            size=self.device_config.kpoint_grid,
+            shift=self.device_config.kpoint_shift,
+            symmetry_reduction=self.device_config.kpoint_symmetry_reduction,
+            structure=self.structure,
+        )
 
     @staticmethod
     def _load_potential(

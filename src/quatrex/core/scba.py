@@ -4,6 +4,7 @@
 
 import os
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import numpy as np
 from mpi4py import MPI
@@ -11,8 +12,9 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.comm import comm, distributed_max
+from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
-from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, scattering_rate
 from quatrex.core.transport import TransportSolver
@@ -27,7 +29,8 @@ from quatrex.electron import (
     SigmaPhononPseudoScattering,
     SigmaPhoton,
 )
-from quatrex.grid import get_electron_energies, get_equal_spacing
+from quatrex.grid import KGrid, get_electron_energies, get_equal_spacing
+from quatrex.grid.orbit_packing import OrbitPacking
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
@@ -126,12 +129,181 @@ class SCBAData:
         # Allocate the data for the Green's functions and self-energies.
         self.g_lesser.allocate_data()
         self.g_greater.allocate_data()
+        # NOTE: The solvers do not set the elements that are outside of
+        # the block-tridiagonal part.
+        self.g_lesser.data = 0.0
+        self.g_greater.data = 0.0
         self.sigma_lesser.allocate_data()
         self.sigma_greater.allocate_data()
         self.sigma_retarded_hermitian.allocate_data()
         self.sigma_lesser.data = 0.0
         self.sigma_greater.data = 0.0
         self.sigma_retarded_hermitian.data = 0.0
+
+
+class PackedSCBAData:
+    """Data container class for the symmetry-unique elements.
+
+    The packed matrices are elements in real space and do not have any
+    k-points. The interactions are thus the ones of a system with a
+    single k-point, which is described by the `device` attribute.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The Quatrex configuration.
+    device : SCBADevice
+        The device object to be used in the simulation.
+    data : SCBAData
+        The data on the irreducible k-points. Only the sparsity pattern
+        is used.
+    num_energies : int
+        The number of electron energies.
+
+    """
+
+    def __init__(
+        self,
+        config: QuatrexConfig,
+        device: SCBADevice,
+        data: SCBAData,
+        num_energies: int,
+    ) -> None:
+        """Initializes the packed SCBA data."""
+        self.packing = OrbitPacking(
+            data.g_lesser.rows,
+            data.g_lesser.cols,
+            device.orbital_operations,
+            device.kgrid,
+            device.qgrid,
+        )
+        self.dsdbsparse_type = config.compute.dsdbsparse_type
+        # The number of sections in which to unpack.
+        self.num_batches = config.compute.convolve.num_batches
+
+        names = ["g_lesser", "g_greater", "sigma_lesser", "sigma_greater"]
+        hermitian_names = ["sigma_retarded_hermitian"]
+        if config.scba.coulomb_screening:
+            names += ["p_lesser", "p_greater", "w_lesser", "w_greater"]
+            hermitian_names += ["p_retarded_hermitian"]
+
+        for name in names:
+            setattr(self, name, self._create_matrix(num_energies, "skew-hermitian"))
+        for name in hermitian_names:
+            setattr(self, name, self._create_matrix(num_energies, "hermitian"))
+
+        self.device = SimpleNamespace(
+            kgrid=KGrid((1, 1, 1)), qgrid=KGrid((1, 1, 1), gamma_centered=True)
+        )
+        if config.scba.coulomb_screening:
+            self.device.coulomb_matrix = self._create_matrix(
+                comm.stack.size, "hermitian"
+            )
+            self.packing.accumulate_matrix(
+                self.device.coulomb_matrix.data[:, 0],
+                device.coulomb_matrix,
+                signed=False,
+                mask=xp.ones(1, dtype=bool),
+            )
+
+        if comm.rank == 0:
+            num_full = len(data.g_lesser.rows) * device.kgrid.num_full_points
+            print(
+                f"Using {self.packing.num_representatives} symmetry-unique elements "
+                f"of {num_full} on the full k-point grid.",
+                flush=True,
+            )
+
+    def _create_matrix(self, num_energies: int, symmetry: str) -> DSDBSparse:
+        """Creates a packed matrix."""
+        return self.packing.create_matrix(num_energies, self.dsdbsparse_type, symmetry)
+
+    def get_outputs(self, *names: str) -> tuple[NDArray, ...]:
+        """Gets the arrays in which the solvers have to pack.
+
+        The current data is discarded.
+
+        """
+        outputs = []
+        for name in names:
+            matrix = getattr(self, name)
+            if matrix.distribution_state != "stack":
+                matrix.dtranspose(discard=True)
+            outputs.append(matrix.data[:, 0])
+        return tuple(outputs)
+
+    def unpack(self, name: str, out: DSDBSparse, signed: bool) -> None:
+        """Unpacks a matrix to the irreducible points.
+
+        Parameters
+        ----------
+        name : str
+            The name of the packed matrix.
+        out : DSDBSparse
+            The matrix on the irreducible points, in stack distribution.
+        signed : bool
+            Whether this is an electronic quantity (Sigma) or an
+            interaction (P).
+
+        """
+        matrix = getattr(self, name)
+        if matrix.distribution_state != "stack":
+            matrix.dtranspose()
+
+        num_energies = out.data.shape[0]
+        if num_energies == 0:
+            return
+        sizes, __ = get_section_sizes(num_energies, min(self.num_batches, num_energies))
+        offsets = np.hstack(([0], np.cumsum(sizes)))
+        for start, end in zip(offsets, offsets[1:]):
+            batch = slice(int(start), int(end))
+            out.data[batch] = self.packing.unpack(
+                matrix.data[batch, 0], signed, out.symmetry
+            )
+
+
+class PackedDiagonal:
+    """The diagonal elements of a packed matrix.
+
+    This provides what is needed for interactions that only act on the
+    diagonal elements, irrespective of the k-point.
+
+    Parameters
+    ----------
+    matrix : DSDBSparse
+        The packed matrix.
+    packing : OrbitPacking
+        The packing of the matrix.
+
+    """
+
+    def __init__(self, matrix: DSDBSparse, packing: OrbitPacking) -> None:
+        """Initializes the view on the diagonal elements."""
+        self._matrix = matrix
+        if matrix.distribution_state != "nnz":
+            matrix.dtranspose()
+        start = int(matrix.nnz_section_offsets[comm.stack.rank])
+        size = int(matrix.nnz_section_sizes[comm.stack.rank])
+        is_diagonal = (packing.rep_rows == packing.rep_cols)[start : start + size]
+        self._inds = xp.asarray(np.flatnonzero(is_diagonal))
+
+    @property
+    def data(self) -> NDArray:
+        """The data of the packed matrix."""
+        return self._matrix.data
+
+    @property
+    def distribution_state(self) -> str:
+        """The distribution state of the packed matrix."""
+        return self._matrix.distribution_state
+
+    def diagonal(self) -> NDArray:
+        """Returns the elements (i, i, R)."""
+        return self._matrix.data[..., self._inds]
+
+    def fill_diagonal(self, values: NDArray) -> None:
+        """Sets the elements (i, i, R)."""
+        self._matrix.data[..., self._inds] = values
 
 
 @dataclass
@@ -215,6 +387,19 @@ class SCBA(TransportSolver):
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
 
+        # If the symmetry of the device is known, the interactions are
+        # computed from the symmetry-unique elements.
+        self.packed = None
+        interaction_device = self.device
+        if self.device.uses_packing:
+            self.packed = PackedSCBAData(
+                config=config,
+                device=self.device,
+                data=self.data,
+                num_energies=len(self.electron_energies),
+            )
+            interaction_device = self.packed.device
+
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
@@ -254,27 +439,27 @@ class SCBA(TransportSolver):
                 self.coulomb_screening_energies += 1e-6
 
             (
-                self.device.coulomb_matrix.dtranspose()
-                if self.device.coulomb_matrix.distribution_state != "nnz"
+                interaction_device.coulomb_matrix.dtranspose()
+                if interaction_device.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
             if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
                 self.sigma_fock = SigmaFock(
                     self.config,
-                    self.device,
+                    interaction_device,
                     self.electron_energies,
                 )
             # Have to transpose the coulomb matrix back to the original distribution.
             (
-                self.device.coulomb_matrix.dtranspose()
-                if self.device.coulomb_matrix.distribution_state == "nnz"
+                interaction_device.coulomb_matrix.dtranspose()
+                if interaction_device.coulomb_matrix.distribution_state == "nnz"
                 else None
             )
 
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
-                self.device,
+                interaction_device,
                 self.coulomb_screening_energies,
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
@@ -284,7 +469,7 @@ class SCBA(TransportSolver):
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
-                self.device,
+                interaction_device,
                 self.electron_energies,
             )
 
@@ -349,7 +534,11 @@ class SCBA(TransportSolver):
             # from the lesser and greater self-energies
             self.data.sigma_retarded_hermitian.symmetrize("hermitian")
 
-        if self.config.scba.align_self_energy_to_complex_axes:
+        # NOTE: The packed self-energies are already aligned.
+        if (
+            self.config.scba.align_self_energy_to_complex_axes
+            and not self.device.uses_packing
+        ):
             self.data.sigma_lesser._data.real = 0
             self.data.sigma_greater._data.real = 0
             # Make sure that the imaginary part comes only from
@@ -510,6 +699,190 @@ class SCBA(TransportSolver):
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
+    @profiler.profile(label="SCBA: Packed interactions", level="default", comm=comm)
+    def _compute_packed_interactions(self) -> None:
+        """Computes the interactions from the symmetry-unique elements.
+
+        The polarization and the self-energy are only unpacked to the
+        irreducible points once they are needed by the solvers.
+
+        """
+        packed = self.packed
+        packed_sigma = (
+            packed.sigma_lesser,
+            packed.sigma_greater,
+            packed.sigma_retarded_hermitian,
+        )
+        sigma = (
+            self.data.sigma_lesser,
+            self.data.sigma_greater,
+            self.data.sigma_retarded_hermitian,
+        )
+        with profiler.profile_range(
+            label="SCBA: stack->nnz transpose", level="default", comm=comm
+        ):
+            for m in (packed.g_lesser, packed.g_greater):
+                m.dtranspose(discard=False)  # This must not be discarded.
+                assert m.distribution_state == "nnz"
+            for m in packed_sigma:
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "nnz"
+                m.data[:] = 0.0
+
+        # The Green's functions on the irreducible k-points are only
+        # needed for the observables.
+        self.data.g_lesser.free_data()
+        self.data.g_greater.free_data()
+
+        if self.config.scba.coulomb_screening:
+            self._compute_packed_coulomb_screening_interaction(packed_sigma)
+
+        if self.config.scba.photon:
+            self._compute_photon_interaction()
+
+        if self.config.scba.phonon:
+            self._compute_packed_phonon_interaction(packed_sigma)
+
+        with profiler.profile_range(
+            label="SCBA: Unpack Sigma", level="default", comm=comm
+        ):
+            if self.config.scba.align_self_energy_to_complex_axes:
+                # NOTE: This is done in real space. In k-space, the
+                # elements also have phases due to the neighboring cells.
+                packed.sigma_lesser._data.real = 0
+                packed.sigma_greater._data.real = 0
+                packed.sigma_retarded_hermitian._data.imag = 0
+
+            for name, m in zip(
+                ("sigma_lesser", "sigma_greater", "sigma_retarded_hermitian"), sigma
+            ):
+                packed.unpack(name, out=m, signed=True)
+
+        for m in (self.data.g_lesser, self.data.g_greater):
+            m.allocate_data()
+            m.data = 0.0
+
+    def _compute_packed_coulomb_screening_interaction(
+        self, packed_sigma: tuple[DSDBSparse, ...]
+    ) -> None:
+        """Computes the Coulomb screening interaction.
+
+        Parameters
+        ----------
+        packed_sigma : tuple[DSDBSparse, ...]
+            The packed self-energies.
+
+        """
+        packed = self.packed
+        self.p_coulomb_screening.compute(
+            packed.g_lesser,
+            packed.g_greater,
+            out=(packed.p_lesser, packed.p_greater, packed.p_retarded_hermitian),
+        )
+
+        p_names = ("p_lesser", "p_greater", "p_retarded_hermitian")
+        for name in p_names:
+            m = getattr(self.data, name)
+            m.allocate_data()
+            packed.unpack(name, out=m, signed=False)
+
+        self.data.w_greater.allocate_data()
+        self.data.w_lesser.allocate_data()
+
+        self.coulomb_screening_solver.solve(
+            self.data.p_lesser,
+            self.data.p_greater,
+            self.data.p_retarded_hermitian,
+            out=(self.data.w_lesser, self.data.w_greater),
+            packing=packed.packing,
+            packed_out=packed.get_outputs("w_lesser", "w_greater"),
+        )
+
+        self._compute_coulomb_screening_observables()
+
+        for name in (*p_names, "w_lesser", "w_greater"):
+            getattr(self.data, name).free_data()
+
+        if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
+            self.sigma_fock.compute(
+                packed.g_lesser, out=(packed.sigma_retarded_hermitian,)
+            )
+
+        self.sigma_coulomb_screening.compute(
+            packed.g_lesser,
+            packed.g_greater,
+            packed.w_lesser,
+            packed.w_greater,
+            out=packed_sigma,
+        )
+
+    def _compute_packed_phonon_interaction(
+        self, packed_sigma: tuple[DSDBSparse, ...]
+    ) -> None:
+        """Computes the phonon interaction.
+
+        This does not mix different k-points, so that it applies to the
+        elements in real space in the same way.
+
+        Parameters
+        ----------
+        packed_sigma : tuple[DSDBSparse, ...]
+            The packed self-energies.
+
+        """
+        packed_g = (self.packed.g_lesser, self.packed.g_greater)
+        if self.config.phonon.model == "pseudo-scattering":
+            # Only acts on the diagonal elements.
+            packed_g, packed_sigma = (
+                tuple(PackedDiagonal(m, self.packed.packing) for m in matrices)
+                for matrices in (packed_g, packed_sigma)
+            )
+        self.sigma_phonon.compute(*packed_g, out=packed_sigma)
+
+    @profiler.profile(label="SCBA: Full interactions", level="default", comm=comm)
+    def _compute_interactions(self) -> None:
+        """Computes the interactions on the k-point grid."""
+        with profiler.profile_range(
+            label="SCBA: stack->nnz transpose", level="default", comm=comm
+        ):
+            # Transpose to nnz distribution.
+            # NOTE: While computing all interactions, we only ever need
+            # to access the Green's function and the self-energies in
+            # their nnz-distributed state.
+            for m in (self.data.g_lesser, self.data.g_greater):
+                m.dtranspose(discard=False)  # This must not be discarded.
+                assert m.distribution_state == "nnz"
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded_hermitian,
+            ):
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "nnz"
+
+        if self.config.scba.coulomb_screening:
+            self._compute_coulomb_screening_interaction()
+
+        if self.config.scba.photon:
+            self._compute_photon_interaction()
+
+        if self.config.scba.phonon:
+            self._compute_phonon_interaction()
+
+        with profiler.profile_range(
+            label="SCBA: stack->nnz transpose back", level="default", comm=comm
+        ):
+            for m in (self.data.g_lesser, self.data.g_greater):
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "stack"
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded_hermitian,
+            ):
+                m.dtranspose(discard=False)  # This must not be discarded.
+                assert m.distribution_state == "stack"
+
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
@@ -519,6 +892,7 @@ class SCBA(TransportSolver):
             self.data.g_greater,
             self.data.sigma_lesser,
             self.data.sigma_greater,
+            kpoint_weights=self.device.kgrid._multiplicities,
         )
         if self.config.outputs.scattering_rate:
             self.observables.scattering_rate = scattering_rate(
@@ -593,6 +967,12 @@ class SCBA(TransportSolver):
                 2 * xp.pi
             )
 
+    def _expand_orbitals(self, values: NDArray, grid: KGrid) -> NDArray:
+        """Expands orbital-resolved values to the full k-point grid."""
+        if self.device.uses_packing:
+            return self.packed.packing.expand_orbitals(values, grid)
+        return grid.expand(values)
+
     @profiler.profile(label="SCBA: Write outputs", level="default", comm=comm)
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
@@ -606,21 +986,21 @@ class SCBA(TransportSolver):
         newshape = (*self.electron_energies.shape, *kpoint_shape, -1)
 
         if self.config.outputs.scattering_rate:
-            outputs[f"scattering_rate_{iteration}.npy"] = self.device.kgrid.expand(
-                self.observables.scattering_rate
+            outputs[f"scattering_rate_{iteration}.npy"] = self._expand_orbitals(
+                self.observables.scattering_rate, self.device.kgrid
             ).reshape(newshape)
 
         if self.config.outputs.electron_ldos:
-            outputs[f"electron_ldos_{iteration}.npy"] = self.device.kgrid.expand(
-                self.observables.electron_ldos
+            outputs[f"electron_ldos_{iteration}.npy"] = self._expand_orbitals(
+                self.observables.electron_ldos, self.device.kgrid
             ).reshape(newshape)
         if self.config.outputs.electron_density:
-            outputs[f"electron_density_{iteration}.npy"] = self.device.kgrid.expand(
-                self.observables.electron_density
+            outputs[f"electron_density_{iteration}.npy"] = self._expand_orbitals(
+                self.observables.electron_density, self.device.kgrid
             ).reshape(newshape)
         if self.config.outputs.hole_density:
-            outputs[f"hole_density_{iteration}.npy"] = self.device.kgrid.expand(
-                self.observables.hole_density
+            outputs[f"hole_density_{iteration}.npy"] = self._expand_orbitals(
+                self.observables.hole_density, self.device.kgrid
             ).reshape(newshape)
 
         if self.config.outputs.device_currents:
@@ -638,22 +1018,22 @@ class SCBA(TransportSolver):
             if self.config.outputs.polarization_density:
                 outputs.update(
                     {
-                        f"p_lesser_density_{iteration}.npy": self.device.qgrid.expand(
-                            self.observables.p_lesser_density
+                        f"p_lesser_density_{iteration}.npy": self._expand_orbitals(
+                            self.observables.p_lesser_density, self.device.qgrid
                         ).reshape(newshape),
-                        f"p_greater_density_{iteration}.npy": self.device.qgrid.expand(
-                            self.observables.p_greater_density
+                        f"p_greater_density_{iteration}.npy": self._expand_orbitals(
+                            self.observables.p_greater_density, self.device.qgrid
                         ).reshape(newshape),
                     }
                 )
             if self.config.outputs.coulomb_screening_density:
                 outputs.update(
                     {
-                        f"w_lesser_density_{iteration}.npy": self.device.qgrid.expand(
-                            self.observables.w_lesser_density
+                        f"w_lesser_density_{iteration}.npy": self._expand_orbitals(
+                            self.observables.w_lesser_density, self.device.qgrid
                         ).reshape(newshape),
-                        f"w_greater_density_{iteration}.npy": self.device.qgrid.expand(
-                            self.observables.w_greater_density
+                        f"w_greater_density_{iteration}.npy": self._expand_orbitals(
+                            self.observables.w_greater_density, self.device.qgrid
                         ).reshape(newshape),
                     }
                 )
@@ -661,11 +1041,11 @@ class SCBA(TransportSolver):
         if self.config.outputs.self_energy_density:
             outputs.update(
                 {
-                    f"sigma_lesser_density_{iteration}.npy": self.device.kgrid.expand(
-                        self.observables.sigma_lesser_density
+                    f"sigma_lesser_density_{iteration}.npy": self._expand_orbitals(
+                        self.observables.sigma_lesser_density, self.device.kgrid
                     ).reshape(newshape),
-                    f"sigma_greater_density_{iteration}.npy": self.device.kgrid.expand(
-                        self.observables.sigma_greater_density
+                    f"sigma_greater_density_{iteration}.npy": self._expand_orbitals(
+                        self.observables.sigma_greater_density, self.device.kgrid
                     ).reshape(newshape),
                 }
             )
@@ -767,6 +1147,9 @@ class SCBA(TransportSolver):
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
+        if self.device.uses_packing:
+            self.device.check_potential(self.device.potential)
+
         for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
@@ -775,11 +1158,18 @@ class SCBA(TransportSolver):
             ):
                 self.data.g_retarded.allocate_data()
                 self.data.g_retarded.data = 0.0
+                packing_kwargs = {}
+                if self.device.uses_packing:
+                    packing_kwargs = {
+                        "packing": self.packed.packing,
+                        "packed_out": self.packed.get_outputs("g_lesser", "g_greater"),
+                    }
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
                     self.data.sigma_retarded_hermitian,
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
+                    **packing_kwargs,
                 )
                 self._compute_electron_observables()
 
@@ -788,46 +1178,10 @@ class SCBA(TransportSolver):
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
 
-                with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose", level="default", comm=comm
-                ):
-                    # Transpose to nnz distribution.
-                    # NOTE: While computing all interactions, we only ever need
-                    # to access the Green's function and the self-energies in
-                    # their nnz-distributed state.
-                    for m in (self.data.g_lesser, self.data.g_greater):
-                        m.dtranspose(discard=False)  # This must not be discarded.
-                        assert m.distribution_state == "nnz"
-                    for m in (
-                        self.data.sigma_lesser,
-                        self.data.sigma_greater,
-                        self.data.sigma_retarded_hermitian,
-                    ):
-                        m.dtranspose(discard=True)  # These can be safely discarded.
-                        assert m.distribution_state == "nnz"
-
-                if self.config.scba.coulomb_screening:
-                    self._compute_coulomb_screening_interaction()
-
-                if self.config.scba.photon:
-                    self._compute_photon_interaction()
-
-                if self.config.scba.phonon:
-                    self._compute_phonon_interaction()
-
-                with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose back", level="default", comm=comm
-                ):
-                    for m in (self.data.g_lesser, self.data.g_greater):
-                        m.dtranspose(discard=True)  # These can be safely discarded.
-                        assert m.distribution_state == "stack"
-                    for m in (
-                        self.data.sigma_lesser,
-                        self.data.sigma_greater,
-                        self.data.sigma_retarded_hermitian,
-                    ):
-                        m.dtranspose(discard=False)  # This must not be discarded.
-                        assert m.distribution_state == "stack"
+                if self.device.uses_packing:
+                    self._compute_packed_interactions()
+                else:
+                    self._compute_interactions()
 
             # Symmetrize the self-energy.
             self._symmetrize_sigma()

@@ -22,10 +22,36 @@ if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
 
 
-def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
+def invert_kpoints(a: NDArray) -> NDArray:
+    """Reorders the k-point axes from q to -q.
+
+    Parameters
+    ----------
+    a : NDArray
+        The array on the full, Gamma-centered grid. The first axis is
+        the energy axis, the last axis is the orbital index, and the
+        axes in between are the k-points.
+
+    Returns
+    -------
+    NDArray
+        The array at the inverted k-points.
+
+    """
+    axes = tuple(range(1, a.ndim - 1))
+    # Gamma, which is at index 0, stays where it is.
+    return xp.roll(xp.flip(a, axis=axes), shift=1, axis=axes)
+
+
+def hilbert_transform(
+    a: NDArray, energies: NDArray, a_negative: NDArray | None = None
+) -> NDArray:
     r"""Computes the Hilbert transform of the array a, assuming the symmetries of the
     polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
     This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
+
+    With k-points, the symmetry is \(a(\mathbf{q}, -\omega)=a^{*}(-\mathbf{q}, \omega)\),
+    so that the negative frequencies have to be provided explicitly.
 
     Assumes that the first axis corresponds to the energy axis.
 
@@ -35,6 +61,10 @@ def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
         The array to transform.
     energies : NDArray
         The energy values corresponding to the first axis of a.
+    a_negative : NDArray, optional
+        The values of a at the negative frequencies, in ascending order,
+        i.e. the last one is at zero frequency. If None, they are
+        determined as \(a^{*}(\omega)\).
 
     Returns
     -------
@@ -51,7 +81,9 @@ def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
     hilbert_kernel = 1 / energy_differences
     b = fft_convolve(a, hilbert_kernel)[:ne]
     # Negative frequencies of a
-    b += fft_convolve(a[::-1].conj(), hilbert_kernel)[-ne:]
+    if a_negative is None:
+        a_negative = a[::-1].conj()
+    b += fft_convolve(a_negative, hilbert_kernel)[-ne:]
     # Negative frequencies of the kernel
     hilbert_kernel = -hilbert_kernel[::-1]
     b += fft_convolve(a, hilbert_kernel)[-ne:]
@@ -176,13 +208,17 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         g_greater_ij, g_lesser_ji
                     )
 
+                    # The lesser part follows from the greater part,
+                    # P^<_ij(q, w) = P^>_ji(-q, -w) = -P^>_ij(-q, -w)^*.
+                    p_l_full = -invert_kpoints(p_g_full[::-1]).conj()
+
                     # Reshape back and reduce to the irreducible part of
                     # the k-point grid.
-                    p_g_full = self.device.qgrid.reduce(
-                        p_g_full.reshape(p_g_full.shape[0], -1, p_g_full.shape[-1])
+                    p_g_full, p_l_full = (
+                        self.device.qgrid.reduce(p.reshape(p.shape[0], -1, p.shape[-1]))
+                        for p in (p_g_full, p_l_full)
                     )
 
-                    p_l_full = -p_g_full[::-1].conj()
                     # Fill the matrices with the data. Take second part
                     # of the energy convolution. # Note that only the
                     # anti-hermitian part is computed here.
@@ -199,6 +235,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                                         - p_lesser.data[..., batch]
                                     ),
                                     self.energies,
+                                    p_g_full[: self.ne] - p_l_full[: self.ne],
                                 )
                             )
                             * self.kpoint_volume

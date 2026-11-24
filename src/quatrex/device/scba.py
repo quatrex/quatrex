@@ -3,6 +3,8 @@
 """Includes the SCBA device class for electronic transport calculations."""
 
 import os
+import warnings
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -10,6 +12,7 @@ from qttools import NDArray, sparse
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.contact.scba import SCBAContact
 from quatrex.core.config import QuatrexConfig
@@ -17,6 +20,11 @@ from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pa
 from quatrex.device.base import BaseDevice
 from quatrex.device.inputs import assemble_matrix
 from quatrex.grid import KGrid
+from quatrex.grid.orbit_packing import (
+    find_orbital_operations,
+    measure_symmetry_breaking,
+    repeat_orbital_operation,
+)
 
 profiler = Profiler()
 
@@ -53,6 +61,9 @@ class SCBADevice(BaseDevice):
     contacts : list[SCBAContact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
+    orbital_operations : list[OrbitalOperation] | None
+        The symmetry operations of the device. None if the interactions
+        are not computed from the symmetry-unique elements.
 
     """
 
@@ -69,6 +80,7 @@ class SCBADevice(BaseDevice):
             gamma_centered=True,  # Important!
             symmetry_reduction=self.device_config.kpoint_symmetry_reduction,
             structure=self.structure,
+            operations=self.kgrid.operations if self.uses_packing else None,
         )
         if comm.rank == 0:
             if not os.path.exists(config.output_dir):
@@ -102,9 +114,146 @@ class SCBADevice(BaseDevice):
             )
             self.coulomb_matrix = self._init_coulomb_matrix()
 
+        if self.uses_packing:
+            self._check_symmetry()
+
         # NOTE: Contacts are added at the end since the need parameters
         # from the previous method.
         self._add_contacts(hamiltonian_sparsity_pattern)
+
+    @property
+    def uses_packing(self) -> bool:
+        """Whether only the symmetry-unique elements are used to compute
+        the interactions."""
+        return self.orbital_operations is not None
+
+    def _create_kgrid(self) -> KGrid:
+        """Creates the k-point grid.
+
+        If the orbitals are known, the symmetry operations of the device
+        are limited to the ones that also apply to the interactions.
+
+        """
+        self.orbital_operations = None
+        device_config = self.device_config
+        if not device_config.kpoint_symmetry_reduction:
+            return super()._create_kgrid()
+
+        if device_config.orbital_labels is None:
+            kgrid = super()._create_kgrid()
+            if comm.rank == 0 and kgrid.num_points < kgrid.num_full_points:
+                warnings.warn(
+                    "The matrices at symmetry-equivalent k-points are assumed to be "
+                    "identical, which is not true in general. Set "
+                    "`device.orbital_labels` to account for the symmetry exactly, or "
+                    "disable `device.kpoint_symmetry_reduction`."
+                )
+            return kgrid
+
+        if not self.config.scba.symmetric:
+            raise ValueError("`device.orbital_labels` requires `scba.symmetric`.")
+        if comm.block.size > 1:
+            raise NotImplementedError(
+                "`device.orbital_labels` is not implemented for domain-distributed "
+                "solvers."
+            )
+
+        transport_ind = "abc".index(device_config.transport_direction)
+        symmetry_operations, orbital_operations = find_orbital_operations(
+            self.structure, device_config.orbital_labels, transport_ind
+        )
+        kgrid = KGrid(
+            size=device_config.kpoint_grid,
+            shift=device_config.kpoint_shift,
+            symmetry_reduction=True,
+            operations=symmetry_operations,
+        )
+        num_repetitions = 1
+        if device_config.construct_from_unit_cell:
+            num_repetitions = (
+                device_config.num_transport_cells
+                * device_config.neighbor_cell_cutoff[transport_ind]
+            )
+        # Not all of the operations have to preserve the grid.
+        self.orbital_operations = [
+            repeat_orbital_operation(orbital_operation, num_repetitions)
+            for symmetry_operation, orbital_operation in zip(
+                symmetry_operations, orbital_operations
+            )
+            if any(symmetry_operation is op for op in kgrid.operations)
+        ]
+        return kgrid
+
+    @profiler.profile("Device: Check symmetry", level="default", comm=comm)
+    def _check_symmetry(self) -> None:
+        """Checks that the matrices are symmetric.
+
+        For this, the matrices are assembled at all the images of a
+        single k-point that is not special.
+
+        """
+        size = np.asarray(self.kgrid.size)
+        kpoint = np.where(size > 1, [0.1372, 0.2158, 0.0794], 0.0)
+        kpoints = np.array(
+            [kpoint @ np.linalg.inv(op.rotation) for op in self.orbital_operations]
+        )
+        star = SimpleNamespace(
+            size=tuple(size), points=kpoints, num_points=len(kpoints)
+        )
+
+        names = {"hamiltonian": (True, None)}
+        if self.overlap_matrices is not None:
+            names["overlap"] = (True, None)
+        if self.config.scba.coulomb_screening:
+            names["coulomb_matrix"] = (False, self.sparsity_pattern)
+
+        for name, (signed, sparsity_pattern) in names.items():
+            matrix, __ = assemble_matrix(
+                config=self.config,
+                matrix_name=name,
+                kgrid=star,
+                sparsity_pattern=sparsity_pattern,
+            )
+            deviation = measure_symmetry_breaking(
+                matrix.data[0],
+                *matrix.spy(),
+                kpoints,
+                self.orbital_operations,
+                signed,
+            )
+            self._check_deviation(name, deviation)
+
+        if comm.rank == 0:
+            print(
+                f"Using {len(self.orbital_operations)} symmetry operations.", flush=True
+            )
+
+    def _check_deviation(self, name: str, deviation: float) -> None:
+        """Checks the deviation from the symmetry."""
+        tolerance = self.device_config.kpoint_symmetry_tolerance
+        if deviation > tolerance:
+            raise ValueError(
+                f"The {name} breaks the symmetry by {deviation:.2e}, which is more "
+                f"than `device.kpoint_symmetry_tolerance` = {tolerance:.2e}. Either "
+                "the `device.orbital_labels` are wrong, or "
+                "`device.kpoint_symmetry_reduction` has to be disabled."
+            )
+
+    def check_potential(self, potential: NDArray) -> None:
+        """Checks that the potential is symmetric.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The potential of each orbital.
+
+        """
+        potential = get_host(potential)
+        deviation = max(
+            float(np.abs(potential[op.targets] - potential).max())
+            for op in self.orbital_operations
+        )
+        self._check_deviation("potential", deviation)
 
     def _add_contacts(self, hamiltonian_sparsity_pattern: sparse.coo_matrix):
         """Initializes and attaches contacts to the device.

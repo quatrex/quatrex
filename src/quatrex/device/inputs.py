@@ -413,6 +413,58 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
+def _wrap_cols_or_rows(
+    matrix_dict: dict,
+    *,
+    wrapped_atom_index: int,
+    cell_offset: int,
+    transverse_coords: tuple,
+    transport_coords: list,
+    transport_ind: int,
+    wrap_cols: bool,
+):
+    if cell_offset == 0:
+        return
+
+    col_slice = wrapped_atom_index
+    row_slice = slice(None)
+    if not wrap_cols:
+        col_slice, row_slice = row_slice, col_slice
+    shift_direction = 1 if wrap_cols else -1
+    loop_direction = -shift_direction * xp.sign(cell_offset)
+
+    for transport_coord in transport_coords[::loop_direction]:
+        coords = list(transverse_coords)
+        coords[transport_ind] = transport_coord
+        coords = tuple(coords)
+
+        # Save the on-site term to restore it later
+        wrapped_site_term = matrix_dict[coords][wrapped_atom_index, wrapped_atom_index]
+
+        origin_transport_coord = transport_coord - shift_direction * cell_offset
+        origin_coords = list(transverse_coords)
+        origin_coords[transport_ind] = origin_transport_coord
+        origin_coords = tuple(origin_coords)
+        if origin_coords not in matrix_dict:
+            matrix_dict[coords][col_slice, row_slice] = xp.nan
+        else:
+            matrix_dict[coords][col_slice, row_slice] = matrix_dict[origin_coords][
+                col_slice, row_slice
+            ]
+
+        # Restore the on-site term
+        matrix_dict[coords][wrapped_atom_index, wrapped_atom_index] = wrapped_site_term
+
+
+def _wrap_atom(matrix_dict, **kwargs):
+    if "wrap_cols" in kwargs:
+        raise ValueError("Unexpected keyword `wrap_cols`")
+
+    for wrap_cols in [True, False]:
+        kwargs["wrap_cols"] = wrap_cols
+        _wrap_cols_or_rows(matrix_dict, **kwargs)
+
+
 def _wrap_matrix_dict(
     matrix_dict: dict,
     cell_offsets: NDArray,
@@ -420,72 +472,41 @@ def _wrap_matrix_dict(
 ):
     """Modifies matrix_dict and cell_offsets"""
 
-    max_cell_offset = xp.max(xp.abs(cell_offsets))
-    keys = np.array(list(matrix_dict.keys()))
-    max_coords = keys.max(axis=0)
-    max_transport_coord = max_coords[transport_ind]
-    if max_cell_offset > max_transport_coord:
-        raise ValueError(
-            "The unit cell matrix values cannot be wrapped: Not enough cell-cell interactions have been provided to reconstruct them, not even in the home cell"
-        )
+    # Collect each chain of blocks along the transport direction with
+    # constant transverse indices
+    # chains_dict[coords with transport coord set to 0] = transport coords
+    chains_dict = {}
+    for coords in matrix_dict:
+        transverse_coords = list(coords)
+        transverse_coords[transport_ind] = 0
+        transverse_coords = tuple(transverse_coords)
+        if transverse_coords not in chains_dict:
+            chains_dict[transverse_coords] = []
+        chains_dict[transverse_coords].append(coords[transport_ind])
 
-    for wrapped_atom_index, cell_offset in enumerate(cell_offsets):
-        if cell_offset == 0:
-            continue
+    for transverse_coords, transport_coords in chains_dict.items():
+        transport_coords.sort()
 
-        s = xp.sign(cell_offset)
-
-        # Wrap columns
-        for cell_coord in range(
-            s * max_transport_coord, -s * (max_transport_coord + 1), -s
-        ):
-            # Save the on-site term to restore it later
-            wrapped_site_term = matrix_dict[(cell_coord, 0, 0)][
-                wrapped_atom_index, wrapped_atom_index
-            ]
-
-            origin_cell_coord = cell_coord - cell_offset
-            if abs(origin_cell_coord) > max_transport_coord:
-                matrix_dict[(cell_coord, 0, 0)][:, wrapped_atom_index] = xp.nan
-            else:
-                matrix_dict[(cell_coord, 0, 0)][:, wrapped_atom_index] = matrix_dict[
-                    (origin_cell_coord, 0, 0)
-                ][:, wrapped_atom_index]
-
-            # Restore on-site term
-            matrix_dict[(cell_coord, 0, 0)][
-                wrapped_atom_index, wrapped_atom_index
-            ] = wrapped_site_term
-
-        # Wrap rows
-        for cell_coord in range(
-            -s * max_transport_coord, s * (max_transport_coord + 1), s
-        ):
-            # Save the on-site term to restore it later
-            wrapped_site_term = matrix_dict[(cell_coord, 0, 0)][
-                wrapped_atom_index, wrapped_atom_index
-            ]
-
-            origin_cell_coord = cell_coord + cell_offset
-            if abs(origin_cell_coord) > max_transport_coord:
-                matrix_dict[(cell_coord, 0, 0)][wrapped_atom_index, :] = xp.nan
-            else:
-                matrix_dict[(cell_coord, 0, 0)][wrapped_atom_index, :] = matrix_dict[
-                    (origin_cell_coord, 0, 0)
-                ][wrapped_atom_index, :]
-
-            # Restore on-site term
-            matrix_dict[(cell_coord, 0, 0)][
-                wrapped_atom_index, wrapped_atom_index
-            ] = wrapped_site_term
+        for wrapped_atom_index, cell_offset in enumerate(cell_offsets):
+            _wrap_atom(
+                matrix_dict,
+                wrapped_atom_index=wrapped_atom_index,
+                cell_offset=cell_offset,
+                transverse_coords=transverse_coords,
+                transport_coords=transport_coords,
+                transport_ind=transport_ind,
+            )
 
     # Drop matrices where some values are unknown after wrapping
+    num_dropped_matrices = 0
     for key in copy.copy(list(matrix_dict.keys())):
-        if abs(key[transport_ind]) > max_transport_coord - max_cell_offset:
+        if xp.any(xp.isnan(matrix_dict[key])):
             matrix_dict.pop(key)
-    warnings.warn(
-        f"Dropped {max_cell_offset * 2} unit cell interaction matrices after wrapping"
-    )
+            num_dropped_matrices += 1
+    if num_dropped_matrices > 0:
+        warnings.warn(
+            f"Dropped {num_dropped_matrices} unit cell interaction matrices after wrapping"
+        )
 
 
 def _check_matrix_dict(matrix_dict: dict, *, neighbor_cell_cutoff) -> None:
@@ -498,11 +519,12 @@ def _check_matrix_dict(matrix_dict: dict, *, neighbor_cell_cutoff) -> None:
     # assert that the keys form a complete grid
     keys = np.array(list(matrix_dict.keys()))
     max_coords = keys.max(axis=0)
+    min_coords = keys.min(axis=0)
 
-    if not np.all(keys.min(axis=0) == -max_coords):
+    if not np.all(min_coords == -max_coords):
         raise ValueError(
             f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
-            f"but found min_coords={keys.min(axis=0)} and max_coords={max_coords}."
+            f"but found {min_coords=} and {max_coords=}."
         )
 
     for coord in matrix_dict:

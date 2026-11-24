@@ -282,7 +282,7 @@ class BaseDevice:
         # Transform back to real space
         wrapped_coordinates = fractional_coordinates @ lattice_vectors
 
-        if xp.all(cell_offsets) == 0:
+        if xp.all(cell_offsets == 0):
             cell_offsets = None
         else:
             warnings.warn(

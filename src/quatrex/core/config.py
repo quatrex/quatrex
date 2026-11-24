@@ -2351,6 +2351,66 @@ class PreProcessConfig(BaseModel):
 
     """
 
+    orbital_projections: Literal["wannier90", "cp2k"] | None = None
+    """Whether to compute real-space orbital projectors.
+
+    This pre-processing step will compute the real-space orbital
+    projectors for ab initio electronic structure data from CP2K or
+    Wannier90.
+
+    Unlike other pre-processing steps, this is handled during the
+    `quatrex mesh` command, since there is some co-optimization between
+    orbitals and mesh going on. At the start of the meshing process, the
+    orbital data is loaded, and mesh nodes are selected based on a
+    metric relating to the Hessian of the orbitals. These nodes are then
+    embedded in the simulation domain together with other geometry
+    regions and the orbital projectors are then computed on the mesh
+    nodes.
+
+    The final projection matrices for orbtials and their derivatives
+    will be saved to the input directory in the file `orbitals.h5`.
+    These projections are used when projecting quanitites such as the
+    excess charge density and the current density onto the real-space
+    mesh.
+
+    """
+
+    wannier90_dir: Path | None = None
+    """Path to a directory containing Wannier90 data.
+
+    This directory should contain the UNK* files, which store the
+    cell-periodic part of the Bloch waves on a real-space grid for all
+    k-points, and a `seedname.chk` file, containing the Wannier
+    transformation matrices and other Wannierization information.
+
+    """
+
+    wannier90_supercell: tuple[int, int, int] | None = None
+    """The supercell size to use when computing the real-space orbital
+    projectors from Wannier90 data.
+
+    Very advisable to use supercells larger than the unit cell, at least
+    in the transport direction.
+    
+    """
+
+    cp2k_basis_file: Path | None = None
+    """The path to the employed CP2K orbital basis file.
+
+    This basis file contains GTO exponents and contraction coefficients
+    for all atom types in the device. This could be `BASIS_MOLOPT` for
+    instance.
+
+    """
+
+    cp2k_basis_type: str | None = None
+    """The type of the employed CP2K orbital basis.
+
+    This basis type is used to select the correct basis set from the
+    basis file. This could be `"DZVP-MOLOPT"` for instance.
+
+    """
+
 
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""

@@ -46,6 +46,7 @@ dependencies = [
     "h5py",
     "tomlkit",
     "mmgpy",
+    "opt_einsum",
 ]
     [project.optional-dependencies]
     dev = [

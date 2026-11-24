@@ -1,213 +1,38 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import re
+"""Methods for evaluating CP2K orbitals and their derivatives."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import factorial
-from pathlib import Path
+from typing import Self
 
+import ase
 import numpy as np
 import opt_einsum as oe
+import pyvista as pv
+from scipy import sparse
 from scipy.constants import physical_constants
 from scipy.special import comb
 
 from qttools import NDArray
-from quatrex.pre_processing.orbitals.orbitals import RealSpaceOrbitals
+from quatrex.core.config import QuatrexConfig
+from quatrex.pre_processing.orbitals.cp2k.basis import (
+    CP2KBasisData,
+    CP2KBasisSet,
+    CP2KParameterSet,
+)
+from quatrex.pre_processing.orbitals.orbitals import (
+    DEFAULT_REMESHING_OPTIONS,
+    DeviceOrbitalProjector,
+    OrbitalEvaluator,
+    RemeshingOptions,
+)
 
 bohr = physical_constants["Bohr radius"][0] * 1e10  # Å
 
 
-@dataclass
-class ParameterSet:
-    """Represents a CP2K parameter set.
-
-    Each basis set can contain multiple parameter sets, each
-    corresponding to a specific angular momentum range and set of
-    exponents and contraction coefficients.
-
-    """
-
-    n: int
-    """Principal quantum number."""
-    l_min: int
-    """Minimum angular momentum quantum number."""
-    l_max: int
-    """Maximum angular momentum quantum number."""
-    num_exponents: int
-    """Number of exponents in the parameter set."""
-    num_contractions: list[int]
-    """Number of contractions for each l."""
-    exponents: NDArray
-    """Exponents for the Gaussians. These are read in (Bohr^-2) and converted to Å^-2."""
-    coefficients: list[NDArray]
-    """Contraction coefficients for each l."""
-
-    @classmethod
-    def from_lines(cls, lines: list[str]) -> "ParameterSet":
-        """Creates a ParameterSet object from a list of lines.
-
-        Parameters
-        ----------
-        lines : list of str
-            The lines specifying the set of parameters.
-
-        Returns
-        -------
-        parameter_set : ParameterSet
-            A ParameterSet object containing the parsed information.
-
-        """
-        n, l_min, l_max, num_exponents = map(int, lines[0].split()[:4])
-        num_contractions = list(map(int, lines[0].split()[4 : 4 + l_max - l_min + 1]))
-
-        values = np.genfromtxt(lines[1:])
-        exponents = values[:, 0] / bohr**2  # Convert from Bohr^-2 to Å^-2
-        coefficients = np.array_split(
-            values[:, 1:], np.cumsum(num_contractions)[:-1], axis=1
-        )
-
-        return cls(
-            n=n,
-            l_min=l_min,
-            l_max=l_max,
-            num_exponents=num_exponents,
-            num_contractions=num_contractions,
-            exponents=exponents,
-            coefficients=coefficients,
-        )
-
-
-@dataclass
-class BasisSet:
-    """Represents a CP2K basis set.
-
-    A basis set for a given element can contain multiple parameter sets,
-    each corresponding to a specific angular momentum range and set of
-    exponents and contraction coefficients.
-
-    """
-
-    element: str
-    """The chemical element for which the basis set is defined."""
-    name: str
-    """The name of the basis set."""
-    num_parameter_sets: int
-    """The number of parameter sets in this basis set."""
-    parameter_sets: list[ParameterSet]
-    """List of parameter sets for this basis set."""
-
-    @classmethod
-    def from_string(cls, basis_set_string: str) -> "BasisSet":
-        """Creates a BasisSet object from a string representation.
-
-        Parameters
-        ----------
-        basis_set_string : str
-            The string representation of the basis set.
-
-        Returns
-        -------
-        basis_set : BasisSet
-            A BasisSet object containing the parsed information.
-
-        """
-        lines = basis_set_string.strip().splitlines()
-        element, *name = lines[0].split()
-        num_parameter_sets = int(lines[1])
-
-        # Parse each parameter set.
-        parameter_sets = []
-        offset = 2
-        for __ in range(num_parameter_sets):
-            num_exponents = int(lines[offset].split()[3])
-            parameter_sets.append(
-                ParameterSet.from_lines(lines[offset : offset + num_exponents + 1])
-            )
-            offset += num_exponents + 1
-
-        return cls(
-            element=element,
-            name=" ".join(name),
-            num_parameter_sets=num_parameter_sets,
-            parameter_sets=parameter_sets,
-        )
-
-
-@dataclass
-class CP2KBasis:
-    """Represents a CP2K basis set file.
-
-    These are files like `BASIS_MOLOPT`, `BASIS_MOLOPT_UCL`, etc.
-
-    """
-
-    basis_sets: list[BasisSet]
-
-    def get_basis_set(self, element: str, name: str) -> BasisSet:
-        """Retrieves a basis set for a given element and name.
-
-        Parameters
-        ----------
-        element : str
-            The chemical element for which to retrieve the basis set.
-        name : str
-            The name of the basis set. This can be a partial name, and
-            the method will return the first matching basis set.
-
-        Returns
-        -------
-        basis_set : BasisSet
-            The requested basis set.
-
-        Raises
-        ------
-        ValueError
-            If the specified basis set is not found.
-
-        """
-        for basis_set in self.basis_sets:
-            if basis_set.element == element and name in basis_set.name:
-                return basis_set
-
-        raise ValueError(f"Basis set '{name}' for element '{element}' not found.")
-
-    @classmethod
-    def from_file(cls, path: str | Path) -> "CP2KBasis":
-        """Read a CP2K basis set file and return a BasisFile object.
-
-        These are files like `BASIS_MOLOPT`, `BASIS_MOLOPT_UCL`, etc.
-
-        Parameters
-        ----------
-        file : str or Path
-            Path to the basis set file.
-
-        Returns
-        -------
-        basis_file : BasisFile
-            A BasisFile object containing the parsed basis sets.
-
-        """
-        path = Path(path)
-        with open(path, "r") as f:
-            lines = f.readlines()
-
-        # Remove comments and empty lines.
-        lines = [line.strip() for line in lines]
-        lines = [line for line in lines if line != "" and line[0] != "#"]
-
-        # Split everything per basis set.
-        basis_sets = re.split("(^[A-Z])", "\n".join(lines), flags=re.MULTILINE)
-        basis_sets = [
-            el + params for el, params in zip(basis_sets[1::2], basis_sets[2::2])
-        ]
-
-        # Parse each basis set.
-        basis_sets = [BasisSet.from_string(basis_set) for basis_set in basis_sets]
-        return cls(basis_sets=basis_sets)
-
-
-def tuples_summing_to(total: int):
+def _tuples_summing_to(total: int):
     """Generates all tuples of 3 integers summing to a given total.
 
      Parameters
@@ -227,13 +52,12 @@ def tuples_summing_to(total: int):
      [(0, 0, 2), (0, 1, 1), (0, 2, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0)]
 
     """
-
     for i in range(total + 1):
         for j in range(total - i + 1):
             yield i, j, total - i - j
 
 
-def cartesian_to_spherical_coeff(m: int, l_x: int, l_y: int, l_z: int) -> complex:
+def _cartesian_to_spherical_coeff(m: int, l_x: int, l_y: int, l_z: int) -> complex:
     """Computes the contribution from cart. to pure sph. harmonic GTO.
 
     This implements formula (12) in [^1].
@@ -302,7 +126,7 @@ def cartesian_to_spherical_coeff(m: int, l_x: int, l_y: int, l_z: int) -> comple
     return first_term * second_term * third_term
 
 
-def primitive_gto(
+def _primitive_gto(
     x: NDArray,
     y: NDArray,
     z: NDArray,
@@ -339,7 +163,7 @@ def primitive_gto(
     return x**l_x * y**l_y * z**l_z * np.exp(-alpha_i * (x**2 + y**2 + z**2))
 
 
-def primitive_gto_gradient(
+def _primitive_gto_gradient(
     x: NDArray,
     y: NDArray,
     z: NDArray,
@@ -394,7 +218,7 @@ def primitive_gto_gradient(
     return np.array([grad_x, grad_y, grad_z])
 
 
-def primitive_gto_hessian(
+def _primitive_gto_hessian(
     x: NDArray,
     y: NDArray,
     z: NDArray,
@@ -483,61 +307,36 @@ def primitive_gto_hessian(
     )
 
 
-class CP2KOrbitals(RealSpaceOrbitals):
-    """Class to evaluate CP2K orbitals based on a given parameter set.
+@dataclass(frozen=True)
+class ProcessedCP2KParameterSet(CP2KParameterSet):
+    """A processed version of the CP2KParameterSet.
 
-    Parameters
-    ----------
-    parameter_set : ParameterSet
-        The parameter set containing the exponents and contraction coefficients
-        for the orbitals.
-
-    Attributes
-    ----------
-    parameter_set : ParameterSet
-        The parameter set containing the exponents and contraction
-        coefficients for the orbitals.
-    gto_normalizations : dict[tuple[int], NDArray]
-        A dictionary mapping each unique (l_x, l_y, l_z) tuple to its
-        corresponding set of normalization factors for the corresponding
-        primitive GTOs.
-    contraction_normalizations : list[NDArray]
-        A list of arrays containing the normalization factors for the
-        contracted GTOs for each angular momentum l.
-    cartesian_to_spherical_transforms : list[NDArray]
-        A list of transformation matrices that convert a set of
-        Cartesian GTOs to spherical GTOs for each angular momentum l
-        between l_min and l_max.
+    This additionally includes precomputed normalization factors and
+    transformation matrices.
 
     """
 
-    def __init__(self, parameter_set: ParameterSet):
-
-        self.parameter_set = parameter_set
-
-        # These are the unique l-tuples that have to be considered to
-        # construct the full set of basis functions.
-        unique_l_tuples = {
-            t
-            for l in range(parameter_set.l_min, parameter_set.l_max + 1)
-            for t in tuples_summing_to(l)
-        }
-
-        unique_l_tuples = sorted(unique_l_tuples)
-
-        self.gto_normalizations = self._init_gto_normalizations(
-            self.parameter_set, unique_l_tuples
-        )
-        self.contraction_normalizations = self._init_contraction_normalizations(
-            self.parameter_set
-        )
-        self.cartesian_to_spherical_transforms = (
-            self._init_cartesian_to_spherical_transforms(self.parameter_set)
-        )
+    gto_normalizations: dict[tuple[int, int, int], NDArray]
+    """
+    A dictionary mapping each unique (l_x, l_y, l_z) tuple to its
+    corresponding set of normalization factors for the corresponding
+    primitive GTOs.
+    """
+    contraction_normalizations: list[NDArray]
+    """
+    A list of arrays containing the normalization factors for the
+    contracted GTOs for each angular momentum l.
+    """
+    cartesian_to_spherical_transforms: list[NDArray]
+    """
+    A list of transformation matrices that convert a set of Cartesian
+    GTOs to spherical GTOs for each angular momentum l between l_min and
+    l_max.
+    """
 
     @staticmethod
     def _init_gto_normalizations(
-        parameter_set: ParameterSet, unique_l_tuples: list[tuple[int]]
+        parameter_set: CP2KParameterSet, unique_l_tuples: list[tuple[int]]
     ) -> dict[tuple[int], NDArray]:
         """Compute the individual GTO normalization factors.
 
@@ -547,7 +346,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
 
         Parameters
         ----------
-        parameter_set : ParameterSet
+        parameter_set : CP2KParameterSet
             The parameter set containing the exponents.
         unique_l_tuples : list[tuple[int]]
             A list of unique tuples representing the angular momentum
@@ -575,7 +374,9 @@ class CP2KOrbitals(RealSpaceOrbitals):
         return normalization
 
     @staticmethod
-    def _init_contraction_normalizations(parameter_set: ParameterSet) -> list[NDArray]:
+    def _init_contraction_normalizations(
+        parameter_set: CP2KParameterSet,
+    ) -> list[NDArray]:
         """Compute the contraction normalization factors.
 
         These factors normalize the contracted GTOs based on the
@@ -584,7 +385,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
 
         Parameters
         ----------
-        parameter_set : ParameterSet
+        parameter_set : CP2KParameterSet
             The parameter set containing the exponents and contraction
             coefficients.
 
@@ -614,7 +415,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
 
     @staticmethod
     def _init_cartesian_to_spherical_transforms(
-        parameter_set: ParameterSet,
+        parameter_set: CP2KParameterSet,
     ) -> list[NDArray]:
         """Compute the transformation matrices from Cartesian to spherical GTOs.
 
@@ -629,7 +430,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
 
         Parameters
         ----------
-        parameter_set : ParameterSet
+        parameter_set : CP2KParameterSet
             The parameter set containing the angular momentum range.
 
         Returns
@@ -643,16 +444,16 @@ class CP2KOrbitals(RealSpaceOrbitals):
 
         transforms = []
         for l in range(parameter_set.l_min, parameter_set.l_max + 1):
-            l_tuples = list(tuples_summing_to(l))
+            l_tuples = list(_tuples_summing_to(l))
             transform = np.zeros((2 * l + 1, len(l_tuples)))
             for m_ind, m in enumerate(range(-l, l + 1)):
                 coeff = np.array(
-                    [cartesian_to_spherical_coeff(m, *l_tuple) for l_tuple in l_tuples]
+                    [_cartesian_to_spherical_coeff(m, *l_tuple) for l_tuple in l_tuples]
                 )
                 if m != 0:
                     coeff_m = np.array(
                         [
-                            cartesian_to_spherical_coeff(-m, *l_tuple)
+                            _cartesian_to_spherical_coeff(-m, *l_tuple)
                             for l_tuple in l_tuples
                         ]
                     )
@@ -666,6 +467,73 @@ class CP2KOrbitals(RealSpaceOrbitals):
             transforms.append(transform)
 
         return transforms
+
+    @classmethod
+    def from_parameter_set(cls, parameter_set: CP2KParameterSet) -> Self:
+        """Creates a ProcessedParameterSet from a CP2KParameterSet.
+
+        Parameters
+        ----------
+        parameter_set : CP2KParameterSet
+            The CP2K parameter set to process.
+
+        Returns
+        -------
+        processed_set : ProcessedParameterSet
+            A ProcessedParameterSet containing the precomputed
+            normalization factors and transformation matrices.
+
+        """
+        # These are the unique l-tuples that have to be considered to
+        # construct the full set of basis functions.
+        unique_l_tuples = {
+            t
+            for l in range(parameter_set.l_min, parameter_set.l_max + 1)
+            for t in _tuples_summing_to(l)
+        }
+        unique_l_tuples = sorted(unique_l_tuples)
+
+        gto_normalizations = cls._init_gto_normalizations(
+            parameter_set, unique_l_tuples
+        )
+        contraction_normalizations = cls._init_contraction_normalizations(parameter_set)
+        cartesian_to_spherical_transforms = cls._init_cartesian_to_spherical_transforms(
+            parameter_set
+        )
+
+        return cls(
+            n=parameter_set.n,
+            l_min=parameter_set.l_min,
+            l_max=parameter_set.l_max,
+            num_exponents=parameter_set.num_exponents,
+            num_contractions=parameter_set.num_contractions,
+            exponents=parameter_set.exponents,
+            coefficients=parameter_set.coefficients,
+            gto_normalizations=gto_normalizations,
+            contraction_normalizations=contraction_normalizations,
+            cartesian_to_spherical_transforms=cartesian_to_spherical_transforms,
+        )
+
+
+class CP2KOrbitalEvaluator(OrbitalEvaluator):
+    """Class to evaluate CP2K orbitals based on a given basis set.
+
+    Parameters
+    ----------
+    basis_set : CP2KBasisSet
+        A CP2K basis set for some element, containing (possibly
+        multiple) parameter sets.
+
+
+    """
+
+    def __init__(self, basis_set: CP2KBasisSet):
+        """Initialize the CP2KOrbitalEvaluator with a given basis set."""
+
+        self.parameter_sets = [
+            ProcessedCP2KParameterSet.from_parameter_set(parameter_set)
+            for parameter_set in basis_set.parameter_sets
+        ]
 
     def _evaluate(
         self,
@@ -692,51 +560,54 @@ class CP2KOrbitals(RealSpaceOrbitals):
         """
         values = []
 
-        for i_l, l in enumerate(
-            range(self.parameter_set.l_min, self.parameter_set.l_max + 1)
-        ):
-            l_tuples = list(tuples_summing_to(l))
-            # Evaluate primitives.
-            primitive_values = np.array(
-                [
-                    primitive(*positions.T, l_x, l_y, l_z, alpha)
-                    for l_x, l_y, l_z in l_tuples
-                    for alpha in self.parameter_set.exponents
-                ]
-            )
-            primitive_values = primitive_values.reshape(
-                len(l_tuples),
-                self.parameter_set.num_exponents,
-                *primitive_values.shape[1:],
-            )
-
-            # Normalize primitives.
-            normalizations = np.vstack(
-                [self.gto_normalizations[l_tuple] for l_tuple in l_tuples]
-            )
-            # Expand the normalization array to match the shape of
-            # primitive_values for broadcasting.
-            num_value_dims = primitive_values.ndim - normalizations.ndim
-            normalizations = normalizations[(...,) + (np.newaxis,) * num_value_dims]
-            normalized = primitive_values * normalizations
-
-            # Perform a set of contractions for the current angular
-            # momentum.
-            for i_c, coefficients in enumerate(self.parameter_set.coefficients[i_l].T):
-                contraction_normalization = self.contraction_normalizations[i_l][i_c]
-                contracted = (
-                    oe.contract("j,ij...->i...", coefficients, normalized)
-                    * contraction_normalization
+        for parameter_set in self.parameter_sets:
+            for i_l, l in enumerate(
+                range(parameter_set.l_min, parameter_set.l_max + 1)
+            ):
+                l_tuples = list(_tuples_summing_to(l))
+                # Evaluate primitives.
+                primitive_values = np.array(
+                    [
+                        primitive(*positions.T, l_x, l_y, l_z, alpha)
+                        for l_x, l_y, l_z in l_tuples
+                        for alpha in parameter_set.exponents
+                    ]
+                )
+                primitive_values = primitive_values.reshape(
+                    len(l_tuples),
+                    parameter_set.num_exponents,
+                    *primitive_values.shape[1:],
                 )
 
-                # Transform from Cartesian to spherical harmonics.
-                values.append(
-                    oe.contract(
-                        "mj,j...->m...",
-                        self.cartesian_to_spherical_transforms[i_l],
-                        contracted,
+                # Normalize primitives.
+                normalizations = np.vstack(
+                    [parameter_set.gto_normalizations[l_tuple] for l_tuple in l_tuples]
+                )
+                # Expand the normalization array to match the shape of
+                # primitive_values for broadcasting.
+                num_value_dims = primitive_values.ndim - normalizations.ndim
+                normalizations = normalizations[(...,) + (np.newaxis,) * num_value_dims]
+                normalized = primitive_values * normalizations
+
+                # Perform a set of contractions for the current angular
+                # momentum.
+                for i_c, coefficients in enumerate(parameter_set.coefficients[i_l].T):
+                    contraction_normalization = (
+                        parameter_set.contraction_normalizations[i_l][i_c]
                     )
-                )
+                    contracted = (
+                        oe.contract("j,ij...->i...", coefficients, normalized)
+                        * contraction_normalization
+                    )
+
+                    # Transform from Cartesian to spherical harmonics.
+                    values.append(
+                        oe.contract(
+                            "mj,j...->m...",
+                            parameter_set.cartesian_to_spherical_transforms[i_l],
+                            contracted,
+                        )
+                    )
 
         return np.vstack(values)
 
@@ -757,7 +628,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
             orbitals and N is the number of points.
 
         """
-        return self._evaluate(positions, primitive_gto)
+        return self._evaluate(positions, _primitive_gto)
 
     def evaluate_orbital_gradients(self, positions: NDArray) -> NDArray:
         """Evaluate gradients of CP2K orbitals at the given positions.
@@ -777,7 +648,7 @@ class CP2KOrbitals(RealSpaceOrbitals):
             of the gradient, and N is the number of points.
 
         """
-        return self._evaluate(positions, primitive_gto_gradient).swapaxes(1, 2)
+        return self._evaluate(positions, _primitive_gto_gradient).swapaxes(1, 2)
 
     def evaluate_orbital_hessians(self, positions: NDArray) -> NDArray:
         """Evaluate Hessians of CP2K orbitals at the given positions.
@@ -797,4 +668,177 @@ class CP2KOrbitals(RealSpaceOrbitals):
             matrix, and N is the number of points.
 
         """
-        return self._evaluate(positions, primitive_gto_hessian).swapaxes(1, 3)
+        return self._evaluate(positions, _primitive_gto_hessian).swapaxes(1, 3)
+
+
+class AtomCenteredOrbitalEvaluator(OrbitalEvaluator):
+    def __init__(
+        self,
+        evaluators: dict[str, OrbitalEvaluator],
+        structure: ase.Atoms,
+    ):
+        """Initialize the AtomCenteredOrbitalEvaluator.
+
+        Parameters
+        ----------
+        evaluators : dict[str, OrbitalEvaluator]
+            A dictionary mapping atom types to their corresponding
+            orbital evaluators.
+        structure : ase.Atoms
+            The atomic structure for which the orbitals are to be
+            evaluated.
+
+        """
+        self.evaluators = evaluators
+        self.structure = structure
+
+    def _evaluate(self, positions: NDArray, method: str) -> NDArray:
+        """Evaluate the orbitals, gradients, or Hessians at the given positions.
+
+        Parameters
+        ----------
+        positions : NDArray
+            The positions at which to evaluate. Should be of shape (N,
+            3), N being the number of points.
+        method : str
+            The method to use for evaluation. Can be
+            'evaluate_orbitals', 'evaluate_orbital_gradients', or
+            'evaluate_orbital_hessians'.
+
+        Returns
+        -------
+        result : NDArray
+            The evaluated values at the given positions.
+
+        """
+        values = []
+        for position, symbol in zip(
+            self.structure.positions, self.structure.get_chemical_symbols()
+        ):
+
+            values.append(
+                getattr(self.evaluators[symbol], method)(positions - position)
+            )
+
+        return np.concatenate(values, axis=0)
+
+    def evaluate_orbitals(self, positions: NDArray) -> NDArray:
+        return self._evaluate(positions, "evaluate_orbitals")
+
+    def evaluate_orbital_gradients(self, positions: NDArray) -> NDArray:
+        return self._evaluate(positions, "evaluate_orbital_gradients")
+
+    def evaluate_orbital_hessians(self, positions: NDArray) -> NDArray:
+        return self._evaluate(positions, "evaluate_orbital_hessians")
+
+
+class CP2KDeviceOrbitalProjector(DeviceOrbitalProjector):
+
+    def __init__(self, config: QuatrexConfig):
+        super().__init__(config)
+
+    @staticmethod
+    def _init_orbital_evaluator(
+        config: QuatrexConfig, structure: ase.Atoms
+    ) -> dict[str, CP2KOrbitalEvaluator]:
+        """Initialize the real-space orbitals based on the configuration.
+
+        Parameters
+        ----------
+        config : QuatrexConfig
+            The main quatrex configuration.
+        structure : ase.Atoms
+            The atomic structure for which the orbitals are to be
+            initialized.
+
+        Returns
+        -------
+        orbitals : dict[str, CP2KOrbitals]
+            A dictionary mapping atom types to their corresponding CP2K
+            orbitals.
+
+        """
+        basis = CP2KBasisData.from_file(config.pre_process.cp2k_basis_file)
+        unique_atom_types = list(set(structure.get_chemical_symbols()))
+
+        orbital_evaluators = {}
+        for atom_type in unique_atom_types:
+            basis_set = basis.get_basis_set(
+                atom_type, config.pre_process.cp2k_basis_type
+            )
+            orbital_evaluators[atom_type] = CP2KOrbitalEvaluator(basis_set)
+
+        return AtomCenteredOrbitalEvaluator(orbital_evaluators, structure)
+
+    def get_initial_mesh(
+        self, options: RemeshingOptions | None = None
+    ) -> pv.UnstructuredGrid:
+        """Get an initial mesh guess for the orbital projections.
+
+        Parameters
+        ----------
+        options : RemeshingOptions, optional
+            Options concerning the remeshing for orbital projection. If
+            not provided, the default options will be used.
+
+        Returns
+        -------
+        initial_mesh : pv.UnstructuredGrid
+            The initial mesh to be used for remeshing.
+
+        """
+        options = options or DEFAULT_REMESHING_OPTIONS
+        coordinates = []
+        for i, periodic in enumerate(self.structure.pbc):
+            padding = options.padding if not periodic else 0.0
+            cell_length = self.structure.cell[i, i]
+            x_i = np.linspace(
+                -padding,
+                cell_length + padding,
+                int((cell_length + 2 * padding) // options.initial_spacing),
+            )
+            coordinates.append(x_i)
+
+        meshgrid = np.meshgrid(*coordinates, indexing="ij")
+        initial_mesh = pv.StructuredGrid(*meshgrid).delaunay_3d()
+
+        return initial_mesh
+
+    def assemble_projections(
+        self, mesh_nodes: NDArray
+    ) -> tuple[sparse.csr_matrix, list[sparse.csr_matrix]]:
+        """Evaluate the Basis functions on the device mesh.
+
+        Parameters
+        ----------
+        mesh_nodes : NDArray
+            The coordinates of the mesh nodes where the basis functions
+            are to be evaluated. Should be of shape (N, 3), N being the
+            number of mesh nodes.
+
+        Returns
+        -------
+        projections : sparse.csr_matrix
+            A sparse matrix containing the evaluated basis functions on
+            the mesh. Each row corresponds to a point in the device
+            mesh, and each column corresponds to a basis function.
+        gradient_matrices : list[sparse.csr_matrix]
+            A list of three sparse matrices, each corresponding to the
+            gradient components (x, y, z) of the evaluated basis
+            functions on the mesh. Each matrix has the same shape as
+            `projections`, with each row corresponding to a point in the
+            device mesh and each column corresponding to a basis
+            function.
+
+        """
+        projections = self.orbital_evaluator.evaluate_orbitals(mesh_nodes)
+        gradient_projections = self.orbital_evaluator.evaluate_orbital_gradients(
+            mesh_nodes
+        )
+
+        # Construct three sparse matrices for the gradient components.
+        gradient_matrices = []
+        for i in range(3):
+            gradient_matrices.append(sparse.csr_matrix(gradient_projections[:, :, i].T))
+
+        return sparse.csr_matrix(projections.T), gradient_matrices

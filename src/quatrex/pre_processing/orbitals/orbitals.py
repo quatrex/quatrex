@@ -1,17 +1,57 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable
+"""This module contains classes and functions for handling real-space
+orbitals."""
 
-import mmgpy as mmg
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+import ase.io
 import numpy as np
-import opt_einsum as oe
 import pyvista as pv
+from rich.pretty import pprint
+from scipy import sparse
 
 from qttools import NDArray
+from quatrex.core.config import QuatrexConfig
+from quatrex.pre_processing.orbitals.remeshing import remesh_for_orbitals
 
 
-class RealSpaceOrbitals(ABC):
+@dataclass(frozen=True)
+class RemeshingOptions:
+    """Options concerning the remeshing for orbital projection."""
+
+    initial_spacing: float = 2.0
+    """The initial grid spacing for the orbital projections.
+
+    This value determines the resolution of the initial mesh before any
+    remeshing is applied.
+
+    """
+
+    padding: float = 5.0
+    """Padding around the structure for the initial grid.
+
+    This ensures that the orbital projections are well captured,
+    especially near the boundaries of the simulation domain.
+
+    """
+    max_node_distance_from_atoms: float = 7.5
+    """Maximum distance from atoms to consider for orbital projections.
+
+    Points that are further away than this distance from any atom will
+    be dropped.
+
+    """
+
+    duplicate_tolerance: float = 1e-4
+    """Tolerance for deduplicating points in the mesh."""
+
+
+DEFAULT_REMESHING_OPTIONS = RemeshingOptions()
+
+
+class OrbitalEvaluator(ABC):
     """Abstract base class for real-space orbitals.
 
     This class defines the interface for evaluating orbitals, their
@@ -81,298 +121,254 @@ class RealSpaceOrbitals(ABC):
         ...
 
 
-def intersect_tensor_metrics(metrics_a: NDArray, metrics_b: NDArray) -> NDArray:
-    """Compute the intersection of two tensor metrics.
-
-    The two metrics have shape (..., 3, 3) and are assumed to be
-    symmetric positive definite.
-
-    This is a batched reimplementation of what mmgpy also does. There it
-    however loops over all the DOFs, which is a bit slower. The
-    shape-agnostic batching also allows intersecting two sets of metrics
-    with different numbers of DOFs, which is useful to efficiently
-    reduce the Hessian metrics of multiple orbitals to a single metric.
+def _deduplicate_points(points: NDArray, atol: float) -> NDArray:
+    """Deduplicate points in a 3D array based on a tolerance.
 
     Parameters
     ----------
-    metrics_a : NDArray
-        The first set of tensor metrics with shape (..., 3, 3).
-    metrics_b : NDArray
-        The paired set of tensor metrics with shape (..., 3, 3).
+    points : NDArray
+        A 2D array of shape (N, 3) representing N points in 3D space.
+    atol : float
+        The tolerance for deduplication. Points that are closer than
+        this distance will be considered duplicates.
 
     Returns
     -------
-    metrics : NDArray
-        The intersected tensor metrics with shape (..., 3, 3).
+    unique_points : NDArray
+        A 2D array of shape (M, 3) containing the unique points, where M
+        <= N.
 
     """
-    ws, vs = np.linalg.eigh(metrics_a)
-
-    # Ensure that the eigenvalues are positive to avoid numerical issues.
-    eps = (
-        np.finfo(metrics_a.dtype).eps * np.max(np.abs(ws), axis=-1, keepdims=True) * 100
-    )
-    ws = np.maximum(ws, eps)
-
-    # Move metrics_b into the eigenbases of metrics_a.
-    sqrt_a = oe.contract("...ik,...k,...jk->...ij", vs, np.sqrt(ws), vs)
-    inv_sqrt_a = oe.contract("...ik,...k,...jk->...ij", vs, 1.0 / np.sqrt(ws), vs)
-    transformed_metric = oe.contract(
-        "...ij,...jk,...kl->...il", inv_sqrt_a, metrics_b, inv_sqrt_a
-    )
-
-    ws_transformed, vs_transformed = np.linalg.eigh(transformed_metric)
-    ws_transformed = np.maximum(ws_transformed, 1.0)
-
-    middle = oe.contract(
-        "...ik,...k,...jk->...ij", vs_transformed, ws_transformed, vs_transformed
-    )
-    result = oe.contract("...ij,...jk,...lk->...il", sqrt_a, middle, sqrt_a)
-
-    return result.reshape(metrics_a.shape)
+    keys = np.floor((points - points.min(axis=0)) / atol).astype(np.int64)
+    dims = keys.max(axis=0) + 1
+    # NOTE: Requires that prod(dims) does not exceed 2**63, which is
+    # almost always true in practice.
+    flat = (keys[:, 0] * dims[1] + keys[:, 1]) * dims[2] + keys[:, 2]
+    __, idx = np.unique(flat, return_index=True)
+    return points[np.sort(idx)]
 
 
-def reduce_metrics(metrics: NDArray) -> NDArray:
-    """Reduce a set of metrics to a single metric.
+class DeviceOrbitalProjector(ABC):
+    """Class for handling orbital projections.
 
-    This function computes the intersection of a set of metrics by
-    sequentially intersecting sets of metrics until only one metric
-    remains. The input metrics are assumed to be symmetric positive
-    definite and have shape (N, ..., 3, 3).
-
-    This is a parallel tree-reduction version of
-    mmgpy.metrics.intersect_metrics, which would have to be called over
-    and over again on two metrics. This is not guaranteed to give the
-    exact same result as the sequential intersection, but it is much
-    faster
+    This class is responsible for managing the remeshing and evaluation
+    of orbital projections based on the provided configuration.
 
     Parameters
     ----------
-    metrics : NDArray
-        The input metrics with shape (N, ..., 3, 3).
-
-    Returns
-    -------
-    metric : NDArray
-        The reduced metric with shape (..., 3, 3).
+    config : QuatrexConfig
+        The main quatrex configuration.
 
     """
-    print(f"  Intersecting {metrics.shape[0]} metrics...")
-    while metrics.shape[0] > 1:
-        num_metrics = metrics.shape[0]
-        print(f"    {num_metrics} metrics remaining...")
-        if num_metrics % 2:
-            # In the case of an odd number of metrics, carry the last
-            # one over to the next step in the reduction.
-            carry, metrics = metrics[-1:], metrics[:-1]
-        else:
-            # In the case of an even number of metrics, no need to
-            # carry.
-            carry = metrics[:0]
-        metrics = np.concatenate(
-            [intersect_tensor_metrics(metrics[0::2], metrics[1::2]), carry]
+
+    def __init__(self, config: QuatrexConfig):
+        """Initialize the orbital projections from a config."""
+        self.config = config
+
+        if config.material_model != "atomistic":
+            raise ValueError(
+                "Orbital projections are only applicable to `atomistic` "
+                "material descriptions."
+            )
+
+        try:
+            self.structure = ase.io.read(config.input_dir / "structure.xyz")
+            self.structure.center()
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Structure file 'structure.xyz' not found in {config.input_dir}. "
+                "Please ensure the structure file is present for atomistic simulations."
+            )
+
+        self.orbital_evaluator = self._init_orbital_evaluator(config, self.structure)
+
+    @staticmethod
+    @abstractmethod
+    def _init_orbital_evaluator(
+        config: QuatrexConfig, structure: ase.Atoms
+    ) -> OrbitalEvaluator:
+        """Initialize the real-space orbitals based on the configuration.
+
+        Parameters
+        ----------
+        config : QuatrexConfig
+            The main quatrex configuration.
+        structure : ase.Atoms
+            The atomic structure for which the orbitals are to be
+            initialized.
+
+        Returns
+        -------
+        orbitals : RealSpaceOrbitals
+            An instance of a subclass of RealSpaceOrbitals, initialized
+            based on the specified orbital projection method in the
+            configuration.
+
+        """
+        ...
+
+    @abstractmethod
+    def get_initial_mesh(
+        self,
+        options: RemeshingOptions | None = None,
+    ) -> pv.UnstructuredGrid:
+        """Get an initial mesh guess for the orbital projections.
+
+        Parameters
+        ----------
+        options : RemeshingOptions, optional
+            Options concerning the remeshing for orbital projection.
+            Uses default values if not provided.
+
+        Returns
+        -------
+        initial_mesh : pv.UnstructuredGrid
+            The initial mesh to be used for remeshing.
+
+        """
+        ...
+
+    def _filter_nodes(
+        self, mesh_nodes: NDArray, options: RemeshingOptions | None = None
+    ) -> NDArray:
+        """Filter the nodes of the orbital mesh.
+
+        Three main filtering criteria are applied:
+
+        1. Only nodes that are within a certain distance from the atoms
+        are kept. This ensures that the orbital projections are relevant
+        to the atomic structure.
+        2. Nodes that are too close to the atoms are removed to avoid
+        issues with gmsh.
+        3. Nodes that are not contained within the structure cell or sit
+        on the cell boundary are removed to ensure that the fragment
+        call in gmsh does not fail.
+
+        Parameters
+        ----------
+        mesh_nodes : NDArray
+            The nodes of the orbital mesh to be filtered.
+        options : RemeshingOptions, optional
+            Options concerning the remeshing for orbital projection.
+            Uses default values if not provided.
+
+        Returns
+        -------
+        filtered_nodes : NDArray
+            The nodes of the orbital mesh that pass the filtering
+            criteria.
+
+        """
+        options = options or DEFAULT_REMESHING_OPTIONS
+
+        device_structure = self.structure.copy()
+        if self.config.device.construct_from_unit_cell:
+            transport_ind = "abc".index(self.config.device.transport_direction)
+            num_repetitions = (
+                self.config.device.num_transport_cells
+                * self.config.device.neighbor_cell_cutoff[transport_ind]
+            )
+            repeats = [num_repetitions if i == transport_ind else 1 for i in range(3)]
+            device_structure = device_structure.repeat(repeats)
+            device_structure.pbc[transport_ind] = False
+
+        nodes_to_keep = []
+        for atom_position in device_structure.positions:
+            distances = np.linalg.norm(mesh_nodes - atom_position, axis=1)
+            # Extract the node positions that are within a certain distance
+            # from the atoms.
+            nodes_within_cutoff = np.where(
+                distances < options.max_node_distance_from_atoms
+            )[0]
+
+            # Remove points too close to the atoms.
+            nodes_on_atoms = np.where(distances < options.duplicate_tolerance)[0]
+
+            nodes_to_keep.append(np.setdiff1d(nodes_within_cutoff, nodes_on_atoms))
+
+        nodes_to_keep = np.unique(np.concatenate(nodes_to_keep))
+
+        fractional_coords = (
+            np.linalg.inv(device_structure.get_cell()) @ mesh_nodes.T
+        ).T
+        inside_cell = np.where(
+            np.all(
+                (fractional_coords > options.duplicate_tolerance)
+                & (fractional_coords < 1 - options.duplicate_tolerance),
+                axis=1,
+            )
+        )[0]
+
+        nodes_to_keep = np.intersect1d(nodes_to_keep, inside_cell)
+
+        filtered_nodes = _deduplicate_points(
+            mesh_nodes[nodes_to_keep], options.duplicate_tolerance
         )
-    return metrics[0]
 
+        return filtered_nodes
 
-def metrics_from_hessians(
-    hessians: NDArray,
-    target_error: float = 1e-2,
-    hmin: float | None = None,
-    hmax: float | None = None,
-) -> NDArray:
-    """Compute the Hessian metric from a set of Hessian matrices.
+    def remesh(self) -> NDArray:
+        """Generate a new mesh for the orbitals.
 
-    This implements the same metric computation as
-    mmgpy.metrics.create_metric_from_hessian, but in a batched and
-    shape-agnostic way and without converting from and to mmgpy's tensor
-    representation.
+        Returns
+        -------
+        orbital_nodes : NDArray
+            The nodes of the remeshed orbital projections that should
+            get included in the device mesh.
 
-    Parameters
-    ----------
-    hessians : NDArray
-        The input Hessian matrices with shape (..., 3, 3).
-    target_error : float, optional
-        The target error for the metric computation.
-    hmin : float, optional
-        The minimum edge length for the metric. If provided, the
-        eigenvalues of the metric will be clipped to ensure that the
-        minimum edge length is respected.
-    hmax : float, optional
-        The maximum edge length for the metric. If provided, the
-        eigenvalues of the metric will be clipped to ensure that the
-        maximum edge length is respected.
-
-    Returns
-    -------
-    metrics : NDArray
-        The computed Hessian metrics with shape (..., 3, 3).
-
-    """
-    # This is apparently related to the interpolation error of a linear
-    # function on a tetrahedron. The given target error is not a L2
-    # error, but rather some kind of interpolation error.
-    c = 1.0 / 8.0
-
-    ws, vs = np.linalg.eigh(hessians)
-    metric_ws = c * np.abs(ws) / target_error
-
-    # Clamp the eigenvalues of the metric to ensure that the minimum and
-    # maximum edge lengths are respected.
-    w_max = 1.0 / hmin**2 if hmin is not None else None
-    w_min = max(1e-12, 1.0 / hmax**2) if hmax is not None else 1e-12
-
-    np.clip(metric_ws, min=w_min, max=w_max, out=metric_ws)
-
-    metrics = oe.contract("...ij,...j,...kj->...ik", vs, metric_ws, vs)
-    return metrics
-
-
-def assemble_metric(
-    hessians: NDArray,
-    target_error: float = 1e-2,
-    hmin: float | None = None,
-    hmax: float | None = None,
-) -> NDArray:
-    """Compute a global Hessian metric from a set of Hessian matrices.
-
-    The input Hessians are assumed to have shape (N, ..., 3, 3), where N
-    is the number of orbitals, and the rest are the DOFs where the
-    Hessians are defined.
-
-    Parameters
-    ----------
-    hessians : NDArray
-        The input Hessian matrices with shape (N, ..., 3, 3), where
-        N is the number of orbitals.
-    target_error : float, optional
-        The target error for the metric computation.
-    hmin : float, optional
-        The minimum edge length for the metric.
-    hmax : float, optional
-        The maximum edge length for the metric.
-
-    Returns
-    -------
-    metric : NDArray
-        The computed Hessian metric as an Nx6 array, where N is the
-        number of points in the subsampled grids. The metric is stored
-        in the order xx, xy, xz, yy, yz, zz.
-
-    """
-    print(f"  Computing metrics from {hessians.shape[0]} Hessians...")
-    metrics = metrics_from_hessians(
-        hessians,
-        target_error=target_error,
-        hmin=hmin,
-        hmax=hmax,
-    )
-
-    intersection = reduce_metrics(metrics)
-
-    # Now convert to the mmgpy tensor representation, which is a 6D
-    # vector with the order xx, xy, xz, yy, yz, zz. This is the same as
-    # mmgpy.metrics.matrix_to_tensor, but batched.
-    i, j = np.triu_indices(3)
-    return np.ascontiguousarray(intersection[..., i, j])
-
-
-def remesh_for_orbitals(
-    mesh: pv.UnstructuredGrid,
-    compute_hessians: Callable[[pv.UnstructuredGrid], NDArray],
-    num_iterations: int = 2,
-    target_error: float = 5e-2,
-    hmin: float = 1e-1,
-    hmax: float = 5.0,
-    hgrad: float = 1.5,
-) -> tuple[pv.UnstructuredGrid, list[dict]]:
-    """Remesh the orbitals on a given grid.
-
-    Parameters
-    ----------
-    mesh : pv.UnstructuredGrid
-        The tetrahedral mesh on which the Hessian data from the
-        structured grids is re-evaluated.
-    compute_hessians : Callable[[pv.UnstructuredGrid], NDArray]
-        A function that computes the Hessian of the orbitals on a given
-        unstructured grid.
-    num_iterations : int, optional
-        The number of iterations for which to run the remeshing process.
-    target_error : float, optional
-        The target error for the metric computation. By default, set to
-        5e-2.
-    hmin : float, optional
-        The minimum edge length in the resulting mesh. Used in the
-        computation of the Hessian metric and in the remeshing call.
-        Default is 1e-1.
-    hmax : float, optional
-        The maximum edge length in the resulting mesh. Used in the
-        computation of the Hessian metric and the remeshing call.
-        Default is 5.0.
-    hgrad : float, optional
-        The maximum allowed edge length ratio between neighboring
-        elements. Used in the remeshing call. The default value is 1.5,
-        which results in sensible looking meshes, while not overly
-        refining the surrounfing vacuum.
-
-    Returns
-    -------
-    mesh : pv.UnstructuredGrid
-        The remeshed tetrahedral mesh after the specified number of
-        iterations.
-    remesh_info : list of dict
-        A list of dictionaries containing information about each
-        remeshing iteration, including the number of vertices and
-        elements in the remeshed mesh.
-
-    """
-    mesh = mesh.copy()
-    remesh_info = []
-    for i in range(num_iterations):
-        print(f"Remeshing iteration {i + 1}/{num_iterations}...")
-        print(f"  Computing Hessians on mesh with {mesh.n_points} nodes...")
-        hessians = compute_hessians(mesh)
-        metric = assemble_metric(
-            hessians,
-            target_error=target_error,
-            hmax=hmax,
-            hmin=hmin,
+        """
+        orbital_mesh, remesh_info = remesh_for_orbitals(
+            self.get_initial_mesh(),
+            self.orbital_evaluator.evaluate_orbital_hessians,
         )
-        mmg_mesh = mmg.from_pyvista(mesh)
-        mmg_mesh.set_field("tensor", metric)
-        info = mmg_mesh.remesh(hgrad=hgrad, hmin=hmin, hmax=hmax)
-        remesh_info.append(info)
-        mesh = mmg.to_pyvista(mmg_mesh)
 
-    return mesh, remesh_info
+        pprint(remesh_info)
 
+        orbital_nodes = orbital_mesh.points
 
-def compute_l2_errors(
-    grids: list[pv.StructuredGrid],
-    meshes: list[pv.UnstructuredGrid],
-) -> NDArray:
-    """Compute the relative L2 errors of the orbitals on the remeshed grid.
+        if self.config.device.construct_from_unit_cell:
+            transport_ind = "abc".index(self.config.device.transport_direction)
+            num_repetitions = (
+                self.config.device.num_transport_cells
+                * self.config.device.neighbor_cell_cutoff[transport_ind]
+            )
 
-    Parameters
-    ----------
-    grids : list of pv.StructuredGrid
-        The input grids containing scalar data.
-    meshes : list of pv.UnstructuredGrid
-        The remeshed tetrahedral meshes.
+            orbital_nodes = np.concatenate(
+                [
+                    orbital_nodes + i * self.structure.get_cell()[transport_ind]
+                    for i in range(num_repetitions)
+                ],
+                axis=0,
+            )
 
-    Returns
-    -------
-    relative_l2_errors : NDArray
-        The relative L2 errors of the orbitals on the remeshed grid.
+        orbital_nodes = self._filter_nodes(orbital_nodes)
 
-    """
-    relative_l2_errors = []
-    for grid, mesh in zip(grids, meshes):
-        grid = grid.copy()
-        sampled = grid.sample(mesh)["data"]
-        grid["error"] = np.abs(grid["data"] - sampled) ** 2
-        grid["squared_modulus"] = np.abs(grid["data"]) ** 2
-        integrated = grid.integrate_data()
-        relative_l2_errors.append(integrated["error"] / integrated["squared_modulus"])
+        return orbital_nodes
 
-    return np.array(relative_l2_errors)
+    @abstractmethod
+    def assemble_projections(
+        self, mesh_nodes: NDArray
+    ) -> tuple[sparse.csr_matrix, list[sparse.csr_matrix]]:
+        """Evaluate the orbital projections on the given device mesh.
+
+        Parameters
+        ----------
+        mesh_nodes : NDArray
+            A 2D array of shape (N, 3) containing the coordinates of the
+            mesh nodes in real space, where N is the number of nodes.
+
+        Returns
+        -------
+        projections : sparse.csr_matrix
+            A sparse matrix containing the evaluated basis functions on
+            the mesh. Each row corresponds to a point in the device
+            mesh, and each column corresponds to a basis function.
+        gradient_matrices : list of sparse.csr_matrix
+            A list of three sparse matrices, each corresponding to the
+            gradient of the basis functions in the x, y, and z
+            directions, respectively. Each matrix has the same shape as
+            `projections`, with rows corresponding to mesh nodes and
+            columns corresponding to basis functions.
+
+        """
+        ...

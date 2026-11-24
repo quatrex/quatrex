@@ -8024,6 +8024,7 @@ packages:
   - h5py
   - tomlkit
   - mmgpy
+  - opt-einsum
   - pytest ; extra == 'dev'
   - pytest-cov ; extra == 'dev'
   - pytest-mpi ; extra == 'dev'

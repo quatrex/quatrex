@@ -3,12 +3,14 @@
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
+
 import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Annotated, NoReturn
 
+import numpy as np
 import typer
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
@@ -332,7 +334,7 @@ def pre_process(
 
 @quatrex_cli.command()
 def mesh(
-    config: Annotated[
+    config_path: Annotated[
         Path,
         typer.Argument(
             ...,
@@ -362,16 +364,73 @@ def mesh(
 
     from quatrex.core.config import parse_config, setup_context
 
-    config = parse_config(config)
+    config = parse_config(config_path)
     setup_context(config)
 
     secho_header()
 
+    orbital_nodes = None
+    if config.pre_process.orbital_projections is not None:
+
+        if config.pre_process.orbital_projections == "cp2k":
+            from quatrex.pre_processing.orbitals.cp2k import CP2KDeviceOrbitalProjector
+
+            orbital_projector = CP2KDeviceOrbitalProjector(config)
+
+        elif config.pre_process.orbital_projections == "wannier90":
+            from quatrex.pre_processing.orbitals.wannier90 import (
+                Wannier90DeviceOrbitalProjector,
+            )
+
+            orbital_projector = Wannier90DeviceOrbitalProjector(config)
+
+        # Try to load orbital nodes from file if they exist, otherwise
+        # remesh.
+        orbital_nodes_path = config.input_dir / "orbital_nodes.npy"
+        if orbital_nodes_path.exists():
+            orbital_nodes = np.load(orbital_nodes_path)
+        else:
+            with threadpool_limits(
+                limits=config.compute.blas_num_threads,
+                user_api=config.compute.threadpool_api,
+            ):
+                orbital_nodes = orbital_projector.remesh()
+
+            np.save(orbital_nodes_path, orbital_nodes)
+
     from quatrex.electrostatics.meshing import DeviceMesh
 
     # Trigger mesh generation and visualization.
-    device_mesh = DeviceMesh(config)
+    device_mesh = DeviceMesh(config, orbital_nodes=orbital_nodes)
     device_mesh.generate_mesh()
+
+    if config.pre_process.orbital_projections is not None:
+        # Evaluate orbitals and their gradients on the mesh and save
+        # projection tensors to file.
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            projections, gradient_projections = orbital_projector.assemble_projections(
+                device_mesh.mesh.points
+            )
+
+        from scipy import sparse
+
+        sparse.save_npz(config.input_dir / "orbital_projections.npz", projections)
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_x.npz",
+            gradient_projections[0],
+        )
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_y.npz",
+            gradient_projections[1],
+        )
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_z.npz",
+            gradient_projections[2],
+        )
+
     device_mesh.visualize(off_screen=off_screen)
 
 

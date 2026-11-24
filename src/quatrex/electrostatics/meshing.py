@@ -433,36 +433,44 @@ class DeviceMesh:
     config : QuatrexConfig
         The configuration for the meshing, containing the geometry and
         meshing parameters.
+    orbital_nodes : NDArray, optional
+        The nodes corresponding to the orbital projections, if
+        available. If not provided, the mesh will be generated without
+        these nodes present.
 
     """
 
-    def __init__(self, config: QuatrexConfig):
+    def __init__(self, config: QuatrexConfig, orbital_nodes: NDArray | None = None):
         """Initializes the DeviceMesh with the given configuration."""
         self.config = config
+        self.orbital_nodes = orbital_nodes
 
         structure = None
         if config.material_model == "atomistic":
             try:
                 structure = ase.io.read(config.input_dir / "structure.xyz")
+                structure.center()
             except FileNotFoundError:
                 raise FileNotFoundError(
                     f"Structure file 'structure.xyz' not found in {config.input_dir}. "
                     "Please ensure the structure file is present for atomistic simulations."
                 )
+
+            if config.device.construct_from_unit_cell:
+                transport_ind = "abc".index(config.device.transport_direction)
+                num_repetitions = (
+                    config.device.num_transport_cells
+                    * config.device.neighbor_cell_cutoff[transport_ind]
+                )
+                repeats = [
+                    num_repetitions if i == transport_ind else 1 for i in range(3)
+                ]
+                structure = structure.repeat(repeats)
+                structure.pbc[transport_ind] = False
+
         self.structure = structure
 
         self.dimensionality = config.device.geometry.dimensionality
-
-        # Try reading added orbital nodes from a file, if it exists.
-        try:
-            orbital_nodes = np.load(config.input_dir / "remeshed_points.npy")
-        except FileNotFoundError:
-            print(
-                "No remeshed_points.npy file found. Orbital nodes will not be embedded."
-            )
-            orbital_nodes = None
-
-        self.orbital_nodes = orbital_nodes
 
         # TODO: Set up size fields based on the configuration.
         self.default_mesh_size = config.device.geometry.default_mesh_size
@@ -521,7 +529,7 @@ class DeviceMesh:
         """
         if self._region_element_inds is None:
             raise ValueError(
-                "Region node indices have not been computed yet. Call generate_mesh() first."
+                "Region element indices have not been computed yet. Call generate_mesh() first."
             )
         return self._region_element_inds
 
@@ -804,6 +812,8 @@ class DeviceMesh:
         gmsh.initialize()
         gmsh.option.set_number("General.Terminal", 0)
         gmsh.option.set_number("General.Verbosity", 5)
+        gmsh.option.set_number("General.NumThreads", 0)
+
         gmsh.option.set_number("Geometry.Tolerance", GMSH_GEOMETRY_TOLERANCE)
         gmsh.option.set_number("Geometry.OCCBoundsUseStl", GMSH_OCC_USE_STL_BOUNDS)
 
@@ -889,10 +899,7 @@ class DeviceMesh:
 
         # Generate the mesh.
         print("    Meshing...")
-        gmsh.model.mesh.generate(dim=3)
-        gmsh.model.mesh.remove_duplicate_nodes()
-        gmsh.model.mesh.remove_duplicate_elements()
-
+        gmsh.model.mesh.generate(dim=self.dimensionality)
         gmsh.model.mesh.optimize(method="", niter=10)
 
         gmsh_logs = gmsh.logger.get()
@@ -913,7 +920,7 @@ class DeviceMesh:
         print(f"Saving mesh to {self.config.input_dir / 'device.msh'}...")
         mesh.write(
             self.config.input_dir / "device.msh",
-            file_format="gmsh",
+            file_format="gmsh22",
             binary=False,
         )
 
@@ -1058,7 +1065,10 @@ class DeviceMesh:
                     )
 
         device_mesher = cls(config)
-        device_mesher._mesh = meshio.read(config.input_dir / "device.msh")
+        device_mesher._mesh = meshio.read(
+            config.input_dir / "device.msh",
+            file_format="gmsh22",
+        )
         device_mesher._region_node_inds = device_mesher._map_nodes_to_physical_regions()
         device_mesher._region_element_inds = (
             device_mesher._map_elements_to_physical_regions()

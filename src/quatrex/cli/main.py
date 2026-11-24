@@ -3,16 +3,17 @@
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
+
 import sys
 import time
 import traceback
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import Annotated, NoReturn
 
+import numpy as np
 import typer
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
-from typing_extensions import Annotated
 
 import quatrex
 
@@ -93,6 +94,30 @@ def _run_negf(config, device):
         typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _run_closed(config, device):
+    """Runs quatrex with the given configuration for a closed system.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+    device : BaseDevice
+        The device object to be used in the simulation.
+
+    """
+
+    from quatrex.core.schroedinger import Schroedinger
+
+    scba = Schroedinger(config, device)
+
+    tic = time.perf_counter()
+    scba.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving Schroedinger after: {(toc - tic):.2f} s")
+
+
 def _run_scsp(config, device):
     """Runs the self-consistent Schrödinger-Poisson solver.
 
@@ -116,9 +141,7 @@ def _run_scsp(config, device):
         typer.secho(f"Leaving SCSP after: {(toc - tic):.2f} s")
 
 
-def _resolve_config_path(
-    config: Optional[Path],
-) -> Path:
+def _resolve_config_path(config: Path | None) -> Path:
     """Resolves the configuration file path based on the provided argument.
 
     Parameters
@@ -156,9 +179,7 @@ def _resolve_config_path(
     return config.resolve()
 
 
-def _abort_quatrex(
-    e: Exception,
-) -> NoReturn:
+def _abort_quatrex(e: Exception) -> NoReturn:
     """Handles exceptions by printing the error and aborting the MPI program.
 
     Parameters
@@ -174,7 +195,7 @@ def _abort_quatrex(
         full_traceback = "".join(traceback.format_exception(e))
 
         error_msg = (
-            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
+            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n{full_traceback}\n"
         )
 
         sys.stderr.write(error_msg)
@@ -195,7 +216,7 @@ def _abort_quatrex(
 @quatrex_cli.command()
 def run(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file.",
@@ -243,6 +264,8 @@ def run(
                 _run_wf(config, device)
             elif config.formalism == "negf":
                 _run_negf(config, device)
+            elif config.formalism == "closed":
+                _run_closed(config, device)
             else:
                 raise NotImplementedError(
                     f"Formalism '{config.formalism}' is not implemented."
@@ -260,7 +283,7 @@ def run(
 @quatrex_cli.command()
 def pre_process(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file.",
@@ -289,7 +312,7 @@ def pre_process(
         config = _resolve_config_path(config)
 
         from quatrex.core.config import parse_config, setup_context
-        from quatrex.pre_processsing import pre_process as main
+        from quatrex.pre_processing import pre_process as main
 
         config = parse_config(config)
         setup_context(config)
@@ -311,7 +334,7 @@ def pre_process(
 
 @quatrex_cli.command()
 def mesh(
-    config: Annotated[
+    config_path: Annotated[
         Path,
         typer.Argument(
             ...,
@@ -341,16 +364,73 @@ def mesh(
 
     from quatrex.core.config import parse_config, setup_context
 
-    config = parse_config(config)
+    config = parse_config(config_path)
     setup_context(config)
 
     secho_header()
 
+    orbital_nodes = None
+    if config.pre_process.orbital_projections is not None:
+
+        if config.pre_process.orbital_projections == "cp2k":
+            from quatrex.pre_processing.orbitals.cp2k import CP2KDeviceOrbitalProjector
+
+            orbital_projector = CP2KDeviceOrbitalProjector(config)
+
+        elif config.pre_process.orbital_projections == "wannier90":
+            from quatrex.pre_processing.orbitals.wannier90 import (
+                Wannier90DeviceOrbitalProjector,
+            )
+
+            orbital_projector = Wannier90DeviceOrbitalProjector(config)
+
+        # Try to load orbital nodes from file if they exist, otherwise
+        # remesh.
+        orbital_nodes_path = config.input_dir / "orbital_nodes.npy"
+        if orbital_nodes_path.exists():
+            orbital_nodes = np.load(orbital_nodes_path)
+        else:
+            with threadpool_limits(
+                limits=config.compute.blas_num_threads,
+                user_api=config.compute.threadpool_api,
+            ):
+                orbital_nodes = orbital_projector.remesh()
+
+            np.save(orbital_nodes_path, orbital_nodes)
+
     from quatrex.electrostatics.meshing import DeviceMesh
 
     # Trigger mesh generation and visualization.
-    device_mesh = DeviceMesh(config)
+    device_mesh = DeviceMesh(config, orbital_nodes=orbital_nodes)
     device_mesh.generate_mesh()
+
+    if config.pre_process.orbital_projections is not None:
+        # Evaluate orbitals and their gradients on the mesh and save
+        # projection tensors to file.
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            projections, gradient_projections = orbital_projector.assemble_projections(
+                device_mesh.mesh.points
+            )
+
+        from scipy import sparse
+
+        sparse.save_npz(config.input_dir / "orbital_projections.npz", projections)
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_x.npz",
+            gradient_projections[0],
+        )
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_y.npz",
+            gradient_projections[1],
+        )
+        sparse.save_npz(
+            config.input_dir / "orbital_gradient_projections_z.npz",
+            gradient_projections[2],
+        )
+
     device_mesh.visualize(off_screen=off_screen)
 
 
@@ -367,7 +447,6 @@ def main(
     ] = False,
 ):
     """Quantum Transport at the Exascale and Beyond."""
-    pass
 
 
 def run_cli():

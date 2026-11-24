@@ -15,3 +15,5 @@ k_B = physical_constants["Boltzmann constant in eV/K"][0]  # eV / K
 kg = 1e-20 / e  # (eV s^2) / Å^2
 # atomic_mass_unit: unified atomic mass unit in (eV s^2) / Å^2
 atomic_mass_unit = physical_constants["atomic mass unit-kilogram relationship"][0] / kg
+# electron rest mass in (eV s^2) / Å^2
+m_e = physical_constants["electron mass"][0] / kg

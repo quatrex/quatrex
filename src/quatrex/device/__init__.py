@@ -6,12 +6,13 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.device.base import BaseDevice
 from quatrex.device.qtbm import QTBMDevice
 from quatrex.device.scba import SCBADevice
+from quatrex.device.schroedinger import SchroedingerDevice
 
 
 def create_device(
     config: QuatrexConfig,
     validate_contacts: bool = True,
-) -> QTBMDevice | SCBADevice:
+) -> QTBMDevice | SCBADevice | SchroedingerDevice:
     """Creates a device object based on the configuration.
 
     Parameters
@@ -24,7 +25,7 @@ def create_device(
 
     Returns
     -------
-    QTBMDevice | SCBADevice
+    QTBMDevice | SCBADevice | SchroedingerDevice
         The created device object.
 
     """
@@ -32,6 +33,8 @@ def create_device(
         device = QTBMDevice(config)
     elif config.formalism == "negf":
         device = SCBADevice(config)
+    elif config.formalism == "closed":
+        device = SchroedingerDevice(config)
     else:
         raise ValueError(f"Unknown formalism {config.formalism}")
 
@@ -45,5 +48,6 @@ __all__ = [
     "BaseDevice",
     "QTBMDevice",
     "SCBADevice",
+    "SchroedingerDevice",
     "create_device",
 ]

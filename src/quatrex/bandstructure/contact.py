@@ -8,8 +8,7 @@ from scipy.optimize import minimize_scalar
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from quatrex.core.statistics import fermi_dirac
-from quatrex.electrostatics.geometry_config import Region, VolumeProperties
-from quatrex.electrostatics.meshing import inside_shape
+from quatrex.electrostatics.geometry_config import Properties, Region, inside_shape
 
 
 def _real_to_kspace(
@@ -114,7 +113,7 @@ def contact_doping_density(
 
     """
     for region in geometry_regions:
-        if not isinstance(region.properties, VolumeProperties):
+        if not isinstance(region.properties, Properties):
             continue
 
         if (

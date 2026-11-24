@@ -5,8 +5,9 @@
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import create_device
-from quatrex.pre_processsing.contact_bandstructure import plot_contact_band_structure
-from quatrex.pre_processsing.contact_fermi_level import pre_process_fermi_level
+from quatrex.pre_processing.contact_bandstructure import plot_contact_band_structure
+from quatrex.pre_processing.contact_fermi_level import pre_process_fermi_level
+from quatrex.pre_processing.effective_mass.hamiltonian import assemble_hamiltonian
 
 
 def pre_process(config: QuatrexConfig):
@@ -30,10 +31,17 @@ def pre_process(config: QuatrexConfig):
             "the pre-processing steps are completed before starting the parallel run."
         )
 
-    device = create_device(config)
+    device = None
+
+    if config.pre_process.assemble_hamiltonian:
+        assemble_hamiltonian(config)
 
     if config.pre_process.compute_fermi_level:
+        if device is None:
+            device = create_device(config)
         pre_process_fermi_level(config, device)
 
     if config.pre_process.plot_contact_band_structure:
+        if device is None:
+            device = create_device(config)
         plot_contact_band_structure(config, device)

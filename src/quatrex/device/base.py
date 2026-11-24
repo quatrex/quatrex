@@ -278,6 +278,13 @@ class BaseDevice:
             fractional_coordinates[:, transport_ind], 1
         )
         cell_offsets = cell_offsets.astype(xp.int64)
+        if xp.abs(xp.max(cell_offsets) + xp.min(cell_offsets)) > 1:
+            # NOTE: In this case, one could shift the `cell_offsets`
+            # to keep more interaction terms.
+            warnings.warn(
+                "The provided coordinates reach out of the unit cell asymetrically. "
+                "A significant amount of interaction terms will be lost due to that."
+            )
 
         # Transform back to real space
         wrapped_coordinates = fractional_coordinates @ lattice_vectors
@@ -286,14 +293,14 @@ class BaseDevice:
             cell_offsets = None
         else:
             warnings.warn(
-                "Some of the provided atoms in `structure.xyz` are not\n"
-                "located within the unit cell. In order to make the\n"
-                "cutoffs as physical as possible, quatrex will now\n"
-                "wrap all coordinates into the unit cell, which affects\n"
-                "the hamiltonians and overlap matrices as well.\n"
-                "Use `quatrex pre-process` with the configuration\n"
-                "setting `save_processed_inputs` to view the structure\n"
-                "after wrapping and upscaling.",
+                "Some of the provided atoms in `structure.xyz` are not "
+                "located within the unit cell. In order to make the "
+                "cutoffs as physical as possible, quatrex will now "
+                "wrap all coordinates into the unit cell, which affects "
+                "the hamiltonians and overlap matrices as well. "
+                "Use `quatrex pre-process` with the configuration "
+                "setting `save_processed_inputs` to view the structure "
+                "after wrapping and upscaling."
             )
 
         return wrapped_coordinates, cell_offsets

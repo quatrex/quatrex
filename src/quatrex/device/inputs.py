@@ -7,6 +7,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+from pydantic import NonNegativeInt
 import scipy.sparse as sps
 from mpi4py.MPI import COMM_WORLD as comm_world
 
@@ -413,67 +414,96 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
-def _wrap_cols_or_rows(
-    matrix_dict: dict,
+def _wrap_atom(
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
     *,
     wrapped_atom_index: int,
     cell_offset: int,
-    transverse_coords: tuple,
-    transport_coords: list,
+    transverse_coords: tuple[int, int],
+    transport_coords: list[int],
     transport_ind: int,
-    wrap_cols: bool,
-):
+) -> None:
+    """Shifts the columns and rows of a subset of `matrix_dict` to
+    account for a wrapped atom.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    wrapped_atom_index : int
+        Index of the wrapped atom.
+    cell_offset : int
+        The transport coordinate of the cell the atom was wrapped from.
+    transverse_coords : tuple[int, int]
+        Transverse coordinates of `matrix_dict` to consider.
+    transport_coords : list[int]
+        Transport coordinates occuring in `matrix_dict` for the given
+        `transverse_coords`.
+    transport_ind : int
+        Index of the transport direction (0, 1, or 2).
+
+    """
+
     if cell_offset == 0:
         return
 
-    col_slice = wrapped_atom_index
-    row_slice = slice(None)
-    if not wrap_cols:
-        col_slice, row_slice = row_slice, col_slice
-    shift_direction = 1 if wrap_cols else -1
-    loop_direction = -shift_direction * xp.sign(cell_offset)
+    for wrap_cols in [True, False]:
+        col_slice = wrapped_atom_index
+        row_slice = slice(None)
+        if not wrap_cols:
+            col_slice, row_slice = row_slice, col_slice
+        shift_direction = 1 if wrap_cols else -1
+        loop_direction = -shift_direction * xp.sign(cell_offset)
 
-    for transport_coord in transport_coords[::loop_direction]:
-        coords = list(transverse_coords)
-        coords[transport_ind] = transport_coord
-        coords = tuple(coords)
+        for transport_coord in transport_coords[::loop_direction]:
+            coords = list(transverse_coords)
+            coords[transport_ind] = transport_coord
+            coords = tuple(coords)
 
-        # Save the on-site term to restore it later
-        wrapped_site_term = matrix_dict[coords][wrapped_atom_index, wrapped_atom_index]
-
-        origin_transport_coord = transport_coord - shift_direction * cell_offset
-        origin_coords = list(transverse_coords)
-        origin_coords[transport_ind] = origin_transport_coord
-        origin_coords = tuple(origin_coords)
-        if origin_coords not in matrix_dict:
-            matrix_dict[coords][col_slice, row_slice] = xp.nan
-        else:
-            matrix_dict[coords][col_slice, row_slice] = matrix_dict[origin_coords][
-                col_slice, row_slice
+            # Save the on-site term to restore it later
+            wrapped_site_term = matrix_dict[coords][
+                wrapped_atom_index, wrapped_atom_index
             ]
 
-        # Restore the on-site term
-        matrix_dict[coords][wrapped_atom_index, wrapped_atom_index] = wrapped_site_term
+            origin_transport_coord = transport_coord - shift_direction * cell_offset
+            origin_coords = list(transverse_coords)
+            origin_coords[transport_ind] = origin_transport_coord
+            origin_coords = tuple(origin_coords)
+            if origin_coords not in matrix_dict:
+                matrix_dict[coords][col_slice, row_slice] = xp.nan
+            else:
+                matrix_dict[coords][col_slice, row_slice] = matrix_dict[origin_coords][
+                    col_slice, row_slice
+                ]
 
-
-def _wrap_atom(matrix_dict, **kwargs):
-    if "wrap_cols" in kwargs:
-        raise ValueError("Unexpected keyword `wrap_cols`")
-
-    for wrap_cols in [True, False]:
-        kwargs["wrap_cols"] = wrap_cols
-        _wrap_cols_or_rows(matrix_dict, **kwargs)
+            # Restore the on-site term
+            matrix_dict[coords][
+                wrapped_atom_index, wrapped_atom_index
+            ] = wrapped_site_term
 
 
 def _wrap_matrix_dict(
     matrix_dict: dict,
     cell_offsets: NDArray,
     transport_ind: int,
-):
-    """Modifies matrix_dict and cell_offsets"""
+) -> None:
+    """Applies the wrapping of the coordinates to the a `matrix_dict` on
+    unwrapped coordinates. Modifies `matrix_dict`.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    cell_offsets : NDArray
+        The coordinates of the unit cells each atom was been wrapped
+        from.
+
+    """
 
     # Collect each chain of blocks along the transport direction with
-    # constant transverse indices
+    # constant transverse indices:
     # chains_dict[coords with transport coord set to 0] = transport coords
     chains_dict = {}
     for coords in matrix_dict:
@@ -509,7 +539,25 @@ def _wrap_matrix_dict(
         )
 
 
-def _check_matrix_dict(matrix_dict: dict, *, neighbor_cell_cutoff) -> None:
+def _check_matrix_dict(
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    *,
+    neighbor_cell_cutoff: tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None,
+) -> None:
+    """Checks whether `matrix_dict` has the required properties. Raises
+    an error if it does not.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    neighbor_cell_cutoff : tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
+        The number of neighbor cells to consider along each lattice
+        direction.
+
+    """
+
     if (0, 0, 0) not in matrix_dict:
         raise ValueError(
             f"Expected to find a key [0,0,0] in the `matrix_dict`, but it was not found. "

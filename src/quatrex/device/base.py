@@ -36,6 +36,9 @@ class BaseDevice:
         Array of orbital coordinates.
     atom_coordinates : NDArray
         Array of atomic coordinates.
+    cell_offsets : NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from in the transport direction.
     atomic_species : NDArray
         Array of atom symbols for each atom. NOTE: This array is always
         on the host since CuPy does not support string arrays.

@@ -1,13 +1,13 @@
 simulation_dir = "."
-input_dir = "../inputs-unit-cell"
+input_dir = "../inputs"
 
 formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = "a"
 construct_from_unit_cell = true
-num_transport_cells = 6
-neighbor_cell_cutoff = [4, 0, 0]
+num_transport_cells = 24
+neighbor_cell_cutoff = [1, 0, 0]
 
     [[device.contacts]]
     name = "left"
@@ -55,7 +55,7 @@ band_edge_tracking = true
 # Energy grid.
 energy_window_min = -10
 energy_window_max = 0
-energy_window_num = 100
+energy_window_num = 10
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 8

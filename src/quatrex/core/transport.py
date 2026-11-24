@@ -33,6 +33,10 @@ class TransportSolver(ABC):
             "of states needed for the 'ldos' density model."
         )
 
+    def save_matrices(self) -> None:
+        """Saves the matrices of the last run, if there are any to save."""
+        return
+
     @abstractmethod
     def run(self) -> None:
         """Solves the transport problem."""

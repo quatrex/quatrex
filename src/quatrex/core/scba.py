@@ -152,6 +152,10 @@ class SCBAData:
         self.sigma_lesser.allocate_data()
         self.sigma_greater.allocate_data()
         self.sigma_retarded_hermitian.allocate_data()
+        # NOTE: The solvers do not write all blocks of the sparsity
+        # pattern, i.e., the remaining elements need to be initialized.
+        self.g_lesser.data = 0.0
+        self.g_greater.data = 0.0
         self.sigma_lesser.data = 0.0
         self.sigma_greater.data = 0.0
         self.sigma_retarded_hermitian.data = 0.0
@@ -240,6 +244,9 @@ class SCBA(TransportSolver):
         self.iteration = 0
         # The maximum absolute self-energy update of the last iteration.
         self.sigma_update = np.inf
+
+        # The matrices to save at the end of the run.
+        self.saved_matrices = frozenset(self.config.outputs.scba_matrices)
 
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
@@ -347,6 +354,55 @@ class SCBA(TransportSolver):
             device=self.device,
             electron_energies=self.electron_energies,
         )  # real data
+
+    def _free_matrices(self, *names: str) -> None:
+        """Frees matrices, except for those that will be saved.
+
+        Parameters
+        ----------
+        *names : str
+            The names of the matrices in `self.data`.
+
+        """
+        for name in names:
+            if name not in self.saved_matrices:
+                getattr(self.data, name).free_data()
+
+    def _reset_saved_matrices(self) -> None:
+        """Resets the matrices kept from the previous iteration.
+
+        The lesser and greater Green's functions are always allocated
+        and only zeroed, as they otherwise are by the transposition. The
+        self-energies are the input of the next iteration.
+
+        """
+        for name in self.saved_matrices:
+            matrix = getattr(self.data, name)
+            if name in ("g_lesser", "g_greater"):
+                matrix.data = 0.0
+            elif not name.startswith("sigma"):
+                matrix.free_data()
+
+    @profiler.profile(label="SCBA: Save matrices", level="default", comm=comm)
+    def save_matrices(self) -> None:
+        """Saves the selected matrices of the last iteration.
+
+        The matrices selected by `outputs.scba_matrices` are written to
+        the output directory, one HDF5 file per matrix. This is a
+        collective operation.
+
+        """
+        if not self.saved_matrices:
+            return
+
+        if comm.rank == 0:
+            os.makedirs(self.config.output_dir, exist_ok=True)
+        global_comm.Barrier()
+
+        for name in self.config.outputs.scba_matrices:
+            if comm.rank == 0:
+                print(f"Saving {name}...", flush=True)
+            getattr(self.data, name).save(self.config.output_dir / f"{name}.h5")
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -508,8 +564,13 @@ class SCBA(TransportSolver):
             ),
         )
 
-        self.data.w_greater.allocate_data()
-        self.data.w_lesser.allocate_data()
+        for name in ("w_greater", "w_lesser"):
+            matrix = getattr(self.data, name)
+            matrix.allocate_data()
+            if name in self.saved_matrices:
+                # Elements that are not written must not end up in the
+                # file uninitialized.
+                matrix.data = 0.0
 
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
@@ -520,9 +581,7 @@ class SCBA(TransportSolver):
 
         self._compute_coulomb_screening_observables()
 
-        self.data.p_lesser.free_data()
-        self.data.p_greater.free_data()
-        self.data.p_retarded_hermitian.free_data()
+        self._free_matrices("p_lesser", "p_greater", "p_retarded_hermitian")
 
         if "exchange" in self.config.coulomb_screening.energy_renormalization_terms:
             self.sigma_fock.compute(
@@ -542,8 +601,7 @@ class SCBA(TransportSolver):
             ),
         )
 
-        self.data.w_greater.free_data()
-        self.data.w_lesser.free_data()
+        self._free_matrices("w_lesser", "w_greater")
 
     def _electron_density(
         self, x: DSDBSparse, overlap_density: NDArray | None
@@ -894,6 +952,8 @@ class SCBA(TransportSolver):
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+                self._reset_saved_matrices()
+
                 self.data.g_retarded.allocate_data()
                 self.data.g_retarded.data = 0.0
                 self.electron_solver.solve(
@@ -904,7 +964,7 @@ class SCBA(TransportSolver):
                 )
                 self._compute_electron_observables()
 
-                self.data.g_retarded.free_data()
+                self._free_matrices("g_retarded")
 
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
@@ -939,8 +999,11 @@ class SCBA(TransportSolver):
                 with profiler.profile_range(
                     label="SCBA: stack->nnz transpose back", level="default", comm=comm
                 ):
-                    for m in (self.data.g_lesser, self.data.g_greater):
-                        m.dtranspose(discard=True)  # These can be safely discarded.
+                    for name in ("g_lesser", "g_greater"):
+                        m = getattr(self.data, name)
+                        # These can be safely discarded, unless they
+                        # will be saved.
+                        m.dtranspose(discard=name not in self.saved_matrices)
                         assert m.distribution_state == "stack"
                     for m in (
                         self.data.sigma_lesser,

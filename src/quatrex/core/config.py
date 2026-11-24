@@ -1602,6 +1602,15 @@ class PhononConfig(BaseModel):
         return self
 
 
+# The matrices of the SCBA that can be saved, by group.
+SCBA_MATRICES = {
+    "g": ("g_lesser", "g_greater", "g_retarded"),
+    "p": ("p_lesser", "p_greater", "p_retarded_hermitian"),
+    "w": ("w_lesser", "w_greater"),
+    "sigma": ("sigma_lesser", "sigma_greater", "sigma_retarded_hermitian"),
+}
+
+
 class OutputConfig(BaseModel):
     """Options for the output of `quatrex` calculations.
 
@@ -1720,6 +1729,50 @@ class OutputConfig(BaseModel):
 
     """
 
+    scba_matrices: list[
+        Literal[
+            "g",
+            "g_lesser",
+            "g_greater",
+            "g_retarded",
+            "p",
+            "p_lesser",
+            "p_greater",
+            "p_retarded_hermitian",
+            "w",
+            "w_lesser",
+            "w_greater",
+            "sigma",
+            "sigma_lesser",
+            "sigma_greater",
+            "sigma_retarded_hermitian",
+        ]
+    ] = []
+    """The matrices of the last SCBA iteration to save.
+
+    Either whole groups (`"g"`, `"p"`, `"w"`, `"sigma"`) or individual
+    matrices (e.g. `"g_lesser"`). Every matrix is written to its own HDF5
+    file (e.g. `g_lesser.h5`) at the end of the run, which can be read
+    with `DSDBSparse.load`. In Schrödinger-Poisson runs, this is the last
+    SCBA iteration at the final potential.
+
+    The self-energies are those obtained from the saved Green's
+    functions after mixing, i.e. the input of a next iteration. Elements
+    that are not computed by the solver are zero. For example, only the
+    diagonal blocks of `"g_retarded"` are computed by the recursive
+    Green's function algorithm without domain decomposition.
+
+    !!! note
+        The selected matrices are kept in memory during the SCBA
+        iterations. This increases the peak memory usage, and for
+        `"g_lesser"`, `"g_greater"`, `"w_lesser"` and `"w_greater"`
+        additional communication is needed in every iteration.
+
+    !!! note
+        This is only used with the `"negf"` formalism.
+
+    """
+
     transmission: bool = True
     """Whether to save the contact to contact transmissions.
 
@@ -1788,6 +1841,16 @@ class OutputConfig(BaseModel):
     dictionary with the timing results.
 
     """
+
+    @model_validator(mode="after")
+    def expand_scba_matrices(self) -> Self:
+        """Expands the groups of matrices into the individual matrices."""
+        names = []
+        for name in self.scba_matrices:
+            names.extend(SCBA_MATRICES.get(name, (name,)))
+        # Remove duplicates, but keep the order.
+        self.scba_matrices = list(dict.fromkeys(names))
+        return self
 
     @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
@@ -2663,6 +2726,24 @@ class QuatrexConfig(BaseModel):
                 )
 
         # TODO: extend this to all possible input paths
+
+        return self
+
+    @model_validator(mode="after")
+    def check_scba_matrices(self) -> Self:
+        """Checks that the matrices to save are computed."""
+        if self.scba.coulomb_screening:
+            return self
+
+        missing = [
+            name
+            for name in self.outputs.scba_matrices
+            if name in SCBA_MATRICES["p"] + SCBA_MATRICES["w"]
+        ]
+        if missing:
+            raise ValueError(
+                f"Saving {missing} requires `scba.coulomb_screening = true`."
+            )
 
         return self
 

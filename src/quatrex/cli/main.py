@@ -87,6 +87,7 @@ def _run_negf(config, device):
 
     tic = time.perf_counter()
     scba.run()
+    scba.save_matrices()
     toc = time.perf_counter()
 
     if comm.rank == 0:

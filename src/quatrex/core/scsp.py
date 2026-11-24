@@ -202,6 +202,10 @@ class SCSP:
                     f"{self.config.scsp.max_iterations} iterations."
                 )
 
+        # NOTE: Only done once here, since the last iteration is only
+        # known at this point.
+        self.transport_solver.save_matrices()
+
         return potential
 
     def _scba_has_converged(self) -> bool:

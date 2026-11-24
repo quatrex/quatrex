@@ -85,6 +85,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.big_block_sizes = None
         self.num_batches = config.compute.convolve.num_batches
 
+        # Whether the screened interaction is still needed (to save it)
+        # after the self-energy has been computed.
+        self.keep_w_lesser = "w_lesser" in config.outputs.scba_matrices
+        self.keep_w_greater = "w_greater" in config.outputs.scba_matrices
+
         self.include_energy_renormalization = (
             "correlation" in config.coulomb_screening.energy_renormalization_terms
         )
@@ -376,8 +381,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             level="default",
             comm=comm,
         ):
-            for m in (w_lesser, w_greater):
-                m.dtranspose(discard=True) if m.distribution_state != "stack" else None
+            for m, keep in (
+                (w_lesser, self.keep_w_lesser),
+                (w_greater, self.keep_w_greater),
+            ):
+                if m.distribution_state != "stack":
+                    m.dtranspose(discard=not keep)
             # NOTE: The electron Green's functions and self-energies must
             # not be transposed back to stack distribution, as they are
             # needed in nnz distribution for the other interactions.

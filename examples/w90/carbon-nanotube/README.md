@@ -619,7 +619,10 @@ As a check, the potential in the source should be close to zero (here
 - **Interleaved loops.** `scba_iterations_per_step = 2` runs two SCBA
   iterations per potential, starting from the previous self-energies.
 - **Dielectric.** `default_epsilon_r = 3.9` everywhere, close to the
-  `epsilon_r = 4` of the GW Coulomb matrix. With 11.7 (as in
+  `epsilon_r = 4` of the GW Coulomb matrix. The `oxide` region between the
+  tube and the gate (radius 7.5 to 12 Å) has the same permittivity, so it
+  does not change the results. It is there so that its `epsilon_r` can be
+  varied without a new mesh. With 11.7 (as in
   `qtbm-poisson`) the screening length of the lead is comparable to
   its length, so that it is not neutral. With 1.0, the point-charge
   dopants cause a variation of about 0.4 V within a unit cell.

@@ -1,5 +1,5 @@
 simulation_dir = "."
-input_dir = "../inputs-negf-gw-poisson"
+input_dir = "../inputs"
 
 formalism = "negf"
 
@@ -55,6 +55,26 @@ num_orbitals_per_atom = { "X" = 1 }
         shape.length = 26
 
         properties.voltage = -0.3
+
+        # Oxide between the tube and the gate.
+        [[device.geometry.regions]]
+        name = "oxide"
+
+        properties.epsilon_r = 3.9
+
+        shape.type = "difference"
+
+        shape.base.type = "cylinder"
+        shape.base.center = [51.424, 25, 25]
+        shape.base.axis = [1, 0, 0]
+        shape.base.radius = 12
+        shape.base.length = 26
+
+        shape.subtract.type = "cylinder"
+        shape.subtract.center = [51.424, 25, 25]
+        shape.subtract.axis = [1, 0, 0]
+        shape.subtract.radius = 7.5
+        shape.subtract.length = 26
 
         # n-doped leads (eight unit cells each).
         [[device.geometry.regions]]

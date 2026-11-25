@@ -8,23 +8,17 @@ block_comm_size = 3
 
 [device]
 transport_direction = "a"
-block_size = 32
+construct_from_unit_cell = true
+num_transport_cells = 12
+neighbor_cell_cutoff = [2, 0, 0]
 
     [[device.contacts]]
     name = "left"
-    origin = [0.1551, 0.0, 0.0]
-    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    transport_direction = "a"
-    fermi_level = -3.600012853
-    mid_gap_energy = -3.8
+    mid_gap_energy = -4.16  # eV
 
     [[device.contacts]]
     name = "right"
-    origin = [102.694, 0.0, 0.0]
-    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    transport_direction = "a"
-    fermi_level = -3.600012853
-    mid_gap_energy = -3.8
+    mid_gap_energy = -4.16  # eV
 
 [scba] # ===============================================================
 max_iterations = 2
@@ -39,8 +33,8 @@ symmetric = true
 electron_ldos = true
 device_currents = true
 meir_wingreen_currents = true
-electron_density = false
-hole_density = false
+electron_density = true
+hole_density = true
 
 polarization_density = true
 coulomb_screening_density = true
@@ -57,9 +51,9 @@ save_profiling_results = true
 band_edge_tracking = true
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 0
-energy_window_num = 100
+energy_window_min = -6
+energy_window_max = -2
+energy_window_num = 10
 
 max_batch_size = 30
 solver.algorithm = "rgf"
@@ -85,7 +79,7 @@ obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Å
-epsilon_r = 4.0
+epsilon_r = 4
 
 num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
 
@@ -112,7 +106,6 @@ obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
-lyapunov.num_ref_iterations = 1
 
 lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
@@ -125,3 +118,8 @@ interaction_cutoff = 5.5     # Å
 model = "pseudo-scattering"
 phonon_energy = 50e-3
 deformation_potential = 5e-3
+
+
+[pre_process]
+compute_fermi_level = true
+save_processed_inputs = true

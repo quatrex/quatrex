@@ -7,9 +7,9 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from pydantic import NonNegativeInt
 import scipy.sparse as sps
 from mpi4py.MPI import COMM_WORLD as comm_world
+from pydantic import NonNegativeInt
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm

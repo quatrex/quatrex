@@ -653,9 +653,9 @@ def get_composed_coulomb_matrix(
 
 def save_blocks_dict(filename: str, blocks_dict: dict):
     """
-    Saves a dictionary with keys `(a, b, c)` as an HDF5 file called 
-    `filename` with keys "[str(a), str(b), str(c)]".
-    We need to do this conversion in order to save as an HDF5 file.
+    Saves a dictionary with keys `(a, b, c)` as an HDF5 file called
+    `filename` with keys "[str(a), str(b), str(c)]". We need to do this
+    conversion in order to save as an HDF5 file.
     """
 
     # Turn the `blocks_dict`'s keys into strings

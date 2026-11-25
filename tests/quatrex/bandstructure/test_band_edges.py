@@ -15,7 +15,7 @@ from quatrex.grid import get_electron_energies
 TARGET_ENERGY = -0.5
 
 
-def _intialize(config: QuatrexConfig):
+def _initialize(config: QuatrexConfig):
     """Helper function to load the device Hamiltonian
     and initialize the self-energy for the band edge tests."""
 
@@ -23,6 +23,7 @@ def _intialize(config: QuatrexConfig):
     hamiltonian, sparsity_pattern = assemble_matrix(
         config=config,
         matrix_name="hamiltonian",
+        cell_offsets=None,
         sparsity_pattern=None,
         shift_kpoints=False,
     )
@@ -30,6 +31,7 @@ def _intialize(config: QuatrexConfig):
         overlap, __ = assemble_matrix(
             config=config,
             matrix_name="overlap",
+            cell_offsets=None,
             sparsity_pattern=None,
             shift_kpoints=False,
         )
@@ -97,7 +99,7 @@ def test_subsectioning(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config)
     )
 
     for contact in device.contacts:
@@ -179,7 +181,7 @@ def test_left_right(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config)
     )
 
     if not np.all(hamiltonian.block_sizes == hamiltonian.block_sizes[0]):
@@ -261,7 +263,7 @@ def test_overlap(
     device = create_device(config)
 
     energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
-        _intialize(config)
+        _initialize(config)
     )
 
     if overlap is None:

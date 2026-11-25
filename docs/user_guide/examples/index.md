@@ -37,11 +37,12 @@ quatrex/examples/
 └── w90/
     ├── carbon-nanotube/  # An (8,0) carbon nanotube
     │   ├── README.md
+    │   ├── electron-phonon/
     │   ├── gw/
     │   ├── gw-dist/
-    │   ├── gw-unit-cell/
     │   ├── inputs/
-    │   └── qtbm/
+    │   ├── qtbm/
+    │   └── qtbm-poisson/
     ├── mos2/  # A monolayer of MoS2
     │   ├── README.md
     │   ├── gw-kpoints/

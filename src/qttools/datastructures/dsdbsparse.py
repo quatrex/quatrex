@@ -11,7 +11,7 @@ import numpy as np
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 symmetry_ops = {
@@ -686,6 +686,219 @@ class DSDBSparse(ABC):
 
         """
         ...
+
+    def save(self, filename: str) -> None:
+        """Saves the distributed matrix to a single HDF5 file.
+
+        This is a collective operation and must be called by all ranks
+        of the global communicator. Every rank writes its local slice of
+        the data into one global dataset, so the result is independent
+        of the number of ranks and of the current distribution state.
+
+        If h5py is built with MPI support, the file is written in
+        parallel using the `mpio` driver. Otherwise, the ranks write
+        their slices one after another.
+
+        The file contains the following datasets:
+
+        - `data`: Array of shape `(*stack_shape, nnz)`, where `nnz` is
+          the sum of the local number of non-zero elements over all
+          block-communicator ranks. The data of block rank `b` lives in
+          `data[..., block_nnz_offsets[b]:block_nnz_offsets[b + 1]]`.
+        - `rows`, `cols`: The global row and column indices of the
+          non-zero elements, in the same order as the last axis of
+          `data`.
+
+        The attributes `format`, `block_sizes`, `global_stack_shape`,
+        `symmetry` and `block_nnz_offsets` are stored on the file.
+
+        Parameters
+        ----------
+        filename : str
+            The path to the HDF5 file. An existing file is overwritten.
+
+        """
+        import h5py
+
+        global_mpi_comm = comm.global_._mpi_comm
+        block_mpi_comm = comm.block._mpi_comm
+        stack_mpi_comm = comm.stack._mpi_comm
+
+        local_data = np.ascontiguousarray(get_host(self.data))
+
+        # Number of non-zero elements stored by this block rank and the
+        # offsets of each block rank's nnz in the global nnz axis.
+        block_nnz = int(self.nnz_section_offsets[-1])
+        block_nnz_offsets = np.hstack(
+            ([0], np.cumsum(block_mpi_comm.allgather(block_nnz)))
+        ).astype(np.int64)
+        nnz_offset = int(block_nnz_offsets[comm.block.rank])
+
+        if self.distribution_state == "stack":
+            # The stack is distributed, the nnz of the block rank are
+            # all local. The local stack size is gathered rather than
+            # taken from the section sizes, as it may have been changed
+            # by `allocate_data`.
+            local_stack_sizes = stack_mpi_comm.allgather(local_data.shape[0])
+            stack_offset = int(sum(local_stack_sizes[: comm.stack.rank]))
+            stack_shape = (int(sum(local_stack_sizes)), *local_data.shape[1:-1])
+        else:
+            # The full stack is local, the nnz are distributed.
+            stack_offset = 0
+            stack_shape = tuple(local_data.shape[:-1])
+            nnz_offset += int(self.nnz_section_offsets[comm.stack.rank])
+
+        data_slice = (
+            slice(stack_offset, stack_offset + local_data.shape[0]),
+            ...,
+            slice(nnz_offset, nnz_offset + local_data.shape[-1]),
+        )
+        data_shape = (*stack_shape, int(block_nnz_offsets[-1]))
+
+        # Only one rank per block rank needs to write the sparsity
+        # pattern.
+        write_pattern = comm.stack.rank == 0
+        if write_pattern:
+            rows, cols = (get_host(ind).astype(np.int64) for ind in self.spy())
+            pattern_slice = slice(
+                int(block_nnz_offsets[comm.block.rank]),
+                int(block_nnz_offsets[comm.block.rank + 1]),
+            )
+
+        def _create(f: h5py.File) -> None:
+            """Creates the datasets and attributes of the file."""
+            f.create_dataset("data", shape=data_shape, dtype=local_data.dtype)
+            f.create_dataset("rows", shape=(data_shape[-1],), dtype=np.int64)
+            f.create_dataset("cols", shape=(data_shape[-1],), dtype=np.int64)
+            f.attrs["format"] = self.__class__.__name__
+            f.attrs["block_sizes"] = np.asarray(get_host(self.block_sizes))
+            f.attrs["global_stack_shape"] = np.asarray(stack_shape, dtype=np.int64)
+            f.attrs["symmetry"] = str(self.symmetry)
+            f.attrs["block_nnz_offsets"] = block_nnz_offsets
+
+        def _write(f: h5py.File) -> None:
+            """Writes the local slices into the file."""
+            f["data"][data_slice] = local_data
+            if write_pattern:
+                f["rows"][pattern_slice] = rows
+                f["cols"][pattern_slice] = cols
+
+        if h5py.get_config().mpi:
+            with h5py.File(filename, "w", driver="mpio", comm=global_mpi_comm) as f:
+                # Dataset creation is collective in parallel HDF5.
+                _create(f)
+                _write(f)
+            return
+
+        # Serial HDF5: the ranks take turns writing their slices.
+        if global_mpi_comm.rank == 0:
+            with h5py.File(filename, "w") as f:
+                _create(f)
+        for rank in range(global_mpi_comm.size):
+            global_mpi_comm.Barrier()
+            if rank == global_mpi_comm.rank:
+                with h5py.File(filename, "r+") as f:
+                    _write(f)
+        global_mpi_comm.Barrier()
+
+    @classmethod
+    def load(cls, filename: str) -> "DSDBSparse":
+        """Loads a matrix written by `save` and distributes it.
+
+        This is a collective operation and must be called by all ranks
+        of the global communicator. The number of ranks and the
+        communicator layout do not need to match the ones used for
+        saving. The returned matrix is in the "stack" distribution
+        state.
+
+        When called on `DSDBSparse` itself, the matrix type is taken
+        from the `format` attribute of the file. When called on a
+        concrete subclass (e.g. `DSDBCSR.load`), that subclass is used,
+        which allows converting between formats.
+
+        Parameters
+        ----------
+        filename : str
+            The path to the HDF5 file written by `save`.
+
+        Returns
+        -------
+        DSDBSparse
+            The loaded matrix.
+
+        """
+        import h5py
+
+        with h5py.File(filename, "r") as f:
+            fmt = str(f.attrs["format"])
+            block_sizes = np.asarray(f.attrs["block_sizes"])
+            global_stack_shape = tuple(int(s) for s in f.attrs["global_stack_shape"])
+            symmetry = str(f.attrs["symmetry"])
+            symmetry = None if symmetry == "None" else symmetry
+            dtype = f["data"].dtype
+            file_rows = f["rows"][()]
+            file_cols = f["cols"][()]
+
+        if cls is DSDBSparse:
+            from qttools import datastructures
+
+            if not hasattr(datastructures, fmt):
+                raise ValueError(f"Unknown DSDBSparse format '{fmt}' in file.")
+            cls = getattr(datastructures, fmt)
+
+        size = int(np.sum(block_sizes))
+
+        # Build the sparsity pattern. Duplicate entries are removed.
+        file_keys = file_rows * size + file_cols
+        unique_keys = np.unique(file_keys)
+        pattern = sparse.coo_matrix(
+            (
+                xp.ones(len(unique_keys), dtype=dtype),
+                (
+                    xp.asarray(unique_keys // size),
+                    xp.asarray(unique_keys % size),
+                ),
+            ),
+            shape=(size, size),
+        )
+
+        dsdbsparse = cls.from_sparray(
+            pattern,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            dtype=dtype,
+        )
+
+        # Map the local non-zero elements to their position in the file.
+        local_rows, local_cols = (
+            get_host(ind).astype(np.int64) for ind in dsdbsparse.spy()
+        )
+        local_keys = local_rows * size + local_cols
+        file_order = np.argsort(file_keys, kind="stable")
+        sorted_keys = file_keys[file_order]
+        pos = np.searchsorted(sorted_keys, local_keys)
+        if not np.array_equal(
+            sorted_keys[np.minimum(pos, len(sorted_keys) - 1)], local_keys
+        ):
+            raise ValueError("Sparsity pattern in file is inconsistent.")
+        file_inds = file_order[pos]
+
+        stack_offset = int(dsdbsparse.stack_section_offsets[comm.stack.rank])
+        stack_slice = slice(stack_offset, stack_offset + dsdbsparse.data.shape[0])
+
+        # Only read the contiguous nnz range needed by this rank.
+        if len(file_inds) > 0:
+            lo, hi = int(file_inds.min()), int(file_inds.max()) + 1
+        else:
+            lo, hi = 0, 0
+
+        with h5py.File(filename, "r") as f:
+            slab = f["data"][stack_slice, ..., lo:hi]
+
+        dsdbsparse.data[:] = xp.asarray(slab[..., file_inds - lo])
+
+        return dsdbsparse
 
     def free_data(self) -> None:
         """Frees the local data."""

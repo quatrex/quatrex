@@ -9,6 +9,11 @@ from qttools import NDArray, xp
 if xp.__name__ == "cupy":
     import cupyx
 
+    # NOTE: This was always called and cached at the module level, so
+    # i'm guessing this had some performance implications if done
+    # repeatedly. So we keep it here for now.
+    fft_plan_cache = xp.fft.config.get_plan_cache()
+
 
 def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
@@ -331,3 +336,13 @@ def free_mempool():
     if xp.__name__ == "cupy":
         mempool = xp.get_default_memory_pool()
         mempool.free_all_blocks()
+
+
+def clear_fft_plan_cache():
+    """Clears the FFT plan cache if using cupy.
+
+    Does nothing if using numpy.
+
+    """
+    if xp.__name__ == "cupy":
+        fft_plan_cache.clear()

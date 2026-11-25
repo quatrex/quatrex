@@ -22,7 +22,8 @@ def fermi_dirac(energy: float | NDArray, temperature: float) -> float | NDArray:
         Fermi-Dirac occupancy.
 
     """
-    return 1 / (1 + xp.exp(energy / (k_B * temperature)))
+    # Equivalent to 1 / (1 + exp(x)), but does not overflow for large x.
+    return 0.5 * (1 - xp.tanh(energy / (2 * k_B * temperature)))
 
 
 def bose_einstein(energy: float | NDArray, temperature: float) -> float | NDArray:

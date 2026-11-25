@@ -383,6 +383,7 @@ class RGF(GFSolver):
                         a_ji=a_ji,
                         obc_blocks=obc_blocks,
                         xr_hat_ii=xr_ii,  # Before back substitution.
+                        xr_jj=xr_jj,
                         xl_hat_ii=xl_ii,  # Before back substitution.
                         xl_ij=xl_ij,
                         xl_jj=xl_jj,
@@ -400,6 +401,7 @@ class RGF(GFSolver):
                 ctx = BackSubstitutionContext(
                     i=-1,
                     j=0,
+                    xr_jj=xr_diag_blocks[0],
                     xl_jj=xl_diag_blocks[0],
                     xg_jj=xg_diag_blocks[0],
                     stack_slice=stack_slice,

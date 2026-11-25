@@ -3,6 +3,7 @@
 """Includes the electron solver."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -17,7 +18,12 @@ from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
-from quatrex.contact.scba import SCBAContact, get_inverse_order, order_block
+from quatrex.contact.scba import (
+    SCBAContact,
+    get_inverse_order,
+    order_block,
+    order_vector,
+)
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
@@ -157,6 +163,178 @@ def device_current(
     return callback
 
 
+def _diag_of_product(a: NDArray, b: NDArray) -> NDArray:
+    """Computes the diagonal of the matrix product a @ b."""
+    return xp.sum(a * b.swapaxes(-2, -1), axis=-1)
+
+
+@dataclass
+class OverlapSpillOver:
+    """Lead quantities for the spill-over of the density into a contact.
+
+    Attributes
+    ----------
+    retarded : NDArray
+        The product m_{0,-1} g S_{-1,0}, where 0 is the device block at
+        the contact, -1 the first lead block, m the system matrix and g
+        the retarded surface Green's function of the lead.
+    advanced : NDArray
+        The product m_{-1,0}^h g^h S_{-1,0}.
+    occupancies : NDArray
+        The occupancies of the contact, shaped to broadcast with the
+        blocks above.
+
+    """
+
+    retarded: NDArray
+    advanced: NDArray
+    occupancies: NDArray
+
+
+def overlap_density(
+    out_lesser: NDArray,
+    out_greater: NDArray,
+    overlap: DSDBSparse,
+    spill_overs: list[list[OverlapSpillOver]],
+) -> Callable[[BackSubstitutionContext], None]:
+    r"""Closure for computing the density in a non-orthogonal basis.
+
+    This function returns a callback that computes the diagonal of
+    \(G^{\lessgtr} S\) during the back substitution step of the
+    selected solve.
+
+    The stored Green's functions only contain the elements within the
+    interaction cutoff, while the overlap can couple orbitals that are
+    further apart. The density is therefore computed from the dense
+    blocks, before they are truncated. At the contacts, the orbitals
+    also overlap with those in the leads.
+
+    Parameters
+    ----------
+    out_lesser : NDArray
+        Preallocated output array for the (imaginary part of the) lesser
+        density. The shape of the array should be (num_batches,
+        num_orbitals).
+    out_greater : NDArray
+        Preallocated output array for the (imaginary part of the)
+        greater density.
+    overlap : DSDBSparse
+        The overlap matrix.
+    spill_overs : list[list[OverlapSpillOver]]
+        The contact spill-overs for each block.
+
+    """
+    offsets = overlap.block_offsets
+
+    def callback(ctx: BackSubstitutionContext):
+        """Adds the contributions of the current layer to the density."""
+        i, j = ctx.i, ctx.j
+        slice_j = slice(int(offsets[j]), int(offsets[j + 1]))
+
+        s_jj = overlap.blocks[j, j]
+        if i >= 0:
+            slice_i = slice(int(offsets[i]), int(offsets[i + 1]))
+            s_ij = overlap.blocks[i, j]
+            s_ji = overlap.blocks[j, i]
+
+        # NOTE: Lesser and greater lead Green's functions only differ in
+        # their occupancies: f for lesser, f - 1 for greater.
+        for out, x_ij, x_jj, shift in (
+            (out_lesser, ctx.xl_ij, ctx.xl_jj, 0.0),
+            (out_greater, ctx.xg_ij, ctx.xg_jj, 1.0),
+        ):
+            # Same symmetrization as for the stored diagonal blocks.
+            x_jj = 0.5 * (x_jj - x_jj.conj().swapaxes(-2, -1))
+            out[ctx.stack_slice, ..., slice_j] += _diag_of_product(x_jj, s_jj).imag
+
+            if i >= 0:
+                x_ji = -x_ij.conj().swapaxes(-2, -1)
+                out[ctx.stack_slice, ..., slice_i] += _diag_of_product(x_ij, s_ji).imag
+                out[ctx.stack_slice, ..., slice_j] += _diag_of_product(x_ji, s_ij).imag
+
+            # With the lead in equilibrium,
+            #   G^<_{0,-1} = -G^<_{00} m_{-1,0}^h g^h
+            #                + f G^r_{00} (m_{0,-1} g - m_{-1,0}^h g^h).
+            for spill_over in spill_overs[j]:
+                retarded = spill_over.retarded[ctx.stack_slice]
+                advanced = spill_over.advanced[ctx.stack_slice]
+                occupancies = spill_over.occupancies[ctx.stack_slice] - shift
+                out[ctx.stack_slice, ..., slice_j] += (
+                    occupancies * _diag_of_product(ctx.xr_jj, retarded - advanced)
+                    - _diag_of_product(x_jj, advanced)
+                ).imag
+
+    return callback
+
+
+def get_lead_potential(
+    potential: NDArray,
+    contact: SCBAContact,
+    block_offsets: NDArray,
+    global_offset: int,
+    mode: str,
+) -> NDArray:
+    """Gets the potential that enters the OBCs of a contact.
+
+    Parameters
+    ----------
+    potential : NDArray
+        The potential for each local orbital of the device.
+    contact : SCBAContact
+        The contact for which to get the potential.
+    block_offsets : NDArray
+        The local block offsets of the device.
+    global_offset : int
+        The global index of the first local orbital.
+    mode : str
+        How the potential is continued into the lead. Either "device",
+        "unit-cell" or "average" (see `ElectronConfig.lead_potential`).
+
+    Returns
+    -------
+    NDArray
+        The potential, where the device blocks that enter the OBCs (the
+        diagonal and the first off-diagonal block) are set to the
+        potential of the lead. For "device", this is the unchanged
+        input, otherwise it is a copy.
+
+    """
+    if mode == "device":
+        return potential
+
+    i, j = contact.diagonal_inds[0], contact.upper_inds[1]
+    start = int(block_offsets[min(i, j)])
+    stop = int(block_offsets[max(i, j) + 1])
+    block_size = int(block_offsets[i + 1] - block_offsets[i])
+
+    lead_potential = potential.copy()
+
+    if mode == "average":
+        # The outermost layer is the first one in the contact's order.
+        layer_size = block_size // contact.transport_repetitions
+        layer = order_vector(potential[start:stop], contact.order)[:layer_size]
+        lead_potential[start:stop] = layer.mean()
+        return lead_potential
+
+    if mode == "unit-cell":
+        # NOTE: Equivalent orbitals have the same position in the index
+        # arrays of the different unit cells.
+        cells = contact.unit_cell_orbital_indices
+        cell_potential = potential[cells[0, 0, 0] - global_offset]
+
+        num_layers = contact.transport_repetitions
+        ny, nz = contact.transverse_repetition_grid
+        # Direction from the outermost block into the device.
+        inward_shift = block_size if j > i else -block_size
+        for layer, k, l in np.ndindex(num_layers, ny, nz):
+            inds = cells[layer, k, l] - global_offset
+            lead_potential[inds] = cell_potential
+            lead_potential[inds + inward_shift] = cell_potential
+        return lead_potential
+
+    raise ValueError(f"Unknown lead potential: {mode}.")
+
+
 class SystemMatrix(_StackView):
     """Class representing the system matrix for the electron solver.
 
@@ -241,6 +419,32 @@ class SystemMatrix(_StackView):
                 else None
             ),
             self._potential,
+        )
+
+    def with_potential(self, potential: NDArray) -> "SystemMatrix":
+        """Returns the same system matrix with a different potential.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The potential of the new system matrix.
+
+        Returns
+        -------
+        SystemMatrix
+            The new system matrix. The original one is not changed.
+
+        """
+        return SystemMatrix(
+            self._stack_shape,
+            self._stack_index,
+            self._energies,
+            self._hamiltonian,
+            self._overlap,
+            self._sse_lesser,
+            self._sse_greater,
+            self._sse_retarded_hermitian,
+            potential,
         )
 
     def __getattr__(self, name: str):
@@ -590,6 +794,8 @@ class ElectronSolver(SubsystemSolver):
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
+        self.lead_potential = config.electron.lead_potential
+
         self.compute_meir_wingreen_current = config.outputs.meir_wingreen_currents
         self.compute_device_current = config.outputs.device_currents
 
@@ -619,6 +825,25 @@ class ElectronSolver(SubsystemSolver):
 
         self.meir_wingreen_current = None
         self.device_current = None
+
+        # Densities in non-orthogonal bases, computed from the dense
+        # blocks of the Green's functions. Only supported by the
+        # (non-distributed) RGF solver.
+        self.compute_overlap_density = (
+            device.overlap_matrices is not None
+            and config.electron.solver.algorithm == "rgf"
+            and comm.block.size == 1
+            and (
+                config.outputs.electron_density
+                or config.outputs.hole_density
+                or config.scsp is not None
+            )
+        )
+        self.lesser_density = None
+        self.greater_density = None
+        self.overlap_spill_overs = [
+            [] for __ in range(device.hamiltonians.num_local_blocks)
+        ]
 
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
@@ -695,11 +920,24 @@ class ElectronSolver(SubsystemSolver):
         upper_inds = contact.upper_inds
         inverse_order = get_inverse_order(order)
 
+        system_matrix = self.system_matrix
+        if self.lead_potential != "device":
+            hamiltonians = self.device.hamiltonians
+            system_matrix = system_matrix.with_potential(
+                get_lead_potential(
+                    system_matrix._potential,
+                    contact,
+                    block_offsets=hamiltonians.local_block_offsets,
+                    global_offset=hamiltonians.global_block_offset,
+                    mode=self.lead_potential,
+                )
+            )
+
         m_10, m_00, m_01 = periodize_layer(
             (
-                order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
-                order_block(self.system_matrix.blocks[*diagonal_inds], order),
-                order_block(self.system_matrix.blocks[*upper_inds], order),
+                order_block(system_matrix.blocks[*upper_inds[::-1]], order),
+                order_block(system_matrix.blocks[*diagonal_inds], order),
+                order_block(system_matrix.blocks[*upper_inds], order),
             ),
             block_sections=block_sections,
         )
@@ -729,6 +967,17 @@ class ElectronSolver(SubsystemSolver):
         sigma_00 = m_10 @ g_00 @ m_01
         gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
 
+        if self.compute_overlap_density:
+            s_01 = self._get_contact_overlap(contact)
+            m_01_dagger_g_dagger = (g_00 @ m_01).conj().swapaxes(-2, -1)
+            self.overlap_spill_overs[contact.diagonal_inds[0]].append(
+                OverlapSpillOver(
+                    retarded=order_block(m_10 @ (g_00 @ s_01), inverse_order),
+                    advanced=order_block(m_01_dagger_g_dagger @ s_01, inverse_order),
+                    occupancies=occupancies.reshape(-1, *((1,) * (m_01.ndim - 2))),
+                )
+            )
+
         # Compute and apply the lesser boundary self-energy.
         obc_lesser = 1j * scale_stack(gamma_00.copy(), occupancies)
         # Compute and apply the greater boundary self-energy.
@@ -740,6 +989,35 @@ class ElectronSolver(SubsystemSolver):
             order_block(obc_greater, inverse_order),
         )
 
+    def _get_contact_overlap(self, contact: SCBAContact) -> NDArray:
+        """Gets the overlap between the lead and the device.
+
+        Parameters
+        ----------
+        contact : SCBAContact
+            The contact for which to get the overlap.
+
+        Returns
+        -------
+        s_01 : NDArray
+            The (ordered and periodized) overlap block that couples the
+            first lead block (rows) to the device (columns).
+
+        """
+        overlap = self.device.overlap_matrices
+        __, __, s_01 = periodize_layer(
+            tuple(
+                order_block(overlap.blocks[*inds], contact.order)
+                for inds in (
+                    contact.upper_inds[::-1],
+                    contact.diagonal_inds,
+                    contact.upper_inds,
+                )
+            ),
+            block_sections=contact.transport_repetitions,
+        )
+        return s_01
+
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
     def _compute_obc(self, batch_slice: slice) -> None:
         """Computes open boundary conditions.
@@ -750,6 +1028,9 @@ class ElectronSolver(SubsystemSolver):
             The slice of the energy stack corresponding to the current batch.
 
         """
+        for spill_overs in self.overlap_spill_overs:
+            spill_overs.clear()
+
         for contact in self.device.contacts:
             if comm.block.rank == contact.owning_rank:
                 obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
@@ -850,6 +1131,10 @@ class ElectronSolver(SubsystemSolver):
         g_greater.data[local_mask] = 0.0
         g_retarded.data[local_mask] = 0.0
 
+        if self.compute_overlap_density:
+            self.lesser_density[local_mask] = 0.0
+            self.greater_density[local_mask] = 0.0
+
     @profiler.profile(label="ElectronSolver", level="default", comm=comm)
     def solve(
         self,
@@ -925,6 +1210,11 @@ class ElectronSolver(SubsystemSolver):
                 dtype=xp.float64,
             )
 
+        if self.compute_overlap_density:
+            density_shape = (*sse_lesser.local_stack_shape, sse_lesser.shape[-1])
+            self.lesser_density = xp.zeros(density_shape, dtype=xp.float64)
+            self.greater_density = xp.zeros(density_shape, dtype=xp.float64)
+
         domain_distributed = comm.block.size > 1
         solver = self.solver_dist if domain_distributed else self.solver
 
@@ -962,6 +1252,15 @@ class ElectronSolver(SubsystemSolver):
                     callback_list.append(
                         device_current(
                             self.device_current[batch_slice], self.bare_system_matrix
+                        )
+                    )
+                if self.compute_overlap_density:
+                    callback_list.append(
+                        overlap_density(
+                            self.lesser_density[batch_slice],
+                            self.greater_density[batch_slice],
+                            self.device.overlap_matrices,
+                            self.overlap_spill_overs,
                         )
                     )
 

@@ -129,3 +129,61 @@ def compute_num_connected_blocks(
         return 2
 
     return 3
+
+
+def split_trapezoid(
+    y: NDArray, x: NDArray, split: NDArray | float
+) -> tuple[NDArray, NDArray]:
+    r"""Integrates below and above a split point with the trapezoidal rule.
+
+    The integrand is taken as piecewise linear on the grid, and the grid
+    cell containing the split point is divided exactly at it, i.e.
+
+    $$
+    \int_{x_0}^{s} y(x) \mathrm{d}x \quad \text{and} \quad \int_{s}^{x_{N-1}}
+    y(x) \mathrm{d}x,
+    $$
+
+    which add up to the trapezoidal integral over the full grid. Masking
+    the integrand at the split point instead introduces an error of
+    order $y(s) \Delta x / 2$, which matters when the integrand does
+    not vanish there (e.g. the density of states of graphene at the
+    charge neutrality level).
+
+    Parameters
+    ----------
+    y : NDArray
+        The integrand with the grid along the last axis.
+    x : NDArray
+        The (ascending) grid points.
+    split : NDArray or float
+        The split points, broadcastable to `y.shape[:-1]`. Points outside
+        the grid are clamped to it.
+
+    Returns
+    -------
+    below : NDArray
+        The integral from the first grid point to the split point.
+    above : NDArray
+        The integral from the split point to the last grid point.
+
+    """
+    dx = xp.diff(x)
+    cells = 0.5 * (y[..., 1:] + y[..., :-1]) * dx
+    cumulative = xp.concatenate(
+        [xp.zeros(y.shape[:-1] + (1,), dtype=cells.dtype), xp.cumsum(cells, axis=-1)],
+        axis=-1,
+    )
+
+    split = xp.broadcast_to(xp.asarray(split, dtype=x.dtype), y.shape[:-1])
+    cell = xp.clip(xp.searchsorted(x, split, side="right") - 1, 0, x.size - 2)
+    fraction = xp.clip((split - x[cell]) / dx[cell], 0.0, 1.0)
+
+    def _take(a: NDArray, indices: NDArray) -> NDArray:
+        return xp.take_along_axis(a, indices[..., xp.newaxis], axis=-1)[..., 0]
+
+    y_left = _take(y, cell)
+    y_split = y_left + fraction * (_take(y, cell + 1) - y_left)
+    below = _take(cumulative, cell) + 0.5 * fraction * dx[cell] * (y_left + y_split)
+
+    return below, cumulative[..., -1] - below

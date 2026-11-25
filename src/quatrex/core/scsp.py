@@ -50,7 +50,18 @@ class SCSP:
 
         self.mixer = self._configure_mixer(config.scsp)
 
+        self.use_spectral_dos = (
+            config.electrostatics.solving_scheme == "root-finding"
+            and config.electrostatics.density_model == "ldos"
+        )
+
         self.convergence_tol = config.scsp.convergence_tol
+
+        # Interleave the SCBA with the Schrödinger-Poisson loop instead
+        # of converging the SCBA at every potential.
+        self.scba_iterations_per_step = (
+            config.scsp.scba_iterations_per_step if config.formalism == "negf" else None
+        )
 
     @staticmethod
     def _configure_transport_solver(
@@ -152,12 +163,31 @@ class SCSP:
                 )
 
             self.transport_solver.set_potential(potential)
-            self.transport_solver.run()
+            if self.scba_iterations_per_step is None:
+                self.transport_solver.run()
+            else:
+                self.transport_solver.run(max_iterations=self.scba_iterations_per_step)
             charge_density = self.transport_solver.get_charge_density()
 
-            new_potential = self.electrostatic_solver.solve(charge_density, potential)
+            spectral_dos = (
+                self.transport_solver.get_spectral_density_of_states()
+                if self.use_spectral_dos
+                else None
+            )
 
-            if np.max(np.abs(potential - new_potential)) < self.convergence_tol:
+            new_potential = self.electrostatic_solver.solve(
+                charge_density, potential, spectral_dos=spectral_dos
+            )
+
+            potential_update = np.max(np.abs(potential - new_potential))
+            if comm.rank == 0:
+                print(
+                    f"SCSP iteration {iteration}: max potential update {potential_update:.6e}",
+                    flush=True,
+                )
+
+            scba_converged = self._scba_has_converged()
+            if potential_update < self.convergence_tol and scba_converged:
                 if comm.rank == 0:
                     print(f"SCSP converged after {iteration} iterations.")
                     np.save(self.config.output_dir / "potential_final.npy", potential)
@@ -172,4 +202,25 @@ class SCSP:
                     f"{self.config.scsp.max_iterations} iterations."
                 )
 
+        # NOTE: Only done once here, since the last iteration is only
+        # known at this point.
+        self.transport_solver.save_matrices()
+
         return potential
+
+    def _scba_has_converged(self) -> bool:
+        """Checks the self-energies in interleaved NEGF runs.
+
+        With interleaved loops, the self-energies are only partially
+        converged at every potential, so the loop must also wait for
+        them. With nested loops (or QTBM), this check always passes.
+
+        """
+        if self.scba_iterations_per_step is None:
+            return True
+
+        sigma_update = self.transport_solver.sigma_update
+        if comm.rank == 0:
+            print(f"    max self-energy update {sigma_update:.6e}", flush=True)
+
+        return sigma_update < self.config.scba.convergence_tol

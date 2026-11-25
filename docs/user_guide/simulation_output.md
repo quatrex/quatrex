@@ -67,6 +67,31 @@ j_{n \to n+1}(E, \mathbf{k}_\perp) = \mathbf{H}_{n, n+1} \odot
 n+1}(E, \mathbf{k}_\perp) \odot \mathbf{H}_{n+1, n}
 $$
 
+### Matrices of the last SCBA iteration
+
+The Green's functions, polarizations, screened Coulomb interactions and
+self-energies of the last SCBA iteration can be saved by listing them in
+[`scba_matrices`](parameters/outputs/#scba_matrices):
+
+```toml
+[outputs]
+scba_matrices = ["g_lesser", "g_greater", "sigma"]
+```
+
+Every matrix is written to its own HDF5 file (e.g. `g_lesser.h5`), which
+contains the non-zero elements `data` of shape `(num_energies,
+*num_kpoints, nnz)` and their `rows` and `cols`. Only the upper triangle
+is stored if the `symmetry` attribute of the file is not `"None"`. Note
+that the energies of the polarization and the screened Coulomb
+interaction are energy differences, starting at zero. The files can be
+read (on any number of ranks) with
+
+```python
+from qttools.datastructures import DSDBSparse
+
+g_lesser = DSDBSparse.load("outputs/g_lesser.h5")
+```
+
 ## QTBM Simulation Output
 
 ### Transmission function

@@ -60,6 +60,10 @@ class BackSubstitutionContext:
     xl_hat_ii : NDArray
         Dense lesser GF diagonal block **before** back substitution
         update.
+    xr_jj : NDArray
+        Dense retarded Green's function diagonal block **after** back
+        substitution update. Only set by the (non-distributed) RGF
+        solver.
     xl_ij : NDArray
         Dense lesser GF off-diagonal block **after** back substitution
         update.
@@ -95,6 +99,7 @@ class BackSubstitutionContext:
     obc_blocks: OBCBlocks | None = None
 
     xr_hat_ii: NDArray | None = None
+    xr_jj: NDArray | None = None
 
     xl_hat_ii: NDArray | None = None
     xl_jj: NDArray | None = None

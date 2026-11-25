@@ -562,3 +562,136 @@ fig.savefig(save_path + "dispersion.svg")
 with open(save_path + "phonon_dispersion.npy", "wb") as f:
     np.save(f, omega)
 ```
+
+## `negf-gw-poisson`: Gated carbon nanotube with NEGF-GW and Poisson
+
+Self-consistent Schrödinger-Poisson (SCSP) simulation with GW and
+pseudo-phonon scattering, in the same spirit as the `negf-poisson`
+example of graphene, which is ballistic. The tube (24 unit cells,
+102.8 Å) is embedded in SiO2, with n-doped leads (2e19 cm$^{-3}$, eight
+unit cells each), a gate-all-around of radius 12 Å and length 26 Å at
+$V_g = -0.3$ V, and a drain bias of 0.1 V at the right contact.
+
+```bash
+mpirun -n 64 quatrex run quatrex_config.toml
+```
+
+With 64 ranks (one thread each) on an AMD EPYC 7742 node, this takes
+about 40 min. The `outputs` need about 2 GB. The inputs are links to
+`../inputs`, except for the mesh, which belongs to this device and can be
+regenerated with `quatrex mesh quatrex_config.toml --off-screen`.
+
+### Contact levels
+
+GW renormalizes the bands, but band edge tracking is turned off in SCSP
+runs. The Fermi levels, mid-gap energies and band edges of the contacts
+are therefore set to those of the homogeneous doped tube with GW:
+
+| | without GW | with GW |
+|---|---|---|
+| Valence band edge (eV) | -4.174 | -3.735 |
+| Conduction band edge (eV) | -3.566 | -3.080 |
+| `mid_gap_energy` (eV) | -3.870 | -3.41 |
+| `fermi_level` (eV) for 2e19 cm$^{-3}$ | -3.422 | -2.896 |
+
+The band edges with GW were read off the spectral function (25 meV grid)
+of a standalone SCBA run (no `[scsp]`, zero potential,
+`band_edge_tracking = true`, 30 iterations). The Fermi level was obtained
+from standalone SCBA runs with the settings of this example and fixed Fermi
+levels (45 iterations), by interpolating the charge above mid-gap to the
+doping density:
+
+| `fermi_level` (eV) | -2.902 | -2.896 (interpolated) | -2.887 | -2.873 |
+|---|---|---|---|---|
+| Electrons per unit cell | 0.206 | 0.214 | 0.225 | 0.245 |
+
+Note that the Fermi level must not be shifted rigidly on the spectral
+function of a run with a different charge, as the gap with GW depends on
+the charge.
+
+**The levels depend on the doping, on `epsilon_r`, on the cutoffs and on
+the energy grid**, and have to be recalibrated if any of these change.
+As a check, the potential in the source should be close to zero (here
+-0.01 V) and that in the drain close to minus the drain bias (-0.11 V).
+
+### Settings
+
+- **Interleaved loops.** `scba_iterations_per_step = 2` runs two SCBA
+  iterations per potential, starting from the previous self-energies.
+- **Dielectric.** `default_epsilon_r = 3.9` everywhere, close to the
+  `epsilon_r = 4` of the GW Coulomb matrix. The `oxide` region between the
+  tube and the gate (radius 7.5 to 12 Å) has the same permittivity, so it
+  does not change the results. It is there so that its `epsilon_r` can be
+  varied without a new mesh. With 11.7 (as in
+  `qtbm-poisson`) the screening length of the lead is comparable to
+  its length, so that it is not neutral. With 1.0, the point-charge
+  dopants cause a variation of about 0.4 V within a unit cell.
+- **5 meV energy grid.** The gate raises the valence band in the channel
+  above that of the leads, which binds hole states there (at about
+  -3.64 eV, with a full width at half maximum of about 5 meV). They are
+  narrower than a 25 meV grid, on which the self-energies and potential
+  spike unless a large `eta` is used. See below.
+- **No `eta` and `eta_obc`.** Both are left at their defaults. An `eta`
+  of 2e-3 eV overestimates the current by more than 10 %.
+- **`scba.convergence_tol = 0.5`.** The maximum self-energy update levels
+  off at 0.05 - 0.35 eV, due to valence states below -4.9 eV. The
+  tolerance was chosen above this floor, so in practice only the potential
+  determines when the loop stops. Between the last two SCBA iterations, the
+  spectral electron density above mid-gap changes by at most 2e-4 per eV
+  and orbital.
+
+### Saving the Green's functions and self-energies
+
+With `scba_matrices = ["g", "p", "w", "sigma"]` in `[outputs]`, the
+Green's functions, polarizations, screened interactions and self-energies
+of the last SCBA iteration are written to HDF5 files at the end of the
+run. Individual matrices can be selected as well, e.g. `["g_lesser"]`.
+All of them need 27 GB.
+
+### Results and limitations
+
+The loop converges in 24 iterations, with a barrier (channel maximum minus
+source) of 0.31 V. Ballistic QTBM with the bare levels gives 0.30 V (its
+potential update levels off at 1.9 mV).
+
+The dependence on the grid and on `eta` was determined with
+`fermi_level = -2.887` and otherwise identical settings. The currents
+(arbitrary units) are averages over the last 20 SCBA iterations.
+
+| Grid | 25 meV | 25 meV | 5 meV | 5 meV | 1 meV |
+|---|---|---|---|---|---|
+| `eta` (eV) | 2e-3 (`eta_obc` 5e-3) | 1e-4 | 1e-4 | default | 1e-4 |
+| Iterations to convergence (2 mV) | 23 | 41 (spikes) | 23 | 23 | 23 |
+| Barrier (V) | 0.308 | 0.304 | 0.304 | 0.303 | 0.304 |
+| Largest difference of the potential to 1 meV (mV) | 6.3 | 5.9 | 0.4 | 0.6 | - |
+| Current | 1.97e-3 | 1.75e-3 | 1.71e-3 | 1.70e-3 | 1.71e-3 |
+| Standard deviation of the current (%) | 1.8 | 4.7 | 0.7 | 1.8 | 1.1 |
+| Spectral weight per orbital (exact: 2) | 1.945 | 1.993 | 1.993 | 1.996 | 1.993 |
+
+The run time on 64 ranks is 12 min (25 meV, `eta = 1e-4`) and 34 min
+(5 meV), and 2.8 h on 128 ranks with 1 meV.
+
+- **The current fluctuates** from one SCBA iteration to the next by
+  1 - 2 % (standard deviation), up to 5 % between the extremes of the last
+  20 iterations. Average over the last iterations.
+- **Transient negative densities.** In single SCBA iterations (3 of 48), the
+  spectral electron density gets negative (down to -18 per eV) at deep
+  valence states in the channel, between -5.0 and -5.4 eV, and recovers
+  in one or two iterations. No such values occur above mid-gap, the
+  potential updates stay smooth, and the last iteration has none. The cause
+  is not known. They also occur on the 25 meV grid, and, in one run with
+  `eta = 1e-4` on the 5 meV grid, were weaker (one iteration, -1.6).
+- **The potential is converged to about 10 mV**, not to the 2 mV tolerance:
+  the updates shrink by only 17 % per iteration (estimated from the 1 meV
+  run).
+- The current is sensitive to the contact levels: 9 meV in the Fermi level
+  (-2.896 instead of -2.887) change it by about 9 %.
+- The current differs by 0.2 % between the contacts, and by 0.3 % between
+  the source contact and the middle of the device.
+- **The leads are not neutral**: they hold 0.17 - 0.18 electrons per unit
+  cell, compared to 0.214 dopants. This does not depend on `eta`,
+  `eta_obc` or the energy grid, and hardly on the Fermi level. The potential
+  varies by 0.22 V between the atoms of a unit cell in the leads, and the
+  lowest subband is about 75 meV higher than expected from the flat tube.
+  Whether this, or the length of the leads, causes the missing charge has
+  not been determined.

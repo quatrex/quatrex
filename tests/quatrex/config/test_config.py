@@ -2,6 +2,7 @@
 
 """Tests for the Quatrex configuration parsing and context setup."""
 
+import re
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
@@ -51,3 +52,30 @@ def test_setup_context_dist(
     # NOTE: this is expected to fail if the comm size is not a multiple
     # of the comm block size
     setup_context(config)
+
+
+@pytest.mark.parametrize("scsp", [True, False])
+def test_band_edge_tracking_disabled_with_scsp(
+    scsp: bool, tmp_path: Path, adjust_config_paths: Callable
+):
+    """Tests that band edge tracking is turned off in SCSP runs."""
+    example_path = (
+        Path(__file__).parents[3] / "examples/w90/carbon-nanotube/qtbm-poisson"
+    )
+    tmp_config_path = tmp_path / "quatrex_config.toml"
+    adjust_config_paths(example_path / "quatrex_config.toml", tmp_config_path)
+
+    config_text = tmp_config_path.read_text().replace(
+        "[electron]\n", "[electron]\nband_edge_tracking = true\n", 1
+    )
+    if not scsp:
+        config_text = re.sub(r"\[scsp\]\n(?:[^\[\n].*\n|\n)*", "", config_text)
+    tmp_config_path.write_text(config_text)
+
+    with (
+        pytest.warns(UserWarning, match="Band edge tracking") if scsp else nullcontext()
+    ):
+        config = parse_config(tmp_config_path)
+
+    assert (config.scsp is not None) == scsp
+    assert config.electron.band_edge_tracking == (not scsp)

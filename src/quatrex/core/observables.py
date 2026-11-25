@@ -73,13 +73,75 @@ def density(x: DSDBSparse, overlap: DSDBSparse | None = None) -> NDArray:
     )
 
 
+def scattering_rate(
+    x_lesser: DSDBSparse,
+    x_greater: DSDBSparse,
+    sse_lesser: DSDBSparse,
+    sse_greater: DSDBSparse,
+) -> tuple[NDArray, NDArray]:
+    """Scattering rates from Green's functions and self-energies.
+
+    The in-scattering rate is given by the diagonal of the lesser
+    self-energy times the greater Green's function, while the
+    out-scattering rate is given by the diagonal of the greater
+    self-energy times the lesser Green's function.
+
+    The sign convention is such that in-scattering is positive and
+    out-scattering is negative.
+
+    Note that this implementation only works if the Green's functions
+    and self-energies have identical sparsity patterns.
+
+    Parameters
+    ----------
+    x_lesser : DSDBSparse
+        Lesser Green's function.
+    x_greater : DSDBSparse
+        Greater Green's function.
+    sse_lesser : DSDBSparse
+        Lesser self-energy.
+    sse_greater : DSDBSparse
+        Greater self-energy.
+
+    Returns
+    -------
+    scattering : NDArray
+        The scattering rate. Positive values correspond to
+        in-scattering, while negative values mean out-scattering.
+
+    """
+    # The Hadamard product of two skew-hermitian matrices is Hermitian.
+    # To get the diagonal elements of the matrix product, we need to sum
+    # over rows afterwards, exploiting the Hermitian symmetry. After
+    # multiplying the two matrices, take the real part, because the
+    # imaginary part will sum to zero anyway.
+    product = xp.real(
+        sse_lesser.data * -x_greater.data.conj()  # in-scattering
+        - sse_greater.data * -x_lesser.data.conj()  # out-scattering
+    )
+    scattering = xp.zeros(x_lesser.shape[:-1], dtype=product.dtype)
+    xp.add.at(scattering, (..., x_lesser.rows), product)
+
+    if x_lesser.symmetry:
+        off = x_lesser.rows != x_lesser.cols
+        xp.add.at(scattering, (..., x_lesser.cols[off]), product[..., off])
+
+    scattering = comm.block.all_gather_v(scattering, axis=-1)
+    scattering = comm.stack.all_gather_v(
+        scattering, axis=0, mask=x_lesser._stack_padding_mask
+    )
+
+    return scattering
+
+
 def current_conservation(
     x_lesser: DSDBSparse,
     x_greater: DSDBSparse,
-    se_int_lesser: DSDBSparse,
-    se_int_greater: DSDBSparse,
-) -> NDArray:
+    sse_lesser: DSDBSparse,
+    sse_greater: DSDBSparse,
+) -> tuple[NDArray, NDArray]:
     r"""Checks current conservation.
+
     See eq. (12.34) in H. Haug and A.-P. Jauho,
     "Quantum Kinetics in Transport and Optics of Semiconductors"
 
@@ -87,8 +149,18 @@ def current_conservation(
     \int dE dk sum_{ij} sigma_{ij}^< * G_{ji}^> - sigma_{ij}^> * G_{ji}^< = 0
     $$
 
-    We can use the skew-symmetric property of the Green's functions $G_{ji}^< = -[G_{ij}^<]^*$
-    such that we don't have to communicate the greater Green's function.
+    This function computes a relative value of the current conservation
+    condition. This is the absolute value of the condition divided by
+    the mean of the in-scattering and out-scattering terms.
+
+    We can use the fact that traces of matrix products can be computed
+    using the Frobenius inner product, i.e. $Tr(A B) = sum_{ij} A_{ij}
+    B_{ji}$, and the skew-symmetric property of the Green's functions
+    $G_{ji}^< = -[G_{ij}^<]^*$ such that we don't have to communicate
+    stuff.
+
+    Note that this implementation only works if the Green's functions
+    and self-energies have identical sparsity patterns.
 
     Parameters
     ----------
@@ -96,30 +168,33 @@ def current_conservation(
         The lesser Green's function.
     x_greater : DSDBSparse
         The greater Green's function.
-    se_int_lesser : DSDBSparse
+    sse_lesser : DSDBSparse
         The lesser interaction self-energy.
-    se_int_greater : DSDBSparse
+    sse_greater : DSDBSparse
         The greater interaction self-energy.
+
     Returns
     -------
-    tuple[NDArray, NDArray]
-        The absolute value of the current conservation and the
-        relative value of the current conservation.
+    current_conservation : NDArray
+        Relative difference between in-scattering and out-scattering.
+
     """
-    term1 = (se_int_lesser.data * (-x_greater.data.conj())).sum()
-    term2 = (se_int_greater.data * (-x_lesser.data.conj())).sum()
+    # Taking the real part here, because when symmetry is enabled, we
+    # only store the upper triangular part of the Green's functions and
+    # self-energies. If symmetry is off and we sum the whole tensor, the
+    # imaginary part of this sum is around machine epsilon as expected.
+    in_scattering = xp.sum(xp.real(sse_lesser.data * -x_greater.data.conj()))
+    out_scattering = xp.sum(xp.real(sse_greater.data * -x_lesser.data.conj()))
 
-    sendbuff = xp.array([term1, term2], dtype=x_lesser.dtype)
-    recvbuff_block = xp.empty_like(sendbuff)
-    comm.block.all_reduce(sendbuff, recvbuff_block)
-    recvbuff_stack = xp.empty_like(sendbuff)
-    comm.stack.all_reduce(recvbuff_block, recvbuff_stack)
+    sendbuf = xp.array([in_scattering, out_scattering], dtype=xp.float64)
+    recvbuf_block = xp.empty_like(sendbuf)
+    comm.block.all_reduce(sendbuf, recvbuf_block)
+    recvbuf_stack = xp.empty_like(sendbuf)
+    comm.stack.all_reduce(recvbuf_block, recvbuf_stack)
 
-    term1, term2 = recvbuff_stack
+    in_scattering, out_scattering = recvbuf_stack
 
-    current_conservation_absolute = term1 - term2
-    current_conservation_relative = (
-        current_conservation_absolute / (term1 + term2) if (term1 + term2) != 0 else 0
-    )
-
-    return xp.abs(current_conservation_absolute), xp.abs(current_conservation_relative)
+    mean = 0.5 * (xp.abs(in_scattering) + xp.abs(out_scattering))
+    abs_diff = xp.abs(in_scattering - out_scattering)
+    rel_diff = abs_diff / mean if mean != 0 else 0
+    return rel_diff

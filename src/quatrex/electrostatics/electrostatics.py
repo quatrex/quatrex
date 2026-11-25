@@ -5,18 +5,20 @@
 import numpy as np
 import skfem
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device import BaseDevice
+from quatrex.electrostatics.density_response import SpectralDensityOfStates
 from quatrex.electrostatics.geometry_config import VolumeProperties
 from quatrex.electrostatics.meshing import DeviceMesh
 from quatrex.electrostatics.solver import (
     DirectPoissonSolver,
     NonlinearPoissonSolver,
     PoissonSolver,
+    solve_linear_system,
 )
 
 
@@ -48,6 +50,9 @@ class ElectrostaticSolver:
         """Initializes the electrostatic solver."""
 
         self.config = config
+
+        # Real-space potential of the last solve, used as warm start.
+        self._real_space_potential: NDArray | None = None
 
         self.device_mesh = DeviceMesh.from_config(config)
 
@@ -287,24 +292,18 @@ class ElectrostaticSolver:
                 },
             )
 
-            diagonal = stiffness_matrix.diagonal()
-            preconditioner = sparse.linalg.LinearOperator(
-                stiffness_matrix.shape, matvec=lambda x: x / diagonal
-            )
-            potential, info = sparse.linalg.bicgstab(
-                stiffness_matrix,
-                rhs,
-                M=preconditioner,
-                # NOTE: Zero starting guess can lead to parameter
-                # breakdown, this seems more robust.
-                x0=preconditioner @ rhs,
-            )
+            potential = solve_linear_system(stiffness_matrix, rhs)
 
             return (self.poisson_solver.mfc_transform.T @ potential)[self.atom_inds]
 
         raise ValueError(f"Unknown initial guess type: {self.initial_guess_strategy}")
 
-    def solve(self, charge_density: NDArray, potential: NDArray) -> NDArray:
+    def solve(
+        self,
+        charge_density: NDArray,
+        potential: NDArray,
+        spectral_dos: SpectralDensityOfStates | None = None,
+    ) -> NDArray:
         """Solves the Poisson equation for a given charge density.
 
         Parameters
@@ -314,6 +313,9 @@ class ElectrostaticSolver:
         potential : NDArray
             The potential in the orbital basis from the previous
             iteration.
+        spectral_dos : SpectralDensityOfStates, optional
+            The atom- and contact-resolved LDOS of the transport
+            calculation, needed by the "ldos" density model.
 
         Returns
         -------
@@ -333,13 +335,32 @@ class ElectrostaticSolver:
                 real_space_charge_density,
             )
 
-        real_space_potential = xp.zeros(self.num_dofs)
+        # NOTE: The transport solver only provides the potential at the
+        # atoms. Away from the atoms (dielectrics, vacuum), the Newton
+        # iterations are warm-started from the previous solution
+        # instead of zero, which saves the iterations that would
+        # otherwise be spent on re-establishing the gate fields.
+        if self._real_space_potential is None:
+            real_space_potential = xp.zeros(self.num_dofs)
+        else:
+            real_space_potential = self._real_space_potential.copy()
         real_space_potential[self.atom_inds] = potential
 
+        if spectral_dos is not None:
+            spectral_dos = SpectralDensityOfStates(
+                spectral_dos=get_host(spectral_dos.spectral_dos),
+                energies=get_host(spectral_dos.energies),
+                chemical_potentials=get_host(spectral_dos.chemical_potentials),
+                temperatures=get_host(spectral_dos.temperatures),
+            )
+
         potential = self.poisson_solver.solve(
-            get_host(real_space_charge_density), get_host(real_space_potential)
+            get_host(real_space_charge_density),
+            get_host(real_space_potential),
+            spectral_dos=spectral_dos,
         )
         potential = get_device(potential)
+        self._real_space_potential = potential.copy()
 
         if comm.rank == 0:
             xp.save(

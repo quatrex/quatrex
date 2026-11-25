@@ -67,6 +67,24 @@ class SCSPConfig(BaseModel):
 
     """
 
+    scba_iterations_per_step: PositiveInt | None = None
+    """The number of SCBA iterations per Schrödinger-Poisson iteration.
+
+    Only used if [`formalism`](quatrex#formalism) is set to "negf".
+
+    - `None` (the default): The SCBA is run for
+      [`max_iterations`](scba#max_iterations) at every potential
+      (nested loops).
+    - A number $N$: The SCBA and Schrödinger-Poisson loops are
+      interleaved. Every Schrödinger-Poisson iteration runs $N$ SCBA
+      iterations, starting from the self-energies of the previous one.
+      The loop has converged once both the potential and the
+      self-energies (see [`convergence_tol`](scba#convergence_tol))
+      have converged. This avoids converging the self-energies at
+      potentials that are still far from self-consistency.
+
+    """
+
     # Parameters for potential mixing.
     mixer: Literal["under-relaxation", "diis"] = "under-relaxation"
     """The mixing scheme to use for the self-consistent solution of the
@@ -211,8 +229,15 @@ class SCBAConfig(BaseModel):
     convergence_tol: PositiveFloat = 1e-5
     """The convergence tolerance for the SCBA iterations.
 
+    This is the maximum absolute change of the lesser, greater, and
+    Hermitian retarded self-energies within one iteration.
+
     !!! warning
-        This parameter currently has no effect.
+        This parameter currently only has an effect in Schrödinger-Poisson
+        runs with interleaved loops (see
+        [`scba_iterations_per_step`](scsp#scba_iterations_per_step)).
+        Standalone SCBA runs always perform
+        [`max_iterations`](#max_iterations) iterations.
 
     """
 
@@ -335,7 +360,7 @@ class ElectrostaticsConfig(BaseModel):
 
     """
 
-    density_model: Literal["single-band", "omen"] = "single-band"
+    density_model: Literal["single-band", "omen", "graphene", "ldos"] = "single-band"
     """The density model to use for the root-finding scheme.
 
     - `"single-band"`: Uses a simple single-band density model where the
@@ -345,6 +370,20 @@ class ElectrostaticsConfig(BaseModel):
       almost identical to the single-band model with `density_model_dim
       = 2`. However, it uses slightly different physical constants,
       i.e., not the CODATA values used everywhere else in `quatrex`.
+    - `"graphene"`: Uses an ambipolar Dirac-cone density model for
+      graphene, where the net excess charge is given by Fermi-Dirac
+      integrals of order 1 for electrons and holes. Configured via
+      [`graphene_fermi_velocity`](#graphene_fermi_velocity) and
+      [`graphene_area_per_atom`](#graphene_area_per_atom).
+    - `"ldos"`: Uses the local density of states of the last transport
+      calculation, resolved by the injecting contact, and shifts it
+      rigidly with the local potential. The model reproduces the
+      transport density exactly and its derivative is the actual local
+      quantum capacitance, so it needs no material parameters. The
+      transport energy window must contain the Fermi windows of the
+      contacts shifted by the potential updates. For NEGF, the local
+      spectral function is used instead, filled up to a local
+      quasi-Fermi level per atom (exact in equilibrium).
 
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding".
@@ -362,6 +401,23 @@ class ElectrostaticsConfig(BaseModel):
     Only used if [`solving_scheme`](#solving_scheme) is set to
     "root-finding" and [`density_model`](#density_model) is set to
     "single-band".
+
+    """
+
+    graphene_fermi_velocity: PositiveFloat = 1e6
+    """The Fermi velocity of graphene in m/s.
+
+    Only used if [`density_model`](#density_model) is set to
+    "graphene".
+
+    """
+
+    graphene_area_per_atom: PositiveFloat = 3 * 3**0.5 / 4 * 1.42**2
+    """The area per atom of the graphene sheet in Å^2.
+
+    Defaults to the value for a C-C bond length of 1.42 Å (≈ 2.62 Å^2).
+    Only used if [`density_model`](#density_model) is set to
+    "graphene".
 
     """
 
@@ -1084,6 +1140,10 @@ class ElectronConfig(BaseModel):
     conduction band edge, the Fermi level is always set to be 0.5 eV
     above the conduction band edge during all SCBA iterations.
 
+    Band edge tracking is turned off in self-consistent
+    Schrödinger-Poisson runs, since the tracked band edges include the
+    electrostatic potential, which would then be counted twice.
+
     """
 
     energy_window_min: float | None = None
@@ -1119,6 +1179,38 @@ class ElectronConfig(BaseModel):
     If not set, it is automatically determined from the left and
     right Fermi levels. If the Fermi levels are equal, it is assumed
     to be in flatband conditions.
+
+    """
+
+    lead_potential: Literal["device", "unit-cell", "average"] = "device"
+    """The electrostatic potential in the leads, i.e., in the computation
+    of the open boundary conditions.
+
+    - `"device"` (the default): The matrix elements of the outermost
+      layer of the device are repeated. The coupling to the next layers
+      includes the potential of these layers, such that the potential
+      in the lead is not strictly periodic.
+    - `"unit-cell"`: The potential of the first (left contact) or last
+      (right contact) unit cell of the contact is repeated. This keeps
+      the variation of the potential within the unit cell.
+    - `"average"`: The average of the potential over the orbitals of the
+      outermost layer. This removes any variation of the potential in
+      the lead, also physical ones (e.g. over the cross-section of a
+      nanowire).
+
+    A variation of the potential between nominally equivalent atoms can
+    open a small gap in the leads (e.g. in graphene). In self-consistent
+    Schrödinger-Poisson runs, the edge of such a gap can cross a point
+    of the energy grid from one iteration to the next, such that the
+    loop does not converge. `"average"` removes the gap, while
+    `"unit-cell"` does not.
+
+    The potential in the device is not changed, so `"unit-cell"` and
+    `"average"` can leave a small potential step between the device and
+    the leads.
+
+    This is only used if [`formalism`](quatrex#formalism) is set to
+    "negf".
 
     """
 
@@ -1284,13 +1376,39 @@ class CoulombScreeningConfig(BaseModel):
 
     """
 
-    include_energy_renormalization: Literal["self-energy", "polarization", "both"] = (
-        "self-energy"
-    )
-    r"""Whether to compute the Hermitian part of the retarded
-    polarization and/or self-energy.
+    energy_renormalization_terms: tuple[
+        Literal["exchange", "correlation", "polarization"], ...
+    ] = ("exchange", "correlation")
+    r"""Which energy-renormalizing terms to include the Hermitian parts
+    of the retarded polarization and/or self-energy.
 
-    Possible values are `"self-energy"`, `"polarization"`, and `"both"`.
+    This is specified as a tuple of strings, where the presence of each
+    string turns on a different part of the retarded self-energy and/or
+    polarization:
+
+    - `"exchange"`: Include the Fock term in the retarded self-energy,
+      which is a static, Hermitian contribution to the self-energy that
+      is computed from the lesser Green's function and the Coulomb
+      matrix.
+    - `"correlation"`: Include the Hermitian part of the retarded
+      self-energy, which is computed from the lesser and greater parts
+      using the Kramers-Kronig relations.
+    - `"polarization"`: Include the Hermitian part of the retarded
+      polarization, which is computed from the lesser and greater
+      parts using the Kramers-Kronig relations.
+
+    The default set of energy-renormalizing terms are the `"exchange"`
+    and `"correlation"` parts in the self-energy and no renormalization
+    in the polarization.
+
+    The Fock term is a static, Hermitian contribution to the retarded
+    self-energy that is computed from the lesser Green's function and
+    the Coulomb matrix as
+
+    $$
+    \mathbf{\Sigma}^R_{\mathrm{Fock}} = \left( \int dE \, G^<(E) \right)
+    \odot V.
+    $$
 
     The full retarded interaction quantities are general complex-valued
     matrices, where the Hermitian part is computed from the
@@ -1309,12 +1427,9 @@ class CoulombScreeningConfig(BaseModel):
     \mathbf{X}^{R} \approx \frac{1}{2} (\mathbf{X}^{>} - \mathbf{X}^{<})
     $$
 
-    The default is to only include the skew-Hermitian part in the
-    Coulomb screening self-energy and not in the polarization.
-
-    The Hermitian part is computed using a Hilbert transform. For the
-    Coulomb screening self-energy, this Hilbert transform can lead to
-    errors at the edges of the energy window. The
+    In `quatrex`, this Hermitian part is computed using a Hilbert
+    transform. For the Coulomb screening self-energy, the Hilbert
+    transform can lead to errors at the edges of the energy window. The
     [`apply_hilbert_correction`](#apply_hilbert_correction) option can
     be used to apply a correction to the Hilbert transform to mitigate
     these errors.
@@ -1335,7 +1450,7 @@ class CoulombScreeningConfig(BaseModel):
         """Checks if the Hilbert correction can be applied."""
         if (
             self.apply_hilbert_correction
-            and self.include_energy_renormalization not in ["self-energy", "both"]
+            and "correlation" not in self.energy_renormalization_terms
         ):
             raise ValueError(
                 "Hilbert correction can only be applied if the real part of the self-energy is included."
@@ -1487,6 +1602,15 @@ class PhononConfig(BaseModel):
         return self
 
 
+# The matrices of the SCBA that can be saved, by group.
+SCBA_MATRICES = {
+    "g": ("g_lesser", "g_greater", "g_retarded"),
+    "p": ("p_lesser", "p_greater", "p_retarded_hermitian"),
+    "w": ("w_lesser", "w_greater"),
+    "sigma": ("sigma_lesser", "sigma_greater", "sigma_retarded_hermitian"),
+}
+
+
 class OutputConfig(BaseModel):
     """Options for the output of `quatrex` calculations.
 
@@ -1566,6 +1690,15 @@ class OutputConfig(BaseModel):
 
     """
 
+    scattering_rate: bool = False
+    """Whether to save the scattering rates.
+
+    This will output the scattering rates resolved in energy and space
+    computed from the lesser and greater self-energies and Green's
+    functions.
+
+    """
+
     polarization_density: bool = False
     """Whether to save the polarization density.
 
@@ -1596,6 +1729,94 @@ class OutputConfig(BaseModel):
 
     """
 
+    scba_matrices: list[
+        Literal[
+            "g",
+            "g_lesser",
+            "g_greater",
+            "g_retarded",
+            "p",
+            "p_lesser",
+            "p_greater",
+            "p_retarded_hermitian",
+            "w",
+            "w_lesser",
+            "w_greater",
+            "sigma",
+            "sigma_lesser",
+            "sigma_greater",
+            "sigma_retarded_hermitian",
+        ]
+    ] = []
+    """The matrices of the last SCBA iteration to save.
+
+    Either whole groups (`"g"`, `"p"`, `"w"`, `"sigma"`) or individual
+    matrices (e.g. `"g_lesser"`). Every matrix is written to its own HDF5
+    file (e.g. `g_lesser.h5`) at the end of the run, which can be read
+    with `DSDBSparse.load`. In Schrödinger-Poisson runs, this is the last
+    SCBA iteration at the final potential.
+
+    The self-energies are those obtained from the saved Green's
+    functions after mixing, i.e. the input of a next iteration. Elements
+    that are not computed by the solver are zero. For example, only the
+    diagonal blocks of `"g_retarded"` are computed by the recursive
+    Green's function algorithm without domain decomposition.
+
+    !!! note
+        The selected matrices are kept in memory during the SCBA
+        iterations. This increases the peak memory usage, and for
+        `"g_lesser"`, `"g_greater"`, `"w_lesser"` and `"w_greater"`
+        additional communication is needed in every iteration.
+
+    !!! note
+        This is only used with the `"negf"` formalism.
+
+    """
+
+    transmission: bool = True
+    """Whether to save the contact to contact transmissions.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    contact_current: bool = True
+    """Whether to save the contact current.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    qtbm_electron_ldos: bool = True
+    """Whether to save the QTBM electron LDOS.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    !!! note
+        This is only temporary and will be refactored when we separate
+        the `"wf"` and `"negf"` formalisms more cleanly.
+
+    """
+
+    excess_electron_density: bool = True
+    """Whether to save the excess electron density.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
+    excess_hole_density: bool = True
+    """Whether to save the excess hole density.
+
+    !!! note
+        This is only used with the `"wf"` formalism.
+
+    """
+
     profiling_path: Path | None = None
     """The file to save the timing results to.
 
@@ -1622,6 +1843,16 @@ class OutputConfig(BaseModel):
     """
 
     @model_validator(mode="after")
+    def expand_scba_matrices(self) -> Self:
+        """Expands the groups of matrices into the individual matrices."""
+        names = []
+        for name in self.scba_matrices:
+            names.extend(SCBA_MATRICES.get(name, (name,)))
+        # Remove duplicates, but keep the order.
+        self.scba_matrices = list(dict.fromkeys(names))
+        return self
+
+    @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
         if self.profiling_path is None:
             self.profiling_path = Path("quatrex_times.out")
@@ -1646,6 +1877,28 @@ class OutputConfig(BaseModel):
                     pass
 
         assert self.profiling_path is not None, "profiling_path should be set here."
+
+        return self
+
+    @model_validator(mode="after")
+    def check_qtbm_parameters(self) -> Self:
+        """Checks that the QTBM parameters are consistent."""
+        if self.contact_current and not self.transmission:
+            raise ValueError(
+                "Contact current can only be saved if `transmission` is `True`."
+            )
+        if self.excess_electron_density and not self.qtbm_electron_ldos:
+            raise ValueError(
+                "Excess electron density can only be saved if `qtbm_electron_ldos` is `True`."
+            )
+        if self.excess_hole_density and not self.qtbm_electron_ldos:
+            raise ValueError(
+                "Excess hole density can only be saved if `qtbm_electron_ldos` is `True`."
+            )
+        if self.excess_electron_density != self.excess_hole_density:
+            raise ValueError(
+                "Excess electron and hole densities must be saved together."
+            )
 
         return self
 
@@ -2158,16 +2411,17 @@ class ConvolveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # NOTE: should be calculate from the number of energy points, ranks,
-    # and nnz.
-    batch_size: PositiveInt | None = None
-    """The batch size to use for the FFT convolution.
+    # TODO: In principle, this could be calculated from the number of
+    # energy points, ranks, and nnz. Since (unlike the energies) a user
+    # has no a priori knowledge of the rank-local nnz, we give control
+    # over the number of batches rather than the maximum batch size.
+    num_batches: PositiveInt = 1
+    """The number of batches to divide the FFT convolution into.
 
-    Since the performing FFT can lead to memory bottlenecks, the
-    convolution can be performed in batches. The `batch_size` parameter
-    determines the number of matrix elements to compute in each batch.
-    If set to `None`, the entire convolution is performed in a single
-    batch.
+    Since the performing FFT over all non-zero elements simultaneously
+    can lead to memory bottlenecks, the convolution can be performed in
+    a number of batches. If left at the default value of `1`, the entire
+    convolution is performed in a single batch over the non-zeros.
 
     """
 
@@ -2476,6 +2730,24 @@ class QuatrexConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def check_scba_matrices(self) -> Self:
+        """Checks that the matrices to save are computed."""
+        if self.scba.coulomb_screening:
+            return self
+
+        missing = [
+            name
+            for name in self.outputs.scba_matrices
+            if name in SCBA_MATRICES["p"] + SCBA_MATRICES["w"]
+        ]
+        if missing:
+            raise ValueError(
+                f"Saving {missing} requires `scba.coulomb_screening = true`."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def check_device_block_size(self) -> Self:
         """Checks that block size is consistent with other parameters."""
 
@@ -2536,6 +2808,26 @@ class QuatrexConfig(BaseModel):
                     "reference contact (i.e. the contact with `voltage=0`) to "
                     "compute excess charge carrier densities."
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def disable_band_edge_tracking_with_scsp(self) -> Self:
+        """Turns off band edge tracking in SCSP runs.
+
+        The tracked band edges include the electrostatic potential in
+        the contact, which would then be counted twice: in the contact
+        Fermi levels (shifting the applied bias) and in the charge
+        neutrality level used for the excess charge.
+
+        """
+        if self.scsp is not None and self.electron.band_edge_tracking:
+            warnings.warn(
+                "Band edge tracking is not supported in self-consistent "
+                "Schrödinger-Poisson runs and is turned off.",
+                UserWarning,
+            )
+            self.electron.band_edge_tracking = False
 
         return self
 

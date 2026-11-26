@@ -716,6 +716,109 @@ available, the script above computes an approximate bare Coulomb matrix
 assuming that the Wannier functions are point charges located at the
 Wannier centers.
 
+## Electrostatic Potential
+
+To generate a `potential.npy` file giving the electrostatic potential at
+each Wannier center, we need to know the positions of the centers after
+wrapping and upscaling. They can be obtained by setting the
+pre-processing option `save_processed_inputs` in `quatrex_config.toml`
+to `true`:
+
+```
+[pre_process]
+save_processed_inputs = true
+```
+
+The command `quatrex pre-process quatrex_config.toml` saves the upscaled
+structure under `outputs/structure.xyz`. The following script reads this
+file and saves a potential (more precisely, an electrostatic potential
+energy) that smoothly transitions from 0 eV on the left to -0.2 eV on
+the right.
+
+<details>
+<summary>get_potential.py</summary>
+
+```python
+#!/usr/bin/env python
+
+import ase.io
+import numpy as np
+
+
+def transition_f(x: np.ndarray):
+    """
+    Smooth transition from 0 at x <= 0 to 1 at x -> inf
+    https://en.wikipedia.org/wiki/Bump_function#Examples
+    """
+
+    # Assert that we don't ignore nonfinite x due to the nan_to_num
+    assert np.all(np.isfinite(x)), x
+
+    with np.errstate(divide="ignore"):
+        exp = np.exp(-1 / x)
+    clean_exp = np.nan_to_num(exp)  # 0 at x=0
+
+    return clean_exp * (x > 0)
+
+
+def transition_g(x: np.ndarray):
+    """
+    Smooth transition from 0 at x <= 0 to 1 at x >= 1
+    https://en.wikipedia.org/wiki/Bump_function#Examples
+    """
+
+    f_x = transition_f(x)
+
+    return f_x / (f_x + transition_f(1 - x))
+
+
+def smooth_transition(x: np.ndarray, x0: float, x1: float, y0: float, y1: float):
+    """
+    Smooth transition from y0 at x <= x0 to y1 at x >= x1
+    """
+
+    g = transition_g((x - x0) / (x1 - x0))
+
+    return (y1 - y0) * g + y0
+
+
+def get_potential(
+    wannier_centers: ase.Atoms,
+    *,
+    transport_index: int,
+    constant_size: float,
+    boundary_potentials: tuple[float, float],
+):
+    xs = wannier_centers.positions[:, transport_index]
+    x_L = np.min(xs)
+    x_R = np.max(xs)
+    potential = smooth_transition(
+        xs, x_L + constant_size, x_R - constant_size, *boundary_potentials
+    )
+
+    return potential
+
+
+# Parameters
+transport_index = 0
+boundary_potentials = (0, -0.2)  # V
+structure_path = "quatrex_outputs/structure.xyz"
+
+
+quatrex_structure = ase.io.read(structure_path)
+
+potential = get_potential(
+    quatrex_structure,
+    transport_index=transport_index,
+    constant_size=0,
+    boundary_potentials=boundary_potentials,
+)
+
+np.save("inputs-unit-cell/potential.npy", potential)
+```
+
+</details>
+
 ## Phonon Dispersion
 
 The `"deformation-potential"` electron-phonon scattering model requires

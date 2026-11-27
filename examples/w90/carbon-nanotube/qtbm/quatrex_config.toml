@@ -11,15 +11,15 @@ neighbor_cell_cutoff = [2, 0, 0]
 
     [[device.contacts]]
     name = "left"
-    mid_gap_energy = -4.15292544472941 # Set by `quatrex pre-process`
-    fermi_level = -4.142191787615135 # Set by `quatrex pre-process`
-    conduction_band_edge = -3.863463027003365 # Set by `quatrex pre-process`
+    mid_gap_energy = -4.15631163542285 # Set by `quatrex pre-process`
+    fermi_level = -4.145642504759293 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.8750089231698146 # Set by `quatrex pre-process`
 
     [[device.contacts]]
     name = "right"
-    mid_gap_energy = -4.152925444729396 # Set by `quatrex pre-process`
-    fermi_level = -4.142191787615131 # Set by `quatrex pre-process`
-    conduction_band_edge = -3.863463027003336 # Set by `quatrex pre-process`
+    mid_gap_energy = -4.156311635422858 # Set by `quatrex pre-process`
+    fermi_level = -4.145642504760521 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.8750089231698293 # Set by `quatrex pre-process`
 
 [electron] # ===========================================================
 

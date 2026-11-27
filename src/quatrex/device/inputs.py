@@ -449,13 +449,15 @@ def _wrap_atom(
         return
 
     for wrap_cols in [True, False]:
-        col_slice = wrapped_atom_index
-        row_slice = slice(None)
+        col_slice = slice(None)
+        row_slice = wrapped_atom_index
         if not wrap_cols:
             col_slice, row_slice = row_slice, col_slice
-        shift_direction = 1 if wrap_cols else -1
-        loop_direction = -shift_direction * xp.sign(cell_offset)
 
+        # shift: a column/row in cell n is shifted to cell n + shift
+        shift = cell_offset if wrap_cols else -cell_offset
+
+        loop_direction = -xp.sign(shift)
         for transport_coord in transport_coords[::loop_direction]:
             coords = list(transverse_coords)
             coords[transport_ind] = transport_coord
@@ -466,7 +468,7 @@ def _wrap_atom(
                 wrapped_atom_index, wrapped_atom_index
             ]
 
-            origin_transport_coord = transport_coord - shift_direction * cell_offset
+            origin_transport_coord = transport_coord - shift
             origin_coords = list(transverse_coords)
             origin_coords[transport_ind] = origin_transport_coord
             origin_coords = tuple(origin_coords)

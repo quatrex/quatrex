@@ -5,7 +5,11 @@ import pytest
 
 from qttools import NDArray, xp
 from qttools.toeplitz.toeplitz import construct_transport_cell
-from quatrex.device.inputs import _expand_tight_binding_matrix, create_coordinate_grid
+from quatrex.device.inputs import (
+    _expand_tight_binding_matrix,
+    _wrap_matrix_dict,
+    create_coordinate_grid,
+)
 
 
 @pytest.mark.parametrize(
@@ -208,3 +212,41 @@ def test_expand_tight_binding_matrix(
                         assert xp.allclose(
                             h_upper[block_slice][row_unit_slice, col_unit_slice], 1
                         )
+
+
+def _get_displacements_1d(
+    unit_cell_positions: np.ndarray, min_coord: int, max_coord: int
+):
+    """Set up a matrix dict `displacements` containing the
+    displacements between any two positions.
+    """
+
+    displacements = {}
+    for i in range(min_coord, max_coord + 1):
+        i_cell_positions = unit_cell_positions + i
+        displacements[(i, 0, 0)] = (
+            i_cell_positions[xp.newaxis, :] - unit_cell_positions[:, xp.newaxis]
+        )
+
+    return displacements
+
+
+@pytest.mark.parametrize("min_coord, max_coord", [(-2, 2), (-5, 8), (7, 9)])
+def test_wrap_matrix_dict_1d(min_coord: int, max_coord: int):
+    # Set up a 1D system with the unit cell [0, 1)
+    unit_cell_positions = xp.array([-2, -0.5, 0, 1, 1.2])
+
+    # Manually wrap the 1D system
+    wrapped_unit_cell_positions = xp.array([0, 0.5, 0, 0, 0.2])
+    cell_offsets = xp.array([-2, -1, 0, 1, 1], dtype=xp.int64)
+
+    displacements = _get_displacements_1d(unit_cell_positions, min_coord, max_coord)
+    _wrap_matrix_dict(displacements, cell_offsets, transport_ind=0)
+
+    reference_displacements = _get_displacements_1d(
+        wrapped_unit_cell_positions, min_coord, max_coord
+    )
+
+    for key, matrix in displacements.items():
+        reference_matrix = reference_displacements[key]
+        assert xp.allclose(matrix, reference_matrix)

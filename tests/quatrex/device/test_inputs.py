@@ -215,7 +215,7 @@ def test_expand_tight_binding_matrix(
 
 
 def _get_displacements_1d(
-    unit_cell_positions: np.ndarray, min_coord: int, max_coord: int
+    unit_cell_positions: xp.ndarray, min_coord: int, max_coord: int
 ):
     """Set up a matrix dict `displacements` containing the
     displacements between any two positions.
@@ -231,14 +231,17 @@ def _get_displacements_1d(
     return displacements
 
 
-@pytest.mark.parametrize("min_coord, max_coord", [(-2, 2), (-5, 8), (7, 9)])
+@pytest.mark.parametrize("min_coord, max_coord", [(-4, 4), (-5, 8), (7, 9), (2, 10)])
+@pytest.mark.filterwarnings(
+    r"ignore:Dropped \d* unit cell interaction matrices after wrapping:UserWarning"
+)
 def test_wrap_matrix_dict_1d(min_coord: int, max_coord: int):
     # Set up a 1D system with the unit cell [0, 1)
-    unit_cell_positions = xp.array([-2, -0.5, 0, 1, 1.2])
+    unit_cell_positions = xp.array([-2, -0.5, 1.2, 0, 1])
 
     # Manually wrap the 1D system
-    wrapped_unit_cell_positions = xp.array([0, 0.5, 0, 0, 0.2])
-    cell_offsets = xp.array([-2, -1, 0, 1, 1], dtype=xp.int64)
+    wrapped_unit_cell_positions = xp.array([0, 0.5, 0.2, 0, 0])
+    cell_offsets = xp.array([-2, -1, 1, 0, 1], dtype=xp.int64)
 
     displacements = _get_displacements_1d(unit_cell_positions, min_coord, max_coord)
     _wrap_matrix_dict(displacements, cell_offsets, transport_ind=0)
@@ -249,4 +252,114 @@ def test_wrap_matrix_dict_1d(min_coord: int, max_coord: int):
 
     for key, matrix in displacements.items():
         reference_matrix = reference_displacements[key]
+        assert xp.allclose(matrix, reference_matrix)
+
+
+def _get_distances_3d(
+    unit_cell_positions: xp.ndarray,
+    cells: list[tuple[int, int, int]],
+    lattice_vectors: xp.ndarray,
+) -> dict[tuple[int, int, int], xp.ndarray]:
+    """Set up a matrix dict `distances` containing the distances between
+    any two positions.
+
+    Parameters
+    ----------
+    unit_cell_positions : xp.ndarray
+        Vectors pointing to each atom in the unit cell.
+        unit_cell_positions[atom, dim]
+    cells : list[tuple[int, int, int]]
+        Interaction cells to be generated.
+    lattice_vectors : xp.ndarray
+        The lattice vectors.
+        transport_lattice_vector[lattice_vector_index, dim]
+
+    Returns
+    -------
+    distances : dict[tuple[int, int, int], xp.ndarray]
+        The distances between the atoms in the home cell and the
+        `cells`.
+
+    """
+
+    distances = {}
+    for cell in cells:
+        cell_displacement = np.sum(
+            xp.array(cell)[:, np.newaxis] * lattice_vectors, axis=0
+        )
+        i_cell_positions = unit_cell_positions + cell_displacement[xp.newaxis, :]
+        # displacements[home_cell_atom, i_cell_atom, dim]
+        displacements = (
+            i_cell_positions[xp.newaxis, :, :] - unit_cell_positions[:, xp.newaxis, :]
+        )
+        distances[cell] = np.sqrt(np.sum(displacements, axis=2) ** 2)
+
+    return distances
+
+
+@pytest.mark.parametrize(
+    "transport_ind, cells",
+    [
+        (1, [(-3, -2, 3), (-3, -1, 3), (-3, 0, 3), (-3, 1, 3), (-3, 2, 3), (-3, 3, 3)]),
+        (
+            2,
+            [
+                (0, 0, 0),
+                (0, 0, -3),
+                (0, 0, -2),
+                (0, 0, -1),
+                (0, 0, 1),
+                (0, 0, 2),
+                (0, 0, 3),
+                (0, 0, 4),
+                (1, 0, -4),
+                (1, 0, -3),
+                (1, 0, -1),
+                (1, 0, 0),
+                (1, 1, -4),
+                (1, 0, -2),
+                (1, 1, -3),
+                (1, 1, -2),
+                (1, 1, -1),
+                (1, 1, 1),
+                (1, 1, 2),
+                (1, 1, 3),
+                (1, 1, 4),
+                (1, 1, 5),
+                (-1, 5, -1),
+                (-1, 5, -2),
+                (-1, 5, -3),
+                (-1, 5, -4),
+                (-1, 5, -5),
+                (-1, 5, -6),
+                (2, 8, 0),
+            ],
+        ),
+    ],
+)
+@pytest.mark.parametrize("n_atoms", [1, 8])
+def test_wrap_matrix_dict_3d(
+    cells: list[tuple[int, int, int]], n_atoms: int, transport_ind: int
+):
+    # Set up a 1D system with the unit cell [0, 1)
+    rng = xp.random.default_rng(seed=0)
+    unit_cell_positions = rng.random((n_atoms, 3)) * 2 - 0.5
+    lattice_vectors = xp.eye(3)
+
+    # Wrap the coordinates into the unit cell in the transport dimension
+    wrapped_unit_cell_positions = xp.copy(unit_cell_positions)
+    cell_offsets, wrapped_unit_cell_positions[:, transport_ind] = xp.divmod(
+        unit_cell_positions[:, transport_ind], 1
+    )
+    cell_offsets = cell_offsets.astype(xp.int64)
+
+    distances = _get_distances_3d(unit_cell_positions, cells, lattice_vectors)
+    _wrap_matrix_dict(distances, cell_offsets, transport_ind=transport_ind)
+
+    reference_distances = _get_distances_3d(
+        wrapped_unit_cell_positions, cells, lattice_vectors
+    )
+
+    for key, matrix in distances.items():
+        reference_matrix = reference_distances[key]
         assert xp.allclose(matrix, reference_matrix)

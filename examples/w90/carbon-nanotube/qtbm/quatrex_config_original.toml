@@ -1,0 +1,33 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "wf" # "negf" or "wf"
+
+[device]
+transport_direction = "a"
+construct_from_unit_cell = true
+num_transport_cells = 12
+neighbor_cell_cutoff = [2, 0, 0]
+
+    [[device.contacts]]
+    name = "left"
+    mid_gap_energy = -4.16  # eV
+
+    [[device.contacts]]
+    name = "right"
+    mid_gap_energy = -4.16  # eV
+
+[electron] # ===========================================================
+
+# Energy grid.
+energy_window_min = -6
+energy_window_max = -2
+energy_window_num = 10
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+
+
+[pre_process]
+compute_fermi_level = true
+save_processed_inputs = true

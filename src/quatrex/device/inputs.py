@@ -2,12 +2,14 @@
 
 """Includes the methods to load and parse the input data."""
 
+import copy
 import warnings
 from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sps
 from mpi4py.MPI import COMM_WORLD as comm_world
+from pydantic import NonNegativeInt
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -412,78 +414,185 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
-def load_matrices(
-    config: QuatrexConfig,
-    matrix_name: str,
-    force_complex: bool = True,
-):
-    """Loads a Hermitian matrix from file
+def _wrap_atom(
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    *,
+    wrapped_atom_index: int,
+    cell_offset: int,
+    transverse_coords: tuple[int, int],
+    transport_coords: list[int],
+    transport_ind: int,
+) -> None:
+    """Shifts the columns and rows of a subset of `matrix_dict` to
+    account for a wrapped atom.
 
     Parameters
     ----------
-    config : QuatrexConfig
-        The quatrex configuration.
-    matrix_name : str
-        The name of the matrix ('hamiltonian', 'overlap', etc.).
-    force_complex : bool
-        Whether to force the loaded matrices to be complex. If `True`,
-        the loaded matrices will be cast to `xp.complex128`.
-
-    Returns
-    -------
-    dict
-        The dict of sparse matrices corresponding to different periodic repetitions.
-        It is assumed that only the upper parts are stored.
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    wrapped_atom_index : int
+        Index of the wrapped atom.
+    cell_offset : int
+        The transport coordinate of the cell the atom was wrapped from.
+    transverse_coords : tuple[int, int]
+        Transverse coordinates of `matrix_dict` to consider.
+    transport_coords : list[int]
+        Transport coordinates occuring in `matrix_dict` for the given
+        `transverse_coords`.
+    transport_ind : int
+        Index of the transport direction (0, 1, or 2).
 
     """
 
-    # load the matrices
-    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
+    if cell_offset == 0:
+        return
+
+    for wrap_cols in [True, False]:
+        col_slice = slice(None)
+        row_slice = wrapped_atom_index
+        if not wrap_cols:
+            col_slice, row_slice = row_slice, col_slice
+
+        # shift: a column/row in cell n is shifted to cell n + shift
+        shift = cell_offset if wrap_cols else -cell_offset
+
+        loop_direction = -xp.sign(shift)
+        for transport_coord in transport_coords[::loop_direction]:
+            coords = list(transverse_coords)
+            coords[transport_ind] = transport_coord
+            coords = tuple(coords)
+
+            # Save the on-site term to restore it later
+            wrapped_site_term = matrix_dict[coords][
+                wrapped_atom_index, wrapped_atom_index
+            ]
+
+            origin_transport_coord = transport_coord - shift
+            origin_coords = list(transverse_coords)
+            origin_coords[transport_ind] = origin_transport_coord
+            origin_coords = tuple(origin_coords)
+            if origin_coords not in matrix_dict:
+                matrix_dict[coords][col_slice, row_slice] = xp.nan
+            else:
+                matrix_dict[coords][col_slice, row_slice] = matrix_dict[origin_coords][
+                    col_slice, row_slice
+                ]
+
+            # Restore the on-site term
+            matrix_dict[coords][
+                wrapped_atom_index, wrapped_atom_index
+            ] = wrapped_site_term
+
+
+def _wrap_matrix_dict(
+    matrix_dict: dict,
+    cell_offsets: NDArray,
+    transport_ind: int,
+) -> None:
+    """Applies the wrapping of the coordinates to the a `matrix_dict` on
+    unwrapped coordinates. Modifies `matrix_dict`.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    cell_offsets : NDArray
+        The coordinates of the unit cells each atom was been wrapped
+        from.
+
+    """
+
+    # Collect each chain of blocks along the transport direction with
+    # constant transverse indices:
+    # chains_dict[coords with transport coord set to 0] = transport coords
+    chains_dict = {}
+    for coords in matrix_dict:
+        transverse_coords = list(coords)
+        transverse_coords[transport_ind] = 0
+        transverse_coords = tuple(transverse_coords)
+        if transverse_coords not in chains_dict:
+            chains_dict[transverse_coords] = []
+        chains_dict[transverse_coords].append(coords[transport_ind])
+
+    for transverse_coords, transport_coords in chains_dict.items():
+        transport_coords.sort()
+
+        for wrapped_atom_index, cell_offset in enumerate(cell_offsets):
+            _wrap_atom(
+                matrix_dict,
+                wrapped_atom_index=wrapped_atom_index,
+                cell_offset=cell_offset,
+                transverse_coords=transverse_coords,
+                transport_coords=transport_coords,
+                transport_ind=transport_ind,
+            )
+
+    # Drop matrices where some values are unknown after wrapping
+    num_dropped_matrices = 0
+    for key in copy.copy(list(matrix_dict.keys())):
+        if xp.any(xp.isnan(matrix_dict[key])):
+            matrix_dict.pop(key)
+            num_dropped_matrices += 1
+    if num_dropped_matrices > 0:
+        warnings.warn(
+            f"Dropped {num_dropped_matrices} unit cell interaction matrices after wrapping"
+        )
+
+
+def _check_matrix_dict(
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    *,
+    neighbor_cell_cutoff: tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None,
+) -> None:
+    """Checks whether `matrix_dict` has the required properties. Raises
+    an error if it does not.
+
+    Parameters
+    ----------
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    neighbor_cell_cutoff : tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
+        The number of neighbor cells to consider along each lattice
+        direction.
+
+    """
 
     if (0, 0, 0) not in matrix_dict:
         raise ValueError(
-            f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
+            f"Expected to find a key [0,0,0] in the `matrix_dict`, but it was not found. "
             f"Available keys: {list(matrix_dict.keys())}"
         )
 
-    # assert that the keys form a complete grid,
+    # assert that the keys form a complete grid
     keys = np.array(list(matrix_dict.keys()))
     max_coords = keys.max(axis=0)
     min_coords = keys.min(axis=0)
 
-    if not np.all(np.abs(min_coords) == max_coords):
+    if not np.all(min_coords == -max_coords):
         raise ValueError(
             f"Expected the keys to form a complete grid with symmetric positive and negative coordinates, "
-            f"but found min_coords={min_coords} and max_coords={max_coords}."
+            f"but found {min_coords=} and {max_coords=}."
         )
 
-    validated_coords = set((0, 0, 0))
     for coord in matrix_dict:
-        if coord in validated_coords:
-            continue
         opposite_coord = tuple(-c for c in coord)
         if opposite_coord not in matrix_dict:
             raise ValueError(
                 f"Expected to find the opposite coordinate {opposite_coord} for {coord} in the matrix_dict, "
                 f"but it was not found. Available keys: {list(matrix_dict.keys())}"
             )
-        validated_coords.update([coord, opposite_coord])
 
     # assert that more than the neighbor cell cutoff is available if the cutoff is requested
-    if config.device.neighbor_cell_cutoff is not None and any(
-        max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)
+    if neighbor_cell_cutoff is not None and any(
+        max_coords[i] < neighbor_cell_cutoff[i] for i in range(3)
     ):
         raise ValueError(
             "Matrix contains fewer neighbor cells than requested."
-            f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
+            f"({max_coords=}, {neighbor_cell_cutoff=})"
         )
-
-    # drop half the matrices
-    # NOTE: this is done on the CPU
-    matrix_dict = {
-        coord: np.triu(matrix) if isinstance(matrix, np.ndarray) else sps.triu(matrix)
-        for coord, matrix in matrix_dict.items()
-    }
 
     # assert that the matrix_dict have the same shape
     matrix_shape = matrix_dict[(0, 0, 0)].shape
@@ -500,6 +609,61 @@ def load_matrices(
                 f"but expected type is {matrix_type}."
             )
 
+
+def load_matrices(
+    config: QuatrexConfig,
+    matrix_name: str,
+    cell_offsets: NDArray | None,
+    force_complex: bool = True,
+):
+    """Loads a Hermitian matrix from file
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The quatrex configuration.
+    matrix_name : str
+        The name of the matrix ('hamiltonian', 'overlap', etc.).
+    cell_offsets: NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from.
+    force_complex : bool
+        Whether to force the loaded matrices to be complex. If `True`,
+        the loaded matrices will be cast to `xp.complex128`.
+
+    Returns
+    -------
+    dict
+        The dict of sparse matrices corresponding to different periodic repetitions.
+        It is assumed that only the upper parts are stored.
+
+    """
+
+    # load the matrices
+    if config.input_dir is None:
+        raise ValueError("Input directory not specified")
+    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
+    if not isinstance(matrix_dict, dict):
+        raise TypeError(
+            f"Expected the loaded matrix to be a Dictionary, got {type(matrix_dict)}."
+        )
+    _check_matrix_dict(
+        matrix_dict, neighbor_cell_cutoff=config.device.neighbor_cell_cutoff
+    )
+
+    # NOTE: for closed systems, `transport_direction` will be None
+    transport_ind = "abc".index(config.device.transport_direction)
+
+    if cell_offsets is not None:
+        _wrap_matrix_dict(matrix_dict, cell_offsets, transport_ind)
+
+    # drop half the matrices
+    # NOTE: this is done on the CPU
+    matrix_dict = {
+        coord: np.triu(matrix) if isinstance(matrix, np.ndarray) else sps.triu(matrix)
+        for coord, matrix in matrix_dict.items()
+    }
+
     # drop keys outside the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:
         matrix_dict = {
@@ -510,6 +674,10 @@ def load_matrices(
                 for i, c in enumerate(coord)
             )
         }
+
+    _check_matrix_dict(
+        matrix_dict, neighbor_cell_cutoff=config.device.neighbor_cell_cutoff
+    )
 
     # transfer the matrix_dict to the GPU
     if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
@@ -530,10 +698,6 @@ def load_matrices(
     # and given bz unit cell matrix_dict
     if config.device.construct_from_unit_cell:
         matrix_dict = _create_matrix_from_unit_cells(config, matrix_dict)
-
-    # NOTE: for closed systems,
-    # transport direction will be None
-    transport_ind = "abc".index(config.device.transport_direction)
 
     # drop keys which are bigger than zero in the transport direction
     matrix_dict = {
@@ -562,6 +726,7 @@ def load_matrices(
 def assemble_matrix(
     config: QuatrexConfig,
     matrix_name: str,
+    cell_offsets: NDArray | None,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
@@ -574,6 +739,9 @@ def assemble_matrix(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
+    cell_offsets: NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from.
     sparsity_pattern : sparse.coo_matrix | None
         The sparsity pattern to enforce. If None, the sparsity of the
         loaded matrix is used.
@@ -590,7 +758,7 @@ def assemble_matrix(
 
     """
 
-    matrix_dict = load_matrices(config, matrix_name)
+    matrix_dict = load_matrices(config, matrix_name, cell_offsets=cell_offsets)
 
     # load or construct the block sizes for the DSDBSparse
     if config.device.construct_from_unit_cell:

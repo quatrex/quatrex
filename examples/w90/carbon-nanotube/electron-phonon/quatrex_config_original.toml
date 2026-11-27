@@ -1,0 +1,71 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "negf" # "negf" or "wf"
+
+[device]
+transport_direction = "a"
+construct_from_unit_cell = true
+num_transport_cells = 12
+neighbor_cell_cutoff = [2, 0, 0]
+
+    [[device.contacts]]
+    name = "left"
+    mid_gap_energy = -4.16  # eV
+
+    [[device.contacts]]
+    name = "right"
+    mid_gap_energy = -4.16  # eV
+
+[scba] # ===============================================================
+max_iterations = 2
+mixing_factor = 0.5
+
+phonon = true
+
+symmetric = true
+
+[outputs] # Select which outputs to write.
+electron_ldos = true
+device_currents = true
+meir_wingreen_currents = true
+electron_density = true
+hole_density = true
+
+self_energy_density = true
+
+# If enabled, the profiling stats will take a bit of time to crunch the
+# numbers.
+save_profiling_results = true
+
+
+[electron] # ===========================================================
+# Energy grid.
+energy_window_min = -6
+energy_window_max = -2
+energy_window_num = 10
+
+solver.algorithm = "rgf"
+solver.max_batch_size = 8
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "full"
+
+obc.max_decay = 15
+obc.min_decay = 1e-3
+
+obc.memoizer.mode = "off"
+
+[phonon]
+interaction_cutoff = 5.5  # Å
+model = "deformation-potential"
+temperature = 300  # K
+# Deformation potentials are of order 1 eV / 1 eV/Å:
+# https://journals.aps.org/prb/abstract/10.1103/PhysRevB.104.195201#s3
+acoustic_deformation_potential = 1  # eV
+optical_deformation_potential = 1  # eV / Å
+atom_mass_u = 12  # In the unified atomic mass unit
+lattice_constant = 4.26  # Å
+
+[pre_process]
+compute_fermi_level = true

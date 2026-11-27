@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
@@ -83,20 +82,13 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     hamiltonian_sparray = hamiltonian_sparray[(0, 0, 0)]
     hamiltonian_sparray = sparse.coo_matrix(hamiltonian_sparray).astype(xp.complex128)
 
-    block_sizes = config.device.block_size
-    if isinstance(block_sizes, int):
-        num_blocks, remainder = divmod(hamiltonian_sparray.shape[0], block_sizes)
-        if remainder != 0:
-            raise ValueError(
-                f"Block size {block_sizes} does not evenly divide the number of orbitals {hamiltonian_sparray.shape[0]}."
-            )
-        block_sizes = [block_sizes] * num_blocks
-
-    block_sizes = np.array(block_sizes)
+    expanded_shape = hamiltonian_sparray.shape
+    block_sizes = [
+        expanded_shape[0] // config.device.num_transport_cells
+    ] * config.device.num_transport_cells
+    block_size = block_sizes[0]
 
     hamiltonian_sparray = xp.asarray(hamiltonian_sparray.toarray())
-
-    block_size = block_sizes[0]
 
     H00 = hamiltonian_sparray[:block_size, :block_size]
     H01 = hamiltonian_sparray[:block_size, block_size : 2 * block_size]

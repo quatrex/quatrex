@@ -6,22 +6,115 @@ maximally-localized Wannier functions using Wannier90.
 
 ## Software Versions
 
-- VASP: `vasp.6.3.0 20Jan22 (build Mar 14 2022 17:30:40) complex`
-- Wannier90: `Release: 3.1.0        5th March    2020`
+- VASP: `vasp.6.6.0 06Mar2026 (build Aug  4 2026 15:38:09) complex`
+- Wannier90: `4.0.1`
 
 ## Geometry & Relaxation
 
-An initial geometry can be constructed using `ase` for instance:
+An initial geometry can be constructed using `ase` for instance. The
+script below generates the `POSCAR` input file for VASP as well as a
+`projections.txt` file that will be used in the wannierization.
+
+<details>
+<summary>generate_structure.py</summary>
 
 ```python
+#!/usr/bin/env python
+
 import ase.build
+import ase.geometry
 import ase.io
+import numpy as np
 
-cnt = ase.build.nanotube(8, 0, vacuum=10.0)
 
-cnt.rotate("z", "x", rotate_cell=True)
+def get_coords_string(coords: np.ndarray):
+    assert coords.shape == (3,)
+    string = ""
+    for coord in coords:
+        string += f"{coord:.7f},"
+
+    return string[:-1]  # Remove the final comma
+
+
+# Parameters
+cnt_type = (8, 0)  # Type of the CNT in the (n, m) notation
+spacing = 50  # Length of the transverse lattice vectors in Å
+bond_length = 1.42  # Å
+periodic_dim = 0  # Dimension in which the CNT extends infinitely: 0, 1 or 2
+
+# Construct CNT
+cnt = ase.build.nanotube(*cnt_type, bond=bond_length)
+
+# Apply a permutation to orient the CNT along `periodic_dim`
+permutation = [0, 1, 2]
+# By default, the CNT is oriented along the third dimension.
+initial_periodic_dim = 2
+permutation[periodic_dim], permutation[initial_periodic_dim] = (
+    permutation[initial_periodic_dim],
+    permutation[periodic_dim],
+)
+cnt = ase.geometry.permute_axes(cnt, permutation)
+
+# Obtain the radial coordinates before translating
+radial_coordinates = np.copy(cnt.positions)
+radial_coordinates[:, periodic_dim] = 0
+
+# Apply spacing
+cell = cnt.cell.array
+for dim in range(3):
+    if dim == periodic_dim:
+        continue
+    cell[dim, dim] = spacing
+cnt.set_cell(cell, scale_atoms=False)
+translation = np.full(3, spacing / 2)
+translation[periodic_dim] = 0
+cnt.translate(translation)
+
+# Move to the middle of the unit cell in the periodic direction to avoid
+# atoms on the boundary
+cnt.center(axis=periodic_dim)
+
+# Obtain the bond centers
+cnt_neighbor_list = ase.neighborlist.neighbor_list(
+    "ijD", cnt, cutoff=bond_length * 1.01
+)
+bond_centers = []
+for i, j, D in zip(*cnt_neighbor_list):
+    if j > i:
+        # Avoid double-counting without removing bonds to the same atom
+        # in different unit cells. In newer versions of ase one could
+        # probably handle this with the `bothways` keyword in
+        # `ase.neighborlist.neighbor_list()`.
+        continue
+    bond_center = cnt.positions[i, :] + D / 2
+    # Wrap the center into the unit cell
+    bond_center = ase.geometry.wrap_positions(
+        positions=bond_center.reshape(1, 3), cell=cnt.cell.array, pbc=cnt.pbc
+    ).reshape(3)
+    bond_centers.append(bond_center)
+
+# Construct the projections block (radial pz orbitals on the atoms and s
+# orbitals on the bonds) in the .win file
+projections_string = "begin projections  # From projections.txt\nang\n"
+for atom_index in range(cnt.positions.shape[0]):
+    projections_string += (
+        "    c="
+        + get_coords_string(cnt.positions[atom_index, :])
+        + " : pz : z="
+        + get_coords_string(radial_coordinates[atom_index, :])
+        + "\n"
+    )
+for bond_center in bond_centers:
+    projections_string += "    c=" + get_coords_string(bond_center) + " : s\n"
+projections_string += "end projections"
+
+# Save outputs
 ase.io.write("POSCAR", cnt)
+with open("projections.txt", "w") as text_file:
+    text_file.write(projections_string)
 ```
+
+</details>
 
 ## Self-Consistent Field (SCF) Calculation
 
@@ -34,20 +127,131 @@ system. The following input files are used for this calculation:
 
 ```INCAR
 ENCUT = 550 eV
-ALGO = Normal
+NBANDS = 308
 
+# Recommended default smearing configuration: https://vasp.at/wiki/Smearing_technique
 ISMEAR = 0
 SIGMA = 0.05
+EFERMI = MIDGAP
 
-NELM = 100
+# EDIFF recommended for FD phonon calculations: https://vasp.at/wiki/index.php/EDIFF
+EDIFF = 1E-7
 NELMIN = 10
-EDIFF = 1E-10
 
-GGA = PE
-NBANDS = 84
+LREAL = Auto
 
-PREC = Accurate
-ADDGRID = .TRUE.
+LORBIT = 11  # Save overlaps with atomic orbitals in PROCAR
+
+# Wannier90 configuration
+LWANNIER90 = .TRUE.  # Produce wannier90 input files
+LWRITE_UNK = .TRUE.  # Required for wannier function plots
+NUM_WANN = 80
+WANNIER90_WIN = "# From INCAR
+
+num_iter = 1000
+dis_num_iter  = 10000
+dis_mix_ratio = 0.75
+dis_froz_min = -10
+dis_froz_max = -2
+dis_win_min = -30
+dis_win_max = 15
+guiding_centres = true
+
+write_hr = true  # Save the Hamiltonian to seedname_hr.dat
+write_xyz = true  # Save the atomic positions & Wannier centers to seedname_centres.xyz
+
+# Plotting
+wannier_plot = true  # Plot wannier functions, slow & requires UNK files
+wannier_plot_supercell = 5 1 1
+bands_plot = true  # View wannier90_band.gnu with gnuplot
+begin kpoint_path
+-X  -0.5  0.0  0.0   X  0.5  0.0  0.0
+end kpoint_path
+
+begin projections  # From projections.txt
+ang
+    c=0.3550000,25.0000000,28.1315481 : pz : z=0.0000000,0.0000000,3.1315481
+    c=3.9050000,26.1983916,27.8931732 : pz : z=0.0000000,1.1983916,2.8931732
+    c=2.4850000,26.1983916,27.8931732 : pz : z=0.0000000,1.1983916,2.8931732
+    c=1.7750000,27.2143389,27.2143389 : pz : z=0.0000000,2.2143389,2.2143389
+    c=0.3550000,27.2143389,27.2143389 : pz : z=0.0000000,2.2143389,2.2143389
+    c=3.9050000,27.8931732,26.1983916 : pz : z=0.0000000,2.8931732,1.1983916
+    c=2.4850000,27.8931732,26.1983916 : pz : z=0.0000000,2.8931732,1.1983916
+    c=1.7750000,28.1315481,25.0000000 : pz : z=0.0000000,3.1315481,0.0000000
+    c=0.3550000,28.1315481,25.0000000 : pz : z=0.0000000,3.1315481,0.0000000
+    c=3.9050000,27.8931732,23.8016084 : pz : z=0.0000000,2.8931732,-1.1983916
+    c=2.4850000,27.8931732,23.8016084 : pz : z=0.0000000,2.8931732,-1.1983916
+    c=1.7750000,27.2143389,22.7856611 : pz : z=0.0000000,2.2143389,-2.2143389
+    c=0.3550000,27.2143389,22.7856611 : pz : z=0.0000000,2.2143389,-2.2143389
+    c=3.9050000,26.1983916,22.1068268 : pz : z=0.0000000,1.1983916,-2.8931732
+    c=2.4850000,26.1983916,22.1068268 : pz : z=0.0000000,1.1983916,-2.8931732
+    c=1.7750000,25.0000000,21.8684519 : pz : z=0.0000000,0.0000000,-3.1315481
+    c=0.3550000,25.0000000,21.8684519 : pz : z=0.0000000,0.0000000,-3.1315481
+    c=3.9050000,23.8016084,22.1068268 : pz : z=0.0000000,-1.1983916,-2.8931732
+    c=2.4850000,23.8016084,22.1068268 : pz : z=0.0000000,-1.1983916,-2.8931732
+    c=1.7750000,22.7856611,22.7856611 : pz : z=0.0000000,-2.2143389,-2.2143389
+    c=0.3550000,22.7856611,22.7856611 : pz : z=0.0000000,-2.2143389,-2.2143389
+    c=3.9050000,22.1068268,23.8016084 : pz : z=0.0000000,-2.8931732,-1.1983916
+    c=2.4850000,22.1068268,23.8016084 : pz : z=0.0000000,-2.8931732,-1.1983916
+    c=1.7750000,21.8684519,25.0000000 : pz : z=0.0000000,-3.1315481,-0.0000000
+    c=0.3550000,21.8684519,25.0000000 : pz : z=0.0000000,-3.1315481,-0.0000000
+    c=3.9050000,22.1068268,26.1983916 : pz : z=0.0000000,-2.8931732,1.1983916
+    c=2.4850000,22.1068268,26.1983916 : pz : z=0.0000000,-2.8931732,1.1983916
+    c=1.7750000,22.7856611,27.2143389 : pz : z=0.0000000,-2.2143389,2.2143389
+    c=0.3550000,22.7856611,27.2143389 : pz : z=0.0000000,-2.2143389,2.2143389
+    c=3.9050000,23.8016084,27.8931732 : pz : z=0.0000000,-1.1983916,2.8931732
+    c=2.4850000,23.8016084,27.8931732 : pz : z=0.0000000,-1.1983916,2.8931732
+    c=1.7750000,25.0000000,28.1315481 : pz : z=0.0000000,-0.0000000,3.1315481
+    c=0.0000000,25.5991958,28.0123607 : s
+    c=3.1950000,26.1983916,27.8931732 : s
+    c=2.1300000,26.7063653,27.5537561 : s
+    c=1.0650000,27.2143389,27.2143389 : s
+    c=-0.0000000,26.7063653,27.5537561 : s
+    c=0.0000000,27.5537561,26.7063653 : s
+    c=2.1300000,27.5537561,26.7063653 : s
+    c=3.1950000,27.8931732,26.1983916 : s
+    c=2.1300000,28.0123607,25.5991958 : s
+    c=-0.0000000,28.0123607,25.5991958 : s
+    c=1.0650000,28.1315481,25.0000000 : s
+    c=-0.0000000,28.0123607,24.4008042 : s
+    c=2.1300000,28.0123607,24.4008042 : s
+    c=3.1950000,27.8931732,23.8016084 : s
+    c=2.1300000,27.5537561,23.2936347 : s
+    c=1.0650000,27.2143389,22.7856611 : s
+    c=-0.0000000,27.5537561,23.2936347 : s
+    c=0.0000000,26.7063653,22.4462439 : s
+    c=3.1950000,26.1983916,22.1068268 : s
+    c=2.1300000,26.7063653,22.4462439 : s
+    c=2.1300000,25.5991958,21.9876393 : s
+    c=0.0000000,25.5991958,21.9876393 : s
+    c=1.0650000,25.0000000,21.8684519 : s
+    c=0.0000000,24.4008042,21.9876393 : s
+    c=3.1950000,23.8016084,22.1068268 : s
+    c=2.1300000,24.4008042,21.9876393 : s
+    c=2.1300000,23.2936347,22.4462439 : s
+    c=1.0650000,22.7856611,22.7856611 : s
+    c=0.0000000,23.2936347,22.4462439 : s
+    c=-0.0000000,22.4462439,23.2936347 : s
+    c=2.1300000,22.4462439,23.2936347 : s
+    c=3.1950000,22.1068268,23.8016084 : s
+    c=2.1300000,21.9876393,24.4008042 : s
+    c=1.0650000,21.8684519,25.0000000 : s
+    c=-0.0000000,21.9876393,24.4008042 : s
+    c=0.0000000,21.9876393,25.5991958 : s
+    c=3.1950000,22.1068268,26.1983916 : s
+    c=2.1300000,21.9876393,25.5991958 : s
+    c=2.1300000,22.4462439,26.7063653 : s
+    c=1.0650000,22.7856611,27.2143389 : s
+    c=0.0000000,22.4462439,26.7063653 : s
+    c=0.0000000,23.2936347,27.5537561 : s
+    c=0.0000000,24.4008042,28.0123607 : s
+    c=3.1950000,23.8016084,27.8931732 : s
+    c=2.1300000,23.2936347,27.5537561 : s
+    c=1.0650000,25.0000000,28.1315481 : s
+    c=2.1300000,25.5991958,28.0123607 : s
+    c=2.1300000,24.4008042,28.0123607 : s
+end projections
+"
 ```
 
 </details>
@@ -56,11 +260,10 @@ ADDGRID = .TRUE.
 <summary>KPOINTS</summary>
 
 ```KPOINTS
-21x1x1 kpoint grid
+Regular 11x1x1 k-point mesh
 0
 Gamma
-21 1 1
-0 0 0
+11 1 1
 ```
 
 </details>
@@ -69,102 +272,73 @@ Gamma
 <summary>POSCAR</summary>
 
 ```POSCAR
- CNT
-   1.0000000000000000
-    4.2761526107999996    0.0000000000000000     0.0000000000000000
-     0.0000000000000000   40.0000000000000000    0.0000000000000000
-     0.0000000000000000    0.0000000000000000    24.6881122588999986
-   C
-    32
-Direct
-  0.0000000000000000  0.1714150000000032  0.4050532456727254
-  0.4999821555947719  0.1773974999999979  0.4537771005946922
-  0.0000000000000000  0.1944324999999978  0.4950844305883990
-  0.4999821555947719  0.2199274999999972  0.5226847587485395
-  0.0000000000000000  0.2500000000000000  0.5323776829174847
-  0.4999821555947719  0.2800725000000028  0.5226847587485395
-  0.0000000000000000  0.3055675000000022  0.4950844305883990
-  0.4999821555947719  0.3226025000000021  0.4537771005946922
-  0.0000000000000000  0.3285849999999968  0.4050532456727254
-  0.4999821555947719  0.3226025000000021  0.3563293907507514
-  0.0000000000000000  0.3055675000000022  0.3150220607570446
-  0.4999821555947719  0.2800725000000028  0.2874217325969113
-  0.0000000000000000  0.2500000000000000  0.2777288084279590
-  0.4999821555947719  0.2199274999999972  0.2874217325969113
-  0.0000000000000000  0.1944324999999978  0.3150220607570446
-  0.4999821555947719  0.1773974999999979  0.3563293907507514
-  0.3333370274016758  0.1714150000000032  0.4050532456727254
-  0.8333191829964548  0.1773974999999979  0.4537771005946922
-  0.3333370274016758  0.1944324999999978  0.4950844305883990
-  0.8333191829964548  0.2199274999999972  0.5226847587485395
-  0.3333370274016758  0.2500000000000000  0.5323776829174847
-  0.8333191829964548  0.2800725000000028  0.5226847587485395
-  0.3333370274016758  0.3055675000000022  0.4950844305883990
-  0.8333191829964548  0.3226025000000021  0.4537771005946922
-  0.3333370274016758  0.3285849999999968  0.4050532456727254
-  0.8333191829964548  0.3226025000000021  0.3563293907507514
-  0.3333370274016758  0.3055675000000022  0.3150220607570446
-  0.8333191829964548  0.2800725000000028  0.2874217325969113
-  0.3333370274016758  0.2500000000000000  0.2777288084279590
-  0.8333191829964548  0.2199274999999972  0.2874217325969113
-  0.3333370274016758  0.1944324999999978  0.3150220607570446
-  0.8333191829964548  0.1773974999999979  0.3563293907507514
-
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
-  0.00000000E+00  0.00000000E+00  0.00000000E+00
+C 
+ 1.0000000000000000
+     4.2599999999999998    0.0000000000000000    0.0000000000000000
+     0.0000000000000000   50.0000000000000000    0.0000000000000000
+     0.0000000000000000    0.0000000000000000   50.0000000000000000
+ C  
+  32
+Cartesian
+  0.3549999999999998 25.0000000000000000 28.1315481259957778
+  3.9049999999999994 26.1983915854725282 27.8931732186815751
+  2.4849999999999994 26.1983915854725282 27.8931732186815751
+  1.7749999999999997 27.2143389155036388 27.2143389155036388
+  0.3549999999999998 27.2143389155036388 27.2143389155036388
+  3.9049999999999994 27.8931732186815751 26.1983915854725282
+  2.4850000000000003 27.8931732186815751 26.1983915854725282
+  1.7750000000000001 28.1315481259957778 25.0000000000000000
+  0.3549999999999998 28.1315481259957778 25.0000000000000000
+  3.9049999999999985 27.8931732186815751 23.8016084145274718
+  2.4849999999999994 27.8931732186815751 23.8016084145274718
+  1.7749999999999992 27.2143389155036388 22.7856610844963612
+  0.3549999999999998 27.2143389155036388 22.7856610844963612
+  3.9050000000000002 26.1983915854725282 22.1068267813184249
+  2.4849999999999994 26.1983915854725282 22.1068267813184249
+  1.7749999999999992 25.0000000000000000 21.8684518740042222
+  0.3549999999999998 25.0000000000000000 21.8684518740042222
+  3.9050000000000002 23.8016084145274718 22.1068267813184249
+  2.4849999999999994 23.8016084145274718 22.1068267813184249
+  1.7749999999999992 22.7856610844963612 22.7856610844963612
+  0.3549999999999998 22.7856610844963612 22.7856610844963612
+  3.9049999999999976 22.1068267813184249 23.8016084145274682
+  2.4849999999999994 22.1068267813184249 23.8016084145274682
+  1.7749999999999992 21.8684518740042222 25.0000000000000000
+  0.3549999999999998 21.8684518740042222 25.0000000000000000
+  3.9050000000000002 22.1068267813184249 26.1983915854725282
+  2.4849999999999994 22.1068267813184249 26.1983915854725282
+  1.7749999999999992 22.7856610844963612 27.2143389155036424
+  0.3549999999999998 22.7856610844963612 27.2143389155036388
+  3.9050000000000002 23.8016084145274682 27.8931732186815751
+  2.4849999999999994 23.8016084145274682 27.8931732186815751
+  1.7749999999999992 25.0000000000000000 28.1315481259957778
 ```
 
 </details>
 
-The calculations were performed with the standard VASP `PAW_PBE` carbon
-pseudopotential (`C`, 08Apr2002) obtained from the VASP portal.
+The `POSCAR` file as well as the projections block in `INCAR` were
+generated using `generate_structure.py` from the previous section.
+
+The DFT calculations were performed with the standard VASP `PAW_PBE`
+carbon pseudopotential (`C`, 08Apr2002) obtained from the VASP portal.
 
 Using these input files, the SCF calculation can be run (parallelizing
-over the bands) with the following command:
+over bands) with the following command:
 
 ```bash
-mpiexec -n 84 vasp
+mpiexec -n 14 vasp_std
 ```
 
-At the end of this calculation we find a Fermi energy of -3.8599622677
+At the end of this calculation we find a Fermi energy of -4.1559415666
 eV for this system.
 
 ## Wannierization
 
 We wannierize the electronic structure of the CNT using Wannier90
 through the VASP interface (`LWANNIER90 = .TRUE.`). We use atom-centered
-pz orbitals as initial projections for the wannierization. The input
-file can be found below. [This
+pz orbitals and bond-centered s orbitals as initial projections for the
+wannierization. The input file generated by VASP can be found below.
+[This
 tutorial](https://www.wanniertools.org/tutorials/high-quality-wfs/) can
 be helpful to find suitable parameters for the wannierization.
 
@@ -172,188 +346,478 @@ be helpful to find suitable parameters for the wannierization.
 <summary>wannier90.win</summary>
 
 ```wannier90.win
-num_bands = 84
-num_wann = 32
+# From INCAR
 
-Begin Projections
-C:pz
-End Projections
-
-dis_num_iter = 500000
-num_iter = 500000
-
-guiding_centres = True
-
-dis_win_min = -12
-dis_win_max = 5
-dis_froz_min = -4
+num_iter = 1000
+dis_num_iter  = 10000
+dis_mix_ratio = 0.75
+dis_froz_min = -10
 dis_froz_max = -2
+dis_win_min = -30
+dis_win_max = 15
+guiding_centres = true
 
-write_hr = True
-write_xyz= True
-translate_home_cell = True
+write_hr = true  # Save the Hamiltonian to seedname_hr.dat
+write_xyz = true  # Save the atomic positions & Wannier centers to seedname_centres.xyz
 
+# Plotting
+wannier_plot = true  # Plot wannier functions, slow & requires UNK files
+wannier_plot_supercell = 5 1 1
+bands_plot = true  # View wannier90_band.gnu with gnuplot
+begin kpoint_path
+-X  -0.5  0.0  0.0   X  0.5  0.0  0.0
+end kpoint_path
+
+begin projections  # From projections.txt
+ang
+    c=0.3550000,25.0000000,28.1315481 : pz : z=0.0000000,0.0000000,3.1315481
+    c=3.9050000,26.1983916,27.8931732 : pz : z=0.0000000,1.1983916,2.8931732
+    c=2.4850000,26.1983916,27.8931732 : pz : z=0.0000000,1.1983916,2.8931732
+    c=1.7750000,27.2143389,27.2143389 : pz : z=0.0000000,2.2143389,2.2143389
+    c=0.3550000,27.2143389,27.2143389 : pz : z=0.0000000,2.2143389,2.2143389
+    c=3.9050000,27.8931732,26.1983916 : pz : z=0.0000000,2.8931732,1.1983916
+    c=2.4850000,27.8931732,26.1983916 : pz : z=0.0000000,2.8931732,1.1983916
+    c=1.7750000,28.1315481,25.0000000 : pz : z=0.0000000,3.1315481,0.0000000
+    c=0.3550000,28.1315481,25.0000000 : pz : z=0.0000000,3.1315481,0.0000000
+    c=3.9050000,27.8931732,23.8016084 : pz : z=0.0000000,2.8931732,-1.1983916
+    c=2.4850000,27.8931732,23.8016084 : pz : z=0.0000000,2.8931732,-1.1983916
+    c=1.7750000,27.2143389,22.7856611 : pz : z=0.0000000,2.2143389,-2.2143389
+    c=0.3550000,27.2143389,22.7856611 : pz : z=0.0000000,2.2143389,-2.2143389
+    c=3.9050000,26.1983916,22.1068268 : pz : z=0.0000000,1.1983916,-2.8931732
+    c=2.4850000,26.1983916,22.1068268 : pz : z=0.0000000,1.1983916,-2.8931732
+    c=1.7750000,25.0000000,21.8684519 : pz : z=0.0000000,0.0000000,-3.1315481
+    c=0.3550000,25.0000000,21.8684519 : pz : z=0.0000000,0.0000000,-3.1315481
+    c=3.9050000,23.8016084,22.1068268 : pz : z=0.0000000,-1.1983916,-2.8931732
+    c=2.4850000,23.8016084,22.1068268 : pz : z=0.0000000,-1.1983916,-2.8931732
+    c=1.7750000,22.7856611,22.7856611 : pz : z=0.0000000,-2.2143389,-2.2143389
+    c=0.3550000,22.7856611,22.7856611 : pz : z=0.0000000,-2.2143389,-2.2143389
+    c=3.9050000,22.1068268,23.8016084 : pz : z=0.0000000,-2.8931732,-1.1983916
+    c=2.4850000,22.1068268,23.8016084 : pz : z=0.0000000,-2.8931732,-1.1983916
+    c=1.7750000,21.8684519,25.0000000 : pz : z=0.0000000,-3.1315481,-0.0000000
+    c=0.3550000,21.8684519,25.0000000 : pz : z=0.0000000,-3.1315481,-0.0000000
+    c=3.9050000,22.1068268,26.1983916 : pz : z=0.0000000,-2.8931732,1.1983916
+    c=2.4850000,22.1068268,26.1983916 : pz : z=0.0000000,-2.8931732,1.1983916
+    c=1.7750000,22.7856611,27.2143389 : pz : z=0.0000000,-2.2143389,2.2143389
+    c=0.3550000,22.7856611,27.2143389 : pz : z=0.0000000,-2.2143389,2.2143389
+    c=3.9050000,23.8016084,27.8931732 : pz : z=0.0000000,-1.1983916,2.8931732
+    c=2.4850000,23.8016084,27.8931732 : pz : z=0.0000000,-1.1983916,2.8931732
+    c=1.7750000,25.0000000,28.1315481 : pz : z=0.0000000,-0.0000000,3.1315481
+    c=0.0000000,25.5991958,28.0123607 : s
+    c=3.1950000,26.1983916,27.8931732 : s
+    c=2.1300000,26.7063653,27.5537561 : s
+    c=1.0650000,27.2143389,27.2143389 : s
+    c=-0.0000000,26.7063653,27.5537561 : s
+    c=0.0000000,27.5537561,26.7063653 : s
+    c=2.1300000,27.5537561,26.7063653 : s
+    c=3.1950000,27.8931732,26.1983916 : s
+    c=2.1300000,28.0123607,25.5991958 : s
+    c=-0.0000000,28.0123607,25.5991958 : s
+    c=1.0650000,28.1315481,25.0000000 : s
+    c=-0.0000000,28.0123607,24.4008042 : s
+    c=2.1300000,28.0123607,24.4008042 : s
+    c=3.1950000,27.8931732,23.8016084 : s
+    c=2.1300000,27.5537561,23.2936347 : s
+    c=1.0650000,27.2143389,22.7856611 : s
+    c=-0.0000000,27.5537561,23.2936347 : s
+    c=0.0000000,26.7063653,22.4462439 : s
+    c=3.1950000,26.1983916,22.1068268 : s
+    c=2.1300000,26.7063653,22.4462439 : s
+    c=2.1300000,25.5991958,21.9876393 : s
+    c=0.0000000,25.5991958,21.9876393 : s
+    c=1.0650000,25.0000000,21.8684519 : s
+    c=0.0000000,24.4008042,21.9876393 : s
+    c=3.1950000,23.8016084,22.1068268 : s
+    c=2.1300000,24.4008042,21.9876393 : s
+    c=2.1300000,23.2936347,22.4462439 : s
+    c=1.0650000,22.7856611,22.7856611 : s
+    c=0.0000000,23.2936347,22.4462439 : s
+    c=-0.0000000,22.4462439,23.2936347 : s
+    c=2.1300000,22.4462439,23.2936347 : s
+    c=3.1950000,22.1068268,23.8016084 : s
+    c=2.1300000,21.9876393,24.4008042 : s
+    c=1.0650000,21.8684519,25.0000000 : s
+    c=-0.0000000,21.9876393,24.4008042 : s
+    c=0.0000000,21.9876393,25.5991958 : s
+    c=3.1950000,22.1068268,26.1983916 : s
+    c=2.1300000,21.9876393,25.5991958 : s
+    c=2.1300000,22.4462439,26.7063653 : s
+    c=1.0650000,22.7856611,27.2143389 : s
+    c=0.0000000,22.4462439,26.7063653 : s
+    c=0.0000000,23.2936347,27.5537561 : s
+    c=0.0000000,24.4008042,28.0123607 : s
+    c=3.1950000,23.8016084,27.8931732 : s
+    c=2.1300000,23.2936347,27.5537561 : s
+    c=1.0650000,25.0000000,28.1315481 : s
+    c=2.1300000,25.5991958,28.0123607 : s
+    c=2.1300000,24.4008042,28.0123607 : s
+end projections
+
+# This part was generated automatically by VASP
+num_bands = 308
+num_wann = 80
 begin unit_cell_cart
-     4.2761526     0.0000000     0.0000000
-     0.0000000    40.0000000     0.0000000
-     0.0000000     0.0000000    24.6881123
+     4.2600000     0.0000000     0.0000000
+     0.0000000    50.0000000     0.0000000
+     0.0000000     0.0000000    50.0000000
 end unit_cell_cart
 begin atoms_cart
-C        0.0000000     6.8566000    10.0000000
-C        2.1380000     7.0959000    11.2029000
-C        0.0000000     7.7773000    12.2227000
-C        2.1380000     8.7971000    12.9041000
-C        0.0000000    10.0000000    13.1434000
-C        2.1380000    11.2029000    12.9041000
-C        0.0000000    12.2227000    12.2227000
-C        2.1380000    12.9041000    11.2029000
-C        0.0000000    13.1434000    10.0000000
-C        2.1380000    12.9041000     8.7971000
-C        0.0000000    12.2227000     7.7773000
-C        2.1380000    11.2029000     7.0959000
-C        0.0000000    10.0000000     6.8566000
-C        2.1380000     8.7971000     7.0959000
-C        0.0000000     7.7773000     7.7773000
-C        2.1380000     7.0959000     8.7971000
-C        1.4254000     6.8566000    10.0000000
-C        3.5634000     7.0959000    11.2029000
-C        1.4254000     7.7773000    12.2227000
-C        3.5634000     8.7971000    12.9041000
-C        1.4254000    10.0000000    13.1434000
-C        3.5634000    11.2029000    12.9041000
-C        1.4254000    12.2227000    12.2227000
-C        3.5634000    12.9041000    11.2029000
-C        1.4254000    13.1434000    10.0000000
-C        3.5634000    12.9041000     8.7971000
-C        1.4254000    12.2227000     7.7773000
-C        3.5634000    11.2029000     7.0959000
-C        1.4254000    10.0000000     6.8566000
-C        3.5634000     8.7971000     7.0959000
-C        1.4254000     7.7773000     7.7773000
-C        3.5634000     7.0959000     8.7971000
+C        0.3550000    25.0000000    28.1315481
+C        3.9050000    26.1983916    27.8931732
+C        2.4850000    26.1983916    27.8931732
+C        1.7750000    27.2143389    27.2143389
+C        0.3550000    27.2143389    27.2143389
+C        3.9050000    27.8931732    26.1983916
+C        2.4850000    27.8931732    26.1983916
+C        1.7750000    28.1315481    25.0000000
+C        0.3550000    28.1315481    25.0000000
+C        3.9050000    27.8931732    23.8016084
+C        2.4850000    27.8931732    23.8016084
+C        1.7750000    27.2143389    22.7856611
+C        0.3550000    27.2143389    22.7856611
+C        3.9050000    26.1983916    22.1068268
+C        2.4850000    26.1983916    22.1068268
+C        1.7750000    25.0000000    21.8684519
+C        0.3550000    25.0000000    21.8684519
+C        3.9050000    23.8016084    22.1068268
+C        2.4850000    23.8016084    22.1068268
+C        1.7750000    22.7856611    22.7856611
+C        0.3550000    22.7856611    22.7856611
+C        3.9050000    22.1068268    23.8016084
+C        2.4850000    22.1068268    23.8016084
+C        1.7750000    21.8684519    25.0000000
+C        0.3550000    21.8684519    25.0000000
+C        3.9050000    22.1068268    26.1983916
+C        2.4850000    22.1068268    26.1983916
+C        1.7750000    22.7856611    27.2143389
+C        0.3550000    22.7856611    27.2143389
+C        3.9050000    23.8016084    27.8931732
+C        2.4850000    23.8016084    27.8931732
+C        1.7750000    25.0000000    28.1315481
 end atoms_cart
-mp_grid =    21     1     1
+mp_grid =    11     1     1
 begin kpoints
       0.000000000000      0.000000000000      0.000000000000
-      0.047619047619      0.000000000000      0.000000000000
-      0.095238095238      0.000000000000      0.000000000000
-      0.142857142857      0.000000000000      0.000000000000
-      0.190476190476      0.000000000000      0.000000000000
-      0.238095238095      0.000000000000      0.000000000000
-      0.285714285714      0.000000000000      0.000000000000
-      0.333333333333      0.000000000000      0.000000000000
-      0.380952380952      0.000000000000      0.000000000000
-      0.428571428571      0.000000000000      0.000000000000
-      0.476190476190      0.000000000000      0.000000000000
-     -0.047619047619      0.000000000000      0.000000000000
-     -0.095238095238      0.000000000000      0.000000000000
-     -0.142857142857      0.000000000000      0.000000000000
-     -0.190476190476      0.000000000000      0.000000000000
-     -0.238095238095      0.000000000000      0.000000000000
-     -0.285714285714      0.000000000000      0.000000000000
-     -0.333333333333      0.000000000000      0.000000000000
-     -0.380952380952      0.000000000000      0.000000000000
-     -0.428571428571      0.000000000000      0.000000000000
-     -0.476190476190      0.000000000000      0.000000000000
+      0.090909090909      0.000000000000      0.000000000000
+      0.181818181818      0.000000000000      0.000000000000
+      0.272727272727      0.000000000000      0.000000000000
+      0.363636363636      0.000000000000      0.000000000000
+      0.454545454545      0.000000000000      0.000000000000
+     -0.090909090909     -0.000000000000     -0.000000000000
+     -0.181818181818     -0.000000000000     -0.000000000000
+     -0.272727272727     -0.000000000000     -0.000000000000
+     -0.363636363636     -0.000000000000     -0.000000000000
+     -0.454545454545     -0.000000000000     -0.000000000000
 end kpoints
 ```
 
 </details>
 
-At the end of the Wannier90 calculation, we find spreads of roughly 3
-Å^2 for most of the 32 Wannier functions, which should is satisfactory
-for this example, especially given the small number of projections used
-for this wannierization. The DFT band structure and the
+At the end of the Wannier90 calculation, we find spreads around 1
+Å^2 for all 80 Wannier functions. The DFT band structure and the
 Wannier-interpolated band structure are in good agreement. The resulting
 Hamiltonian, stored in the `wannier90_hr.dat` file, is used to construct
 inputs for the transport simulations.
 
 ## Constructing Transport Hamiltonian and Structure Files
 
-### Automatic Upscaling from Unit Cell to Transport Hamiltonian
-
 The Wannier90 Hamiltonian can be converted to `quatrex`'s HDF5 format
 and used directly in transport calculations, where the upscaling from
 unit cell to transport Hamiltonian (`device.construct_from_unit_cell =
-true`) is handled by `quatrex` (see the `gw-unit-cell` example).
+true`) is handled by `quatrex`.
 
-### Manual Upscaling from Unit Cell to Transport Hamiltonian
+The following script generates the input data required by `quatrex`.
 
-Alternatively, the Hamiltonian can be manually converted to a transport
-Hamiltonian and the corresponding structure file.
-
-Let's say we want to construct a transport Hamiltonian along the `"a"`
-direction that consists of 12 transport cells, and each transport cell
-should take into account the two neighboring unit cells. In this case,
-we will set the following parameters:
+<details>
+<summary>get_input_files.py</summary>
 
 ```python
-transport_direction = "a"
-transport_index = "abc".index(transport_direction)
-neighbor_cell_cutoff = (2, 0, 0)
-num_transport_cells = 12
-```
+#!/usr/bin/env python
 
-After loading in the `wannier_centers` and the `lattice_vector` of the
-unit cell, you can use `ase` and `quatrex` to construct the upscaled
-device `structure.xyz` file for the transport calculation. The following
-code snippet shows how to do this:
-
-```python
+import ase.geometry
 import ase.io
-from quatrex.device.inputs import create_coordinate_grid
+import numpy as np
+from pathlib import Path
+import scipy.constants
+import scipy.interpolate
 
-num_unit_cells = num_transport_cells * neighbor_cell_cutoff[transport_index]
+import qttools.utils.hdf5_utils
 
-structure = create_coordinate_grid(
-    wannier_centers, num_unit_cells, transport_index, lattice_vectors
+
+def read_wannier_hr(path: Path, dtype=np.complex128) -> dict:
+    """Read the contents of a Wannier90 `hr.dat` file.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a `hr.dat` file.
+    dtype : optional
+        The data type for the Hamiltonian matrix elements. Defaults to
+        `numpy.complex128`.
+
+    Returns
+    -------
+    hamiltonian : dict
+        A dictionary containing the Hamiltonian hopping matrices. The
+        keys are the hopping cells, and the values are the Hamiltonian
+        hopping matrices.
+
+    """
+
+    # Strip info from header.
+    num_wannier_functions, num_cells = np.loadtxt(
+        path, skiprows=1, max_rows=2, dtype=int
+    )
+
+    # Read wannier data (skipping degeneracy info). Wannier90 uses some
+    # Fortran formatting. Thus, the degeneracy information is arranged
+    # into 15 values per line.
+    degenerate_rows = int(np.ceil(num_cells / 15.0))
+    wannier_data = np.loadtxt(path, skiprows=3 + degenerate_rows)
+
+    cells = wannier_data[:, :3].astype(int)
+
+    # Initialize Hamiltonian dictionary. The keys are the hopping cells,
+    # and the values are the Hamiltonian hopping matrices.
+    hamiltonian = {
+        (rx.item(), ry.item(), rz.item()): np.zeros(
+            (num_wannier_functions, num_wannier_functions), dtype=dtype
+        )
+        for rx, ry, rz in np.unique(cells, axis=0)
+    }
+
+    # Read the Hamiltonian matrix elements.
+    for line in wannier_data:
+        rx, ry, rz = line[:3].astype(int)
+        key = (rx.item(), ry.item(), rz.item())
+        i, j = line[3:5].astype(int)
+        h_ij_real, h_ij_imag = line[5:]
+        hamiltonian[key][i - 1, j - 1] = h_ij_real + 1j * h_ij_imag
+
+    return hamiltonian
+
+
+def get_coulomb_matrix(sites: tuple[ase.Atoms, ase.Atoms]):
+    """
+    Returns an approximate bare Coulomb matrix containing the force a
+    point charge at any site in sites[0] exerts on a test charge in
+    sites[1]. It is an approximation to assume that the Wannier
+    functions are point charges located at the Wannier centers.
+    """
+
+    epsilon_0 = (
+        scipy.constants.physical_constants["electric constant"][0] * 1e-10
+    )  # F/Å
+    e = scipy.constants.physical_constants["elementary charge"][0]  # C
+
+    d = np.linalg.norm(
+        sites[0].positions[:, np.newaxis, :] - sites[1].positions[np.newaxis, :, :],
+        axis=-1,
+    )
+    with np.errstate(divide="ignore"):
+        # Will divide by zero on the diagonal, that's handled below.
+        coulomb_matrix = e / (4 * np.pi * epsilon_0 * d)
+    if sites[0] == sites[1]:
+        np.fill_diagonal(coulomb_matrix, 0)
+    assert np.all(np.isfinite(coulomb_matrix))
+
+    return coulomb_matrix
+
+
+def get_composed_coulomb_matrix(
+    sites: ase.Atoms,
+    *,
+    neighbor_cell_cutoff: int,
+    repeated_dim: int,
+    lattice_constant: float,
+):
+    """
+    Force a point charge at site i in the unit cell exerts on a test
+    charge at site j in cell m. Only implemented for 1D structures.
+    """
+
+    coulomb_matrix = {}
+
+    for m in range(-neighbor_cell_cutoff, neighbor_cell_cutoff + 1):
+        cell_coordinate = [0] * 3
+        cell_coordinate[repeated_dim] = m
+        cell_coordinate = tuple(cell_coordinate)
+
+        translation = lattice_constant * np.array(cell_coordinate)
+        offset_sites = sites.copy()
+        offset_sites.translate(translation)
+
+        coulomb_matrix[cell_coordinate] = get_coulomb_matrix((sites, offset_sites))
+
+    return coulomb_matrix
+
+
+def save_blocks_dict(filename: str, blocks_dict: dict):
+    """
+    Saves a dictionary with keys `(a, b, c)` as an HDF5 file called
+    `filename` with keys "[str(a), str(b), str(c)]". We need to do this
+    conversion in order to save as an HDF5 file.
+    """
+
+    # Turn the `blocks_dict`'s keys into strings
+    string_keys_blocks_dict = {str(list(r)): h_r for r, h_r in blocks_dict.items()}
+
+    qttools.utils.hdf5_utils.save_hdf5_dict(filename, string_keys_blocks_dict)
+
+
+# Parameters
+transport_index = 0
+neighbor_cell_cutoff_coulomb_matrix = 10
+
+# Load data
+atoms = ase.io.read("POSCAR")
+wannier_centers = ase.io.read("wannier90_centres.xyz")
+# Remove atoms, only keep centers
+wannier_centers = wannier_centers[wannier_centers.symbols == "X"]
+# Wrap the centers into the unit cell
+# This could be done with `translate_home_cell = true` in wannier90 in
+# theory, but this does not seem to work in our case.
+wannier_centers.set_cell(atoms.cell)
+wrap_dim = [True] * 3
+# Don't wrap in the transport direction: The Hamiltonian as well as the
+# Coulomb matrix would have to be adapted accordingly. This is done in
+# quatrex.
+wrap_dim[transport_index] = False
+wannier_centers.wrap(pbc=wrap_dim)
+pbc = [False] * 3
+pbc[transport_index] = True
+wannier_centers.set_pbc(pbc)
+hamiltonian = read_wannier_hr(path=Path("wannier90_hr.dat"))
+
+lattice_constant = atoms.cell.array[transport_index, transport_index]
+coulomb_matrix = get_composed_coulomb_matrix(
+    wannier_centers,
+    neighbor_cell_cutoff=neighbor_cell_cutoff_coulomb_matrix,
+    repeated_dim=transport_index,
+    lattice_constant=lattice_constant,
 )
+
+# Save unit cell data
+Path("inputs-unit-cell").mkdir(exist_ok=True)
+ase.io.write("inputs-unit-cell/structure.xyz", wannier_centers)
+ase.io.write("atoms_and_centers.xyz", (atoms, wannier_centers))
+save_blocks_dict("inputs-unit-cell/hamiltonian.h5", hamiltonian)
+save_blocks_dict("inputs-unit-cell/coulomb_matrix.h5", coulomb_matrix)
 ```
 
-In a similar way, the Wannier90 Hamiltonian can be converted to a
-transport Hamiltonian by gluing together the unit cell hopping terms.
-First, the hopping terms are cut off according to the
-`neighbor_cell_cutoff` parameter.
+</details>
 
-```python
-hamiltonian = {
-    r: h_r
-    for r, h_r in hamiltonian.items()
-    if all(abs(r_i) <= cutoff for r_i, cutoff in zip(r, neighbor_cell_cutoff))
-}
-```
-
-Then, the hopping terms are upscaled to the transport Hamiltonian using
-the `quatrex.device.inputs._expand_tight_binding_matrix` function:
-
-```python
-from quatrex.device.inputs import _expand_tight_binding_matrix
-
-device_hamiltonian = _expand_tight_binding_matrix(
-    hamiltonian, num_transport_cells, transport_index
-)
-```
-
-## Bare Coulomb Matrix for GW calculations
+The `read_wannier_hr` function is taken from `quatrex`' documentation
+(User guide -> Running Transport Simulations -> Electronic Structure
+Data -> Plane-Wave DFT & Wannier90).
 
 For GW calculations, we need to construct the a Coulomb matrix in the
 basis of the Wannier functions. While there are more accurate methods
-available, one simple way to compute an approximate bare Coulomb matrix
-is to assume that the Wannier functions are point charges located at the
-Wannier centers. The following code snippet shows how to compute the
-bare Coulomb matrix in this approximation:
+available, the script above computes an approximate bare Coulomb matrix
+assuming that the Wannier functions are point charges located at the
+Wannier centers.
+
+## Electrostatic Potential
+
+To generate a `potential.npy` file giving the electrostatic potential at
+each Wannier center, we need to know the positions of the centers after
+wrapping and upscaling. They can be obtained by setting the
+pre-processing option `save_processed_inputs` in `quatrex_config.toml`
+to `true`:
+
+```
+[pre_process]
+save_processed_inputs = true
+```
+
+The command `quatrex pre-process quatrex_config.toml` saves the upscaled
+structure under `outputs/structure.xyz`. The following script reads this
+file and saves a potential (more precisely, an electrostatic potential
+energy) that smoothly transitions from 0 eV on the left to -0.2 eV on
+the right.
+
+<details>
+<summary>get_potential.py</summary>
 
 ```python
-from scipy.constants import physical_constants
+#!/usr/bin/env python
 
-epsilon_0 = physical_constants["electric constant"][0] * 1e-10  # F/Å
-e = physical_constants["elementary charge"][0]  # C
+import ase.io
+import numpy as np
 
-d = np.linalg.norm(structure[:, np.newaxis, :] - structure[np.newaxis, :, :], axis=-1)
 
-coulomb_matrix = e / (4 * np.pi * epsilon_0 * d)
-np.fill_diagonal(coulomb_matrix, 0)
+def transition_f(x: np.ndarray):
+    """
+    Smooth transition from 0 at x <= 0 to 1 at x -> inf
+    https://en.wikipedia.org/wiki/Bump_function#Examples
+    """
+
+    # Assert that we don't ignore nonfinite x due to the nan_to_num
+    assert np.all(np.isfinite(x)), x
+
+    with np.errstate(divide="ignore"):
+        exp = np.exp(-1 / x)
+    clean_exp = np.nan_to_num(exp)  # 0 at x=0
+
+    return clean_exp * (x > 0)
+
+
+def transition_g(x: np.ndarray):
+    """
+    Smooth transition from 0 at x <= 0 to 1 at x >= 1
+    https://en.wikipedia.org/wiki/Bump_function#Examples
+    """
+
+    f_x = transition_f(x)
+
+    return f_x / (f_x + transition_f(1 - x))
+
+
+def smooth_transition(x: np.ndarray, x0: float, x1: float, y0: float, y1: float):
+    """
+    Smooth transition from y0 at x <= x0 to y1 at x >= x1
+    """
+
+    g = transition_g((x - x0) / (x1 - x0))
+
+    return (y1 - y0) * g + y0
+
+
+def get_potential(
+    wannier_centers: ase.Atoms,
+    *,
+    transport_index: int,
+    constant_size: float,
+    boundary_potentials: tuple[float, float],
+):
+    xs = wannier_centers.positions[:, transport_index]
+    x_L = np.min(xs)
+    x_R = np.max(xs)
+    potential = smooth_transition(
+        xs, x_L + constant_size, x_R - constant_size, *boundary_potentials
+    )
+
+    return potential
+
+
+# Parameters
+transport_index = 0
+boundary_potentials = (0, -0.2)  # V
+structure_path = "quatrex_outputs/structure.xyz"
+
+
+quatrex_structure = ase.io.read(structure_path)
+
+potential = get_potential(
+    quatrex_structure,
+    transport_index=transport_index,
+    constant_size=0,
+    boundary_potentials=boundary_potentials,
+)
+
+np.save("inputs-unit-cell/potential.npy", potential)
 ```
+
+</details>
 
 ## Phonon Dispersion
 
@@ -412,6 +876,9 @@ matrix
 and computes the corresponding modes, making sure that the sorting is
 always the same. It also ensures that the longitudinal acoustic (LA)
 mode comes first, followed by the two transverse acoustic (TA) modes.
+
+<details>
+<summary>get_dispersion.py</summary>
 
 ```python
 import numpy as np
@@ -562,3 +1029,5 @@ fig.savefig(save_path + "dispersion.svg")
 with open(save_path + "phonon_dispersion.npy", "wb") as f:
     np.save(f, omega)
 ```
+
+</details>

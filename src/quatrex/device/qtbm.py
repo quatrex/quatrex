@@ -31,6 +31,9 @@ class QTBMDevice(BaseDevice):
         Array of orbital coordinates.
     atom_coordinates : NDArray
         Array of atomic coordinates.
+    cell_offsets : NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from in the transport direction.
     atomic_species : NDArray
         Array of atom symbols for each atom. NOTE: This array is always on the
         host since CuPy does not support string arrays.
@@ -110,7 +113,10 @@ class QTBMDevice(BaseDevice):
             raise ValueError("Hamiltonian matrix not found.")
 
         self.hamiltonians = load_matrices(
-            self.config, "hamiltonian", force_complex=False
+            self.config,
+            "hamiltonian",
+            cell_offsets=self.cell_offsets,
+            force_complex=False,
         )
 
         for r, h_r in self.hamiltonians.items():
@@ -139,7 +145,9 @@ class QTBMDevice(BaseDevice):
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.h5").exists():
-            self.overlap_matrices = load_matrices(self.config, "overlap")
+            self.overlap_matrices = load_matrices(
+                self.config, "overlap", cell_offsets=self.cell_offsets
+            )
 
             for r in self.overlap_matrices:
                 if (

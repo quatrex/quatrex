@@ -35,6 +35,9 @@ class SCBADevice(BaseDevice):
         Array of orbital coordinates.
     atom_coordinates : NDArray
         Array of atomic coordinates.
+    cell_offsets : NDArray | None
+        The coordinates of the unit cells each atom was been wrapped
+        from in the transport direction.
     atomic_species : NDArray
         Array of atom symbols for each atom. NOTE: This array is always on the
         host since CuPy does not support string arrays.
@@ -116,6 +119,7 @@ class SCBADevice(BaseDevice):
         hamiltonians, hamiltonian_sparsity_pattern = assemble_matrix(
             config=self.config,
             matrix_name="hamiltonian",
+            cell_offsets=self.cell_offsets,
             sparsity_pattern=None,
             shift_kpoints=False,
         )
@@ -125,6 +129,7 @@ class SCBADevice(BaseDevice):
             overlap_matrices, __ = assemble_matrix(
                 config=self.config,
                 matrix_name="overlap",
+                cell_offsets=self.cell_offsets,
                 sparsity_pattern=None,
                 shift_kpoints=False,
             )
@@ -234,6 +239,7 @@ class SCBADevice(BaseDevice):
         coulomb_matrix, __ = assemble_matrix(
             config=self.config,
             matrix_name="coulomb_matrix",
+            cell_offsets=self.cell_offsets,
             sparsity_pattern=self.sparsity_pattern,
             shift_kpoints=True,
         )

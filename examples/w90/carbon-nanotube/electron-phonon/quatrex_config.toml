@@ -5,25 +5,25 @@ formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = "a"
-block_size = 32
+construct_from_unit_cell = true
+num_transport_cells = 12
+neighbor_cell_cutoff = [2, 0, 0]
 
     [[device.contacts]]
-    name = "source"
-    origin = [0.1551, 0.0, 0.0]
-    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    transport_direction = "a"
-    fermi_level = -3.6
+    name = "left"
+    mid_gap_energy = -4.15631163542285 # Set by `quatrex pre-process`
+    fermi_level = -4.145642504759293 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.8750089231698146 # Set by `quatrex pre-process`
 
     [[device.contacts]]
-    name = "drain"
-    origin = [102.694, 0.0, 0.0]
-    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
-    transport_direction = "a"
-    fermi_level = -3.8
+    name = "right"
+    mid_gap_energy = -4.156311635422853 # Set by `quatrex pre-process`
+    fermi_level = -4.145642504760517 # Set by `quatrex pre-process`
+    conduction_band_edge = -3.875008923169818 # Set by `quatrex pre-process`
 
 [scba] # ===============================================================
 max_iterations = 2
-mixing_factor = 1
+mixing_factor = 0.5
 
 phonon = true
 
@@ -32,8 +32,9 @@ symmetric = true
 [outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
-electron_density = false
-hole_density = false
+meir_wingreen_currents = true
+electron_density = true
+hole_density = true
 
 self_energy_density = true
 
@@ -44,12 +45,12 @@ save_profiling_results = true
 
 [electron] # ===========================================================
 # Energy grid.
-energy_window_min = -5.6
-energy_window_max = -1.6
-energy_window_num = 50
+energy_window_min = -6
+energy_window_max = -2
+energy_window_num = 10
 
 solver.algorithm = "rgf"
-solver.max_batch_size = 1000
+solver.max_batch_size = 8
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
@@ -69,3 +70,6 @@ acoustic_deformation_potential = 1  # eV
 optical_deformation_potential = 1  # eV / Å
 atom_mass_u = 12  # In the unified atomic mass unit
 lattice_constant = 4.26  # Å
+
+[pre_process]
+compute_fermi_level = true
